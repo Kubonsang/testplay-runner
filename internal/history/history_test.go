@@ -49,9 +49,37 @@ func TestSave_NeverOverwrites(t *testing.T) {
 func TestLoad_NotFound(t *testing.T) {
 	dir := t.TempDir()
 	store := history.NewStore(dir)
-	_, err := store.Load("nonexistent")
+	_, err := store.Load("20250101-000000")
 	if !errors.Is(err, history.ErrRunNotFound) {
 		t.Errorf("got %v, want ErrRunNotFound", err)
+	}
+}
+
+func TestSave_InvalidRunID(t *testing.T) {
+	dir := t.TempDir()
+	store := history.NewStore(dir)
+	err := store.Save("../evil", &history.RunResult{RunID: "../evil", SchemaVersion: "1"})
+	if !errors.Is(err, history.ErrInvalidRunID) {
+		t.Errorf("got %v, want ErrInvalidRunID", err)
+	}
+}
+
+func TestLoad_InvalidRunID(t *testing.T) {
+	dir := t.TempDir()
+	store := history.NewStore(dir)
+	_, err := store.Load("../evil")
+	if !errors.Is(err, history.ErrInvalidRunID) {
+		t.Errorf("got %v, want ErrInvalidRunID", err)
+	}
+}
+
+func TestLoad_ValidRunIDFormat(t *testing.T) {
+	dir := t.TempDir()
+	store := history.NewStore(dir)
+	_, err := store.Load("20250325-143000")
+	// May get ErrRunNotFound, but NOT ErrInvalidRunID
+	if errors.Is(err, history.ErrInvalidRunID) {
+		t.Errorf("valid run ID should not return ErrInvalidRunID, got %v", err)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -15,7 +16,17 @@ import (
 var (
 	ErrRunExists   = errors.New("run result already exists")
 	ErrRunNotFound = errors.New("run result not found")
+	ErrInvalidRunID = errors.New("invalid run ID format")
 )
+
+var runIDPattern = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}$`)
+
+func validateRunID(runID string) error {
+	if !runIDPattern.MatchString(runID) {
+		return ErrInvalidRunID
+	}
+	return nil
+}
 
 // RunResult is the persisted result of a single fastplay run.
 type RunResult struct {
@@ -53,6 +64,9 @@ func NewStore(dir string) *Store {
 // Save writes result to <dir>/<runID>.json.
 // Returns ErrRunExists if the file already exists (never overwrites).
 func (s *Store) Save(runID string, result *RunResult) error {
+	if err := validateRunID(runID); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(s.dir, 0755); err != nil {
 		return fmt.Errorf("creating result dir: %w", err)
 	}
@@ -78,6 +92,9 @@ func (s *Store) Save(runID string, result *RunResult) error {
 // Load reads and parses <dir>/<runID>.json.
 // Returns ErrRunNotFound if the file does not exist.
 func (s *Store) Load(runID string) (*RunResult, error) {
+	if err := validateRunID(runID); err != nil {
+		return nil, err
+	}
 	path := filepath.Join(s.dir, runID+".json")
 	data, err := os.ReadFile(path)
 	if err != nil {
