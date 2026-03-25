@@ -33,9 +33,9 @@ type runDeps struct {
 }
 
 func runRun(w io.Writer, deps runDeps) int {
-	ctx := deps.ctx
-	if ctx == nil {
-		ctx = context.Background()
+	baseCtx := deps.ctx
+	if baseCtx == nil {
+		baseCtx = context.Background()
 	}
 
 	// Load config
@@ -48,6 +48,10 @@ func runRun(w io.Writer, deps runDeps) int {
 		writeJSON(w, map[string]any{"error": err.Error(), "new_failures": nil})
 		return 1
 	}
+
+	// Apply total timeout from config so Unity cannot hang forever.
+	ctx, cancel := context.WithTimeout(baseCtx, time.Duration(cfg.Timeout.TotalMs)*time.Millisecond)
+	defer cancel()
 
 	// Lazily initialise runner and store from config when not injected (production path)
 	if deps.runner == nil {
