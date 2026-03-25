@@ -9,7 +9,7 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:   "fastplay",
-	Short: "Unity Play Mode test runner for AI agents",
+	Short: "Unity test runner for AI agents",
 }
 
 func main() {

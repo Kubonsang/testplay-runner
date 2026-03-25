@@ -162,7 +162,7 @@ var runFilter, runCategory, runCompareRun string
 
 var runCmd = &cobra.Command{
 	Use:   "run",
-	Short: "Execute Unity Play Mode tests",
+	Short: "Execute Unity tests",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()

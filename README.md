@@ -1,6 +1,6 @@
 # testplay-runner
 
-**Go CLI that makes Unity Play Mode tests reliable for AI agents**
+**Go CLI that makes Unity tests reliable for AI agents**
 
 [한국어](README.ko.md) | English
 
@@ -106,7 +106,7 @@ fastplay list
 
 ### `fastplay run`
 
-Runs Unity Play Mode tests. Streams progress to `fastplay-status.json`.
+Runs Unity tests (currently EditMode). Streams progress to `fastplay-status.json`.
 
 ```bash
 fastplay run

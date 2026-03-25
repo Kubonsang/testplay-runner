@@ -1,6 +1,6 @@
 # testplay-runner
 
-**AI 에이전트를 위한 신뢰할 수 있는 Unity Play Mode 테스트 실행기**
+**AI 에이전트를 위한 신뢰할 수 있는 Unity 테스트 실행기**
 
 한국어 | [English](README.md)
 
@@ -106,7 +106,7 @@ fastplay list
 
 ### `fastplay run`
 
-Unity Play Mode 테스트를 실행합니다. 진행 상황은 `fastplay-status.json`에 스트리밍됩니다.
+Unity 테스트(현재 EditMode)를 실행합니다. 진행 상황은 `fastplay-status.json`에 스트리밍됩니다.
 
 ```bash
 fastplay run
