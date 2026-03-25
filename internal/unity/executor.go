@@ -16,7 +16,7 @@ type ExecuteOptions struct {
 	ProjectPath  string
 	ResultsFile  string
 	StatusWriter status.WriterInterface
-	TimeoutType  string // "compile", "test", or "total" — used when context is cancelled
+	TimeoutType  string // "total" — propagated to RunResult.TimeoutType on context cancellation
 	Filter       string
 	Category     string
 }
