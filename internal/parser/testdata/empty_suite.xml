@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<test-run id="2" result="Passed" total="0" passed="0" failed="0" skipped="0" duration="0.001">
+  <test-suite type="Assembly" name="MyProject.Tests.dll" result="Passed">
+  </test-suite>
+</test-run>
