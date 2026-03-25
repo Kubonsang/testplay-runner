@@ -90,11 +90,6 @@ func runRun(w io.Writer, deps runDeps) int {
 	result.RunID = runID
 	result.SchemaVersion = "1"
 
-	// Ensure tests is never null
-	if result.Tests == nil {
-		result.Tests = make([]parser.TestCase, 0)
-	}
-
 	// Fix File fields to be relative to the project path
 	for i := range result.Tests {
 		if result.Tests[i].AbsolutePath != "" {
@@ -105,12 +100,6 @@ func runRun(w io.Writer, deps runDeps) int {
 		if result.Errors[i].AbsolutePath != "" {
 			result.Errors[i].File = parser.MakeRelative(cfg.ProjectPath, result.Errors[i].AbsolutePath)
 		}
-	}
-
-	// Ensure errors is never null
-	errors := result.Errors
-	if errors == nil {
-		errors = make([]history.CompileError, 0)
 	}
 
 	// Compare runs if requested — newFailures stays nil when no --compare-run
@@ -144,7 +133,7 @@ func runRun(w io.Writer, deps runDeps) int {
 		"failed":       countByResult(result.Tests, "Failed"),
 		"skipped":      countByResult(result.Tests, "Skipped"),
 		"tests":        result.Tests,
-		"errors":       errors,
+		"errors":       result.Errors,
 		"new_failures": newFailures,
 	}
 	if result.TimeoutType != "" {

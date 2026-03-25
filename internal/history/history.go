@@ -77,11 +77,6 @@ func (s *Store) Save(runID string, result *RunResult) error {
 		return fmt.Errorf("%w: %s", ErrRunExists, runID)
 	}
 
-	// Ensure Tests is never null in JSON
-	if result.Tests == nil {
-		result.Tests = make([]parser.TestCase, 0)
-	}
-
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return err
@@ -110,7 +105,7 @@ func (s *Store) Load(runID string) (*RunResult, error) {
 		return nil, err
 	}
 	if result.Tests == nil {
-		result.Tests = make([]parser.TestCase, 0)
+		result.Tests = []parser.TestCase{}
 	}
 	return &result, nil
 }
