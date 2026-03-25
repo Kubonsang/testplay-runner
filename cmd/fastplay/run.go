@@ -61,6 +61,8 @@ func runRun(w io.Writer, deps runDeps) int {
 		ResultsFile:  resultsFile,
 		StatusWriter: status.NewWriter(deps.statusPath),
 		TimeoutType:  "total",
+		Filter:       deps.opts.Filter,
+		Category:     deps.opts.Category,
 	}
 
 	// Execute

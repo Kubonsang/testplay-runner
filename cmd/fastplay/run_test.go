@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -124,6 +125,79 @@ func TestRunCmd_NoCompareRun_NewFailuresIsNull(t *testing.T) {
 	}
 	if string(nf) != "null" {
 		t.Errorf("new_failures must be null when --compare-run not specified, got %s", nf)
+	}
+}
+
+func TestRunCmd_SchemaVersionPresent(t *testing.T) {
+	dir := t.TempDir()
+	xmlData := mustReadXMLFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeCmdRunner{resultsXML: xmlData, exitCode: 0}
+	store := history.NewStore(filepath.Join(dir, "results"))
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		UnityPath:     "/fake/unity",
+		ProjectPath:   dir,
+		ResultDir:     filepath.Join(dir, "results"),
+		Timeout:       config.Timeouts{CompileMs: 120000, TestMs: 30000, TotalMs: 300000},
+	}
+	var buf bytes.Buffer
+	runRun(&buf, runDeps{
+		loadConfig:  func(string) (*config.Config, error) { return cfg, nil },
+		runner:      fake,
+		statusPath:  filepath.Join(dir, "status.json"),
+		resultStore: store,
+		opts:        RunCmdOptions{},
+	})
+	var out map[string]any
+	json.Unmarshal(buf.Bytes(), &out)
+	if out["schema_version"] == nil {
+		t.Error("schema_version must be present in run output")
+	}
+}
+
+type capturingRunner struct {
+	resultsXML []byte
+	lastArgs   []string
+}
+
+func (c *capturingRunner) Run(_ context.Context, args []string) ([]byte, []byte, int, error) {
+	c.lastArgs = args
+	for i, a := range args {
+		if a == "-testResults" && i+1 < len(args) && c.resultsXML != nil {
+			_ = os.WriteFile(args[i+1], c.resultsXML, 0644)
+		}
+	}
+	return nil, nil, 0, nil
+}
+
+func TestRunCmd_FilterForwarded(t *testing.T) {
+	dir := t.TempDir()
+	xmlData := mustReadXMLFixture(t, "../../internal/parser/testdata/passing.xml")
+	cap := &capturingRunner{resultsXML: xmlData}
+	store := history.NewStore(filepath.Join(dir, "results"))
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		UnityPath:     "/fake/unity",
+		ProjectPath:   dir,
+		ResultDir:     filepath.Join(dir, "results"),
+		Timeout:       config.Timeouts{CompileMs: 120000, TestMs: 30000, TotalMs: 300000},
+	}
+	var buf bytes.Buffer
+	runRun(&buf, runDeps{
+		loadConfig:  func(string) (*config.Config, error) { return cfg, nil },
+		runner:      cap,
+		statusPath:  filepath.Join(dir, "status.json"),
+		resultStore: store,
+		opts:        RunCmdOptions{Filter: "MyTest.Foo"},
+	})
+	found := false
+	for i, a := range cap.lastArgs {
+		if a == "-testFilter" && i+1 < len(cap.lastArgs) && cap.lastArgs[i+1] == "MyTest.Foo" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected -testFilter MyTest.Foo in args, got: %v", cap.lastArgs)
 	}
 }
 

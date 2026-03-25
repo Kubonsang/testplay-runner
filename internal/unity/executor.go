@@ -17,6 +17,8 @@ type ExecuteOptions struct {
 	ResultsFile  string
 	StatusWriter status.WriterInterface
 	TimeoutType  string // "compile", "test", or "total" — used when context is cancelled
+	Filter       string
+	Category     string
 }
 
 // Execute runs Unity tests using the provided Runner and returns the result + exit code.
@@ -36,6 +38,8 @@ func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.
 	// Build args
 	runOpts := &RunOptions{
 		ResultsFilePath: opts.ResultsFile,
+		Filter:          opts.Filter,
+		Category:        opts.Category,
 	}
 	args := BuildRunArgs(opts.ProjectPath, runOpts)
 
