@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Kubonsang/fastplay-runner/internal/config"
+	"github.com/Kubonsang/testplay-runner/internal/config"
 )
 
 type listDeps struct {

@@ -1,4 +1,4 @@
-module github.com/Kubonsang/fastplay-runner
+module github.com/Kubonsang/testplay-runner
 
 go 1.22
 

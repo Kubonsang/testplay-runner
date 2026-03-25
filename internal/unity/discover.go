@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Kubonsang/fastplay-runner/internal/config"
+	"github.com/Kubonsang/testplay-runner/internal/config"
 )
 
 // ErrUnityNotFound is returned when Unity binary cannot be located.

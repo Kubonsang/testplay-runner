@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Kubonsang/fastplay-runner/internal/parser"
+	"github.com/Kubonsang/testplay-runner/internal/parser"
 )
 
 var (

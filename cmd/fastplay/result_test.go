@@ -7,8 +7,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/Kubonsang/fastplay-runner/internal/history"
-	"github.com/Kubonsang/fastplay-runner/internal/parser"
+	"github.com/Kubonsang/testplay-runner/internal/history"
+	"github.com/Kubonsang/testplay-runner/internal/parser"
 )
 
 func TestResultCmd_ListsHistory(t *testing.T) {

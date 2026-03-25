@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Kubonsang/fastplay-runner/internal/config"
-	"github.com/Kubonsang/fastplay-runner/internal/history"
-	"github.com/Kubonsang/fastplay-runner/internal/parser"
+	"github.com/Kubonsang/testplay-runner/internal/config"
+	"github.com/Kubonsang/testplay-runner/internal/history"
+	"github.com/Kubonsang/testplay-runner/internal/parser"
 )
 
 func mustReadXMLFixture(t *testing.T, path string) []byte {

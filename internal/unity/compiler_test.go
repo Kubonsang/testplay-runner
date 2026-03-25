@@ -3,7 +3,7 @@ package unity_test
 import (
 	"testing"
 
-	"github.com/Kubonsang/fastplay-runner/internal/unity"
+	"github.com/Kubonsang/testplay-runner/internal/unity"
 )
 
 func TestParseCompileErrors_BasicError(t *testing.T) {

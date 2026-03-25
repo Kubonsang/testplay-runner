@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/Kubonsang/fastplay-runner/internal/parser"
+	"github.com/Kubonsang/testplay-runner/internal/parser"
 )
 
 func TestParse_PassingRun(t *testing.T) {

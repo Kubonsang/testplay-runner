@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Kubonsang/fastplay-runner/internal/config"
-	"github.com/Kubonsang/fastplay-runner/internal/history"
+	"github.com/Kubonsang/testplay-runner/internal/config"
+	"github.com/Kubonsang/testplay-runner/internal/history"
 )
 
 type resultDeps struct {
