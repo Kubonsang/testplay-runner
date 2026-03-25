@@ -1,0 +1,18 @@
+# Go build artifacts
+fastplay
+fastplay.exe
+
+# Test cache
+*.test
+
+# Runtime files
+fastplay-status.json
+fastplay-status.json.tmp
+.fastplay/
+
+# macOS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
