@@ -46,7 +46,7 @@ func runRun(w io.Writer, deps runDeps) int {
 		writeJSON(w, map[string]any{"error": err.Error(), "new_failures": nil})
 		return 5
 	}
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.Validate(true); err != nil {
 		writeJSON(w, map[string]any{"error": err.Error(), "new_failures": nil})
 		return 1
 	}

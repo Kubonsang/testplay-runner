@@ -39,15 +39,14 @@ var resultCmd = &cobra.Command{
 	Use:   "result",
 	Short: "View stored test result history",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		resultDir := ".fastplay/results" // fallback default
 		cfg, err := config.Load("fastplay.json")
-		if err != nil {
-			return err
+		if err == nil {
+			if valErr := cfg.Validate(false); valErr == nil && cfg.ResultDir != "" {
+				resultDir = cfg.ResultDir
+			}
 		}
-		if err := cfg.Validate(); err != nil {
-			return err
-		}
-
-		store := history.NewStore(cfg.ResultDir)
+		store := history.NewStore(resultDir)
 		deps := resultDeps{store: store, last: resultLast}
 		code := runResult(cmd.OutOrStdout(), deps)
 		os.Exit(code)

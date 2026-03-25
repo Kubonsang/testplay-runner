@@ -17,7 +17,7 @@ func TestLoad_ValidConfig(t *testing.T) {
 		t.Errorf("got schema_version %q, want %q", cfg.SchemaVersion, "1")
 	}
 	// Verify a loaded config can be validated successfully
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.Validate(true); err != nil {
 		t.Errorf("loaded config failed Validate(): %v", err)
 	}
 }
@@ -46,7 +46,7 @@ func TestLoad_MissingSchemaVersion(t *testing.T) {
 func TestValidate_UnityPathFallsBackToEnv(t *testing.T) {
 	t.Setenv("UNITY_PATH", "/fake/unity")
 	cfg := &config.Config{SchemaVersion: "1", ProjectPath: "/tmp/proj"}
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.Validate(true); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if cfg.UnityPath != "/fake/unity" {
@@ -57,7 +57,7 @@ func TestValidate_UnityPathFallsBackToEnv(t *testing.T) {
 func TestValidate_MissingUnityPath(t *testing.T) {
 	t.Setenv("UNITY_PATH", "")
 	cfg := &config.Config{SchemaVersion: "1", ProjectPath: "/tmp/proj"}
-	err := cfg.Validate()
+	err := cfg.Validate(true)
 	if !errors.Is(err, config.ErrUnityPathMissing) {
 		t.Errorf("got %v, want ErrUnityPathMissing", err)
 	}
@@ -66,7 +66,7 @@ func TestValidate_MissingUnityPath(t *testing.T) {
 func TestValidate_DefaultResultDir(t *testing.T) {
 	t.Setenv("UNITY_PATH", "/fake/unity")
 	cfg := &config.Config{SchemaVersion: "1", ProjectPath: "/tmp/proj"}
-	_ = cfg.Validate()
+	_ = cfg.Validate(true)
 	if cfg.ResultDir != ".fastplay/results" {
 		t.Errorf("expected default result_dir, got %q", cfg.ResultDir)
 	}
@@ -79,7 +79,7 @@ func TestValidate_NegativeTimeout_ReturnsError(t *testing.T) {
 		ProjectPath:   "/tmp/proj",
 		Timeout:       config.Timeouts{TotalMs: -1},
 	}
-	err := cfg.Validate()
+	err := cfg.Validate(true)
 	if !errors.Is(err, config.ErrConfigInvalid) {
 		t.Errorf("got %v, want ErrConfigInvalid", err)
 	}
@@ -88,7 +88,7 @@ func TestValidate_NegativeTimeout_ReturnsError(t *testing.T) {
 func TestValidate_DefaultTotalMs(t *testing.T) {
 	t.Setenv("UNITY_PATH", "/fake/unity")
 	cfg := &config.Config{SchemaVersion: "1", ProjectPath: "/tmp/proj"}
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.Validate(true); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if cfg.Timeout.TotalMs != 300000 {
@@ -111,7 +111,16 @@ func TestValidate_NegativeCompileMs_IsAccepted(t *testing.T) {
 		ProjectPath:   "/tmp/proj",
 		Timeout:       config.Timeouts{CompileMs: -1, TotalMs: 300000},
 	}
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.Validate(true); err != nil {
 		t.Errorf("expected no error for negative compile_ms (reserved field), got %v", err)
+	}
+}
+
+func TestValidate_RequireUnityFalse_SkipsUnityCheck(t *testing.T) {
+	// No UNITY_PATH env, no unity_path in config — should not error when requireUnity=false
+	t.Setenv("UNITY_PATH", "")
+	cfg := &config.Config{SchemaVersion: "1", ProjectPath: "/tmp/proj"}
+	if err := cfg.Validate(false); err != nil {
+		t.Errorf("expected no error with requireUnity=false, got %v", err)
 	}
 }

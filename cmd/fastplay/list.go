@@ -119,7 +119,7 @@ var listCmd = &cobra.Command{
 		// Try to load config to get project path
 		cfg, err := config.Load("fastplay.json")
 		if err == nil {
-			_ = cfg.Validate()
+			_ = cfg.Validate(false)
 			deps.projectPath = cfg.ProjectPath
 		}
 		code := runList(cmd.OutOrStdout(), deps)

@@ -35,13 +35,17 @@ type Timeouts struct {
 
 // Validate fills in default values and validates required fields.
 // It mutates the Config in place.
-func (c *Config) Validate() error {
-	// Unity path: config field → env var
-	if c.UnityPath == "" {
-		c.UnityPath = os.Getenv("UNITY_PATH")
-	}
-	if c.UnityPath == "" {
-		return fmt.Errorf("%w", ErrUnityPathMissing)
+// When requireUnity is true, unity_path (or UNITY_PATH env var) must be present.
+// When requireUnity is false, the unity_path check is skipped (used by list/result).
+func (c *Config) Validate(requireUnity bool) error {
+	if requireUnity {
+		// Unity path: config field → env var
+		if c.UnityPath == "" {
+			c.UnityPath = os.Getenv("UNITY_PATH")
+		}
+		if c.UnityPath == "" {
+			return fmt.Errorf("%w", ErrUnityPathMissing)
+		}
 	}
 
 	// Project path: default to directory containing config file

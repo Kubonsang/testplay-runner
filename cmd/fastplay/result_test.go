@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Kubonsang/testplay-runner/internal/history"
@@ -98,6 +99,30 @@ func TestResultCmd_SchemaVersionPresent(t *testing.T) {
 	json.Unmarshal(buf.Bytes(), &out)
 	if out["schema_version"] == nil {
 		t.Error("schema_version must be present")
+	}
+}
+
+func TestResultCmd_NoUnityPath_StillWorks(t *testing.T) {
+	dir := t.TempDir()
+	store := history.NewStore(filepath.Join(dir, "results"))
+
+	var buf bytes.Buffer
+	code := runResult(&buf, resultDeps{store: store, last: 0})
+	if code != 0 {
+		t.Errorf("expected exit 0, got %d\noutput: %s", code, buf.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	runs, ok := out["runs"]
+	if !ok {
+		t.Error("expected 'runs' field in output")
+	}
+	if runsSlice, ok := runs.([]any); ok {
+		if len(runsSlice) != 0 {
+			t.Errorf("expected empty runs, got %d", len(runsSlice))
+		}
 	}
 }
 
