@@ -88,6 +88,9 @@ func (s *Store) Load(runID string) (*RunResult, error) {
 	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, err
 	}
+	if result.Tests == nil {
+		result.Tests = make([]parser.TestCase, 0)
+	}
 	return &result, nil
 }
 
@@ -132,6 +135,9 @@ func (s *Store) List(last int) ([]*RunResult, error) {
 // Returns nil (not an empty slice) when prev is nil — signals no --compare-run was specified.
 func Compare(prev, curr *RunResult) []parser.TestCase {
 	if prev == nil {
+		return nil
+	}
+	if curr == nil {
 		return nil
 	}
 
