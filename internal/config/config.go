@@ -9,8 +9,9 @@ import (
 )
 
 var (
-	ErrConfigNotFound = errors.New("fastplay.json not found")
-	ErrConfigInvalid  = errors.New("fastplay.json is invalid")
+	ErrConfigNotFound  = errors.New("fastplay.json not found")
+	ErrConfigInvalid   = errors.New("fastplay.json is invalid")
+	ErrUnityPathMissing = errors.New("unity_path not set and UNITY_PATH env var not found")
 )
 
 type Config struct {
@@ -26,6 +27,43 @@ type Timeouts struct {
 	CompileMs int64 `json:"compile_ms"`
 	TestMs    int64 `json:"test_ms"`
 	TotalMs   int64 `json:"total_ms"`
+}
+
+// Validate fills in default values and validates required fields.
+// It mutates the Config in place.
+func (c *Config) Validate() error {
+	// Unity path: config field → env var
+	if c.UnityPath == "" {
+		c.UnityPath = os.Getenv("UNITY_PATH")
+	}
+	if c.UnityPath == "" {
+		return fmt.Errorf("%w", ErrUnityPathMissing)
+	}
+
+	// Project path: default to directory containing config file
+	if c.ProjectPath == "" {
+		if c.configDir != "" {
+			c.ProjectPath = c.configDir
+		}
+	}
+
+	// Default result dir
+	if c.ResultDir == "" {
+		c.ResultDir = ".fastplay/results"
+	}
+
+	// Default timeouts
+	if c.Timeout.CompileMs == 0 {
+		c.Timeout.CompileMs = 120000
+	}
+	if c.Timeout.TestMs == 0 {
+		c.Timeout.TestMs = 30000
+	}
+	if c.Timeout.TotalMs == 0 {
+		c.Timeout.TotalMs = 300000
+	}
+
+	return nil
 }
 
 func Load(path string) (*Config, error) {
