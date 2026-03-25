@@ -124,6 +124,9 @@ func TestResultCmd_NoUnityPath_StillWorks(t *testing.T) {
 			t.Errorf("expected empty runs, got %d", len(runsSlice))
 		}
 	}
+	if out["schema_version"] == nil {
+		t.Error("schema_version must be present even without unity path")
+	}
 }
 
 // suppress unused import warning
