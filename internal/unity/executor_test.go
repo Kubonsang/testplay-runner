@@ -2,7 +2,6 @@ package unity_test
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -96,29 +95,61 @@ func TestExecute_ContextCancelled_Returns4(t *testing.T) {
 	}
 }
 
+type spyWriter struct {
+	phases []status.Phase
+}
+
+func (s *spyWriter) Write(st status.Status) error {
+	s.phases = append(s.phases, st.Phase)
+	return nil
+}
+
+func containsPhase(phases []status.Phase, p status.Phase) bool {
+	for _, ph := range phases {
+		if ph == p {
+			return true
+		}
+	}
+	return false
+}
+
 func TestExecute_WritesStatusPhases(t *testing.T) {
 	dir := t.TempDir()
 	xmlData := mustReadFixture(t, "../parser/testdata/passing.xml")
 	fake := &fakeRunner{resultsXML: xmlData, exitCode: 0}
-
-	sw := status.NewWriter(filepath.Join(dir, "status.json"))
+	spy := &spyWriter{}
 
 	unity.Execute(context.Background(), fake, unity.ExecuteOptions{
 		ProjectPath:  dir,
 		ResultsFile:  filepath.Join(dir, "results.xml"),
-		StatusWriter: sw,
+		StatusWriter: spy,
 	})
 
-	// Read the final status file and verify it's "done"
-	data, err := os.ReadFile(filepath.Join(dir, "status.json"))
-	if err != nil {
-		t.Fatalf("status file not written: %v", err)
+	if !containsPhase(spy.phases, status.PhaseCompiling) {
+		t.Error("expected PhaseCompiling to be written")
 	}
-	var finalStatus status.Status
-	if err := json.Unmarshal(data, &finalStatus); err != nil {
-		t.Fatalf("invalid status JSON: %v", err)
+	if !containsPhase(spy.phases, status.PhaseDone) {
+		t.Error("expected PhaseDone to be written")
 	}
-	if finalStatus.Phase != status.PhaseDone {
-		t.Errorf("expected final phase 'done', got %q", finalStatus.Phase)
+}
+
+func TestExecute_CompileErrorsInStderr_Returns2(t *testing.T) {
+	dir := t.TempDir()
+	// fakeRunner writes an empty XML but also has compile errors in stderr
+	emptyXML := []byte(`<?xml version="1.0"?><test-run total="0" passed="0" failed="0" skipped="0" duration="0" result="Passed"></test-run>`)
+	fake := &fakeRunner{
+		resultsXML: emptyXML,
+		stderr:     []byte(`Assets/Foo.cs(1,1): error CS0246: Type 'Bar' not found`),
+		exitCode:   0,
+	}
+	sw := status.NewWriter(filepath.Join(dir, "status.json"))
+
+	_, code := unity.Execute(context.Background(), fake, unity.ExecuteOptions{
+		ProjectPath:  dir,
+		ResultsFile:  filepath.Join(dir, "results.xml"),
+		StatusWriter: sw,
+	})
+	if code != 2 {
+		t.Errorf("expected exit 2 when compile errors in stderr, got %d", code)
 	}
 }

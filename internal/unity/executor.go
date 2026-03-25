@@ -15,7 +15,7 @@ import (
 type ExecuteOptions struct {
 	ProjectPath  string
 	ResultsFile  string
-	StatusWriter *status.Writer
+	StatusWriter status.WriterInterface
 	TimeoutType  string // "compile", "test", or "total" — used when context is cancelled
 }
 
@@ -75,6 +75,21 @@ func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.
 			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
 		}
 		compileErrors := ParseCompileErrorsWithProject(stderr, opts.ProjectPath)
+		return &history.RunResult{
+			SchemaVersion: "1",
+			ExitCode:      2,
+			Tests:         make([]parser.TestCase, 0),
+			Errors:        compileErrors,
+		}, 2
+	}
+
+	// Even if XML was produced, check stderr for compile errors
+	// (Unity can emit compile errors and produce a partial/empty XML)
+	compileErrors := ParseCompileErrorsWithProject(stderr, opts.ProjectPath)
+	if len(compileErrors) > 0 {
+		if opts.StatusWriter != nil {
+			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
+		}
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      2,

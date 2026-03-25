@@ -33,6 +33,11 @@ type Status struct {
 	UpdatedAt     string `json:"updated_at"`
 }
 
+// WriterInterface is the interface for writing status updates.
+type WriterInterface interface {
+	Write(s Status) error
+}
+
 // Writer writes Status atomically to a file path.
 type Writer struct {
 	path string
