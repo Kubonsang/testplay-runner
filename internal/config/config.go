@@ -23,10 +23,14 @@ type Config struct {
 	configDir     string   // unexported: directory containing fastplay.json
 }
 
+// Timeouts holds timeout configuration for a fastplay run.
+// Only TotalMs is enforced at runtime in the current implementation.
+// CompileMs and TestMs are reserved for future phase-aware execution;
+// they are accepted in the config file but have no runtime effect.
 type Timeouts struct {
-	CompileMs int64 `json:"compile_ms"`
-	TestMs    int64 `json:"test_ms"`
-	TotalMs   int64 `json:"total_ms"`
+	CompileMs int64 `json:"compile_ms"` // reserved; no runtime effect
+	TestMs    int64 `json:"test_ms"`    // reserved; no runtime effect
+	TotalMs   int64 `json:"total_ms"`   // enforced; default 300000
 }
 
 // Validate fills in default values and validates required fields.
@@ -52,19 +56,13 @@ func (c *Config) Validate() error {
 		c.ResultDir = ".fastplay/results"
 	}
 
-	// Default timeouts
-	if c.Timeout.CompileMs == 0 {
-		c.Timeout.CompileMs = 120000
-	}
-	if c.Timeout.TestMs == 0 {
-		c.Timeout.TestMs = 30000
-	}
+	// Default total timeout
 	if c.Timeout.TotalMs == 0 {
 		c.Timeout.TotalMs = 300000
 	}
 
-	// Reject negative timeout values (checked after defaults so zero → default → positive is valid)
-	if c.Timeout.CompileMs < 0 || c.Timeout.TestMs < 0 || c.Timeout.TotalMs < 0 {
+	// Reject negative total timeout (checked after default so zero → default → positive is valid)
+	if c.Timeout.TotalMs < 0 {
 		return fmt.Errorf("%w: timeout values must be positive", ErrConfigInvalid)
 	}
 
