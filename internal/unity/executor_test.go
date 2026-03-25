@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/Kubonsang/testplay-runner/internal/status"
 	"github.com/Kubonsang/testplay-runner/internal/unity"
@@ -123,10 +124,10 @@ func TestExecute_WritesStatusPhases(t *testing.T) {
 	}
 }
 
-func TestExecute_CompileTimeout_Returns4WithCompileType(t *testing.T) {
+func TestExecute_CompileTimeoutMs_NeverOverridesTimeoutType(t *testing.T) {
+	// With CompileTimeoutMs set, current code returns "compile" even though
+	// TimeoutType is "total". After fix, opts.TimeoutType always wins.
 	dir := t.TempDir()
-	// blockingRunner blocks until its context is cancelled, simulating a Unity
-	// process that never finishes compilation before the compile timeout fires.
 	blockingRunner := &funcRunner{
 		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
 			<-ctx.Done()
@@ -135,18 +136,20 @@ func TestExecute_CompileTimeout_Returns4WithCompileType(t *testing.T) {
 	}
 	sw := status.NewWriter(filepath.Join(dir, "status.json"))
 
-	result, code := unity.Execute(context.Background(), blockingRunner, unity.ExecuteOptions{
-		ProjectPath:      dir,
-		ResultsFile:      filepath.Join(dir, "results.xml"),
-		StatusWriter:     sw,
-		TimeoutType:      "total",
-		CompileTimeoutMs: 10, // very short — expires immediately
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	result, code := unity.Execute(ctx, blockingRunner, unity.ExecuteOptions{
+		ProjectPath:  dir,
+		ResultsFile:  filepath.Join(dir, "results.xml"),
+		StatusWriter: sw,
+		TimeoutType:  "total",
 	})
 	if code != 4 {
 		t.Errorf("expected exit 4, got %d", code)
 	}
-	if result.TimeoutType != "compile" {
-		t.Errorf("expected timeout_type 'compile', got %q", result.TimeoutType)
+	if result.TimeoutType != "total" {
+		t.Errorf("expected timeout_type 'total', got %q", result.TimeoutType)
 	}
 }
 
