@@ -123,6 +123,43 @@ func TestExecute_WritesStatusPhases(t *testing.T) {
 	}
 }
 
+func TestExecute_CompileTimeout_Returns4WithCompileType(t *testing.T) {
+	dir := t.TempDir()
+	// blockingRunner blocks until its context is cancelled, simulating a Unity
+	// process that never finishes compilation before the compile timeout fires.
+	blockingRunner := &funcRunner{
+		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+			<-ctx.Done()
+			return nil, nil, -1, ctx.Err()
+		},
+	}
+	sw := status.NewWriter(filepath.Join(dir, "status.json"))
+
+	result, code := unity.Execute(context.Background(), blockingRunner, unity.ExecuteOptions{
+		ProjectPath:      dir,
+		ResultsFile:      filepath.Join(dir, "results.xml"),
+		StatusWriter:     sw,
+		TimeoutType:      "total",
+		CompileTimeoutMs: 10, // very short — expires immediately
+	})
+	if code != 4 {
+		t.Errorf("expected exit 4, got %d", code)
+	}
+	if result.TimeoutType != "compile" {
+		t.Errorf("expected timeout_type 'compile', got %q", result.TimeoutType)
+	}
+}
+
+// funcRunner implements Runner via a pluggable function, for tests that need
+// custom blocking or error behaviour that fakeRunner cannot provide.
+type funcRunner struct {
+	run func(ctx context.Context, args []string) ([]byte, []byte, int, error)
+}
+
+func (f *funcRunner) Run(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+	return f.run(ctx, args)
+}
+
 func TestExecute_CompileErrorsInStderr_Returns2(t *testing.T) {
 	dir := t.TempDir()
 	// fakeRunner writes an empty XML but also has compile errors in stderr

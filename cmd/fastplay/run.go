@@ -77,12 +77,13 @@ func runRun(w io.Writer, deps runDeps) int {
 
 	// Build execution options
 	execOpts := unity.ExecuteOptions{
-		ProjectPath:  cfg.ProjectPath,
-		ResultsFile:  resultsFile,
-		StatusWriter: status.NewWriter(deps.statusPath),
-		TimeoutType:  "total",
-		Filter:       deps.opts.Filter,
-		Category:     deps.opts.Category,
+		ProjectPath:      cfg.ProjectPath,
+		ResultsFile:      resultsFile,
+		StatusWriter:     status.NewWriter(deps.statusPath),
+		TimeoutType:      "total",
+		Filter:           deps.opts.Filter,
+		Category:         deps.opts.Category,
+		CompileTimeoutMs: cfg.Timeout.CompileMs,
 	}
 
 	// Execute
