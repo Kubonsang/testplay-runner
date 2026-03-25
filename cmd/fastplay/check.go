@@ -27,7 +27,7 @@ func runCheck(w io.Writer, deps checkDeps) int {
 	}
 
 	// Validate config (fills defaults, checks unity path)
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.Validate(true); err != nil {
 		writeJSON(w, map[string]any{
 			"ready": false,
 			"error": err.Error(),

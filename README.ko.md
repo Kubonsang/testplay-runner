@@ -1,6 +1,6 @@
 # testplay-runner
 
-**AI 에이전트를 위한 신뢰할 수 있는 Unity Play Mode 테스트 실행기**
+**AI 에이전트를 위한 신뢰할 수 있는 Unity 테스트 실행기**
 
 한국어 | [English](README.md)
 
@@ -45,8 +45,6 @@ GOOS=windows GOARCH=amd64 go build -o fastplay.exe ./cmd/fastplay
   "unity_path": "/Applications/Unity/Hub/Editor/2022.3.0f1/Unity.app/Contents/MacOS/Unity",
   "project_path": "/path/to/your/UnityProject",
   "timeout": {
-    "compile_ms": 120000,
-    "test_ms": 30000,
     "total_ms": 300000
   },
   "result_dir": ".fastplay/results"
@@ -55,6 +53,8 @@ GOOS=windows GOARCH=amd64 go build -o fastplay.exe ./cmd/fastplay
 
 `unity_path`를 생략하면 `UNITY_PATH` 환경변수로 폴백합니다.
 `project_path`를 생략하면 `fastplay.json`이 위치한 디렉터리가 기본값이 됩니다.
+
+> **참고:** `compile_ms`와 `test_ms`는 설정 파일에서 허용되지만 현재 런타임에서 아무런 효과가 없습니다 (향후 페이즈 인식 구현을 위해 예약된 필드).
 
 ## 명령어
 
@@ -106,7 +106,7 @@ fastplay list
 
 ### `fastplay run`
 
-Unity Play Mode 테스트를 실행합니다. 진행 상황은 `fastplay-status.json`에 스트리밍됩니다.
+Unity 테스트(현재 EditMode)를 실행합니다. 진행 상황은 `fastplay-status.json`에 스트리밍됩니다.
 
 ```bash
 fastplay run
@@ -198,7 +198,7 @@ fastplay result --last 3
 | 1 | Unity / 프로젝트 경로 없음 | 환경 수정, `hint` 필드 참조 |
 | 2 | 컴파일 실패 | 소스 수정, `errors[].absolute_path` + `line` 참조 |
 | 3 | 테스트 실패 | 테스트 수정, `tests[].absolute_path` + `line` 참조 |
-| 4 | 타임아웃 | `timeout_type` 확인: `compile` / `test` / `total` |
+| 4 | 타임아웃 (`total_ms` 초과) | `timeout_type` 확인: 현재는 `total`만 지원; `compile`/`test`는 향후 지원 예정 |
 | 5 | 설정 오류 | `fastplay.json` 수정 또는 생성 |
 | 6 | 빌드 실패 | Unity 라이선스 / 빌드 타겟 확인 |
 | 7 | 권한 오류 | 경로 권한 수정 |
@@ -222,7 +222,7 @@ fastplay result --last 3
 ```
 
 페이즈 진행: `waiting → compiling → running → done`
-실패 페이즈: `timeout_compile`, `timeout_test`, `timeout_total`, `interrupted`
+실패 페이즈: `timeout_total`, `interrupted`
 
 ## 권장 에이전트 흐름
 

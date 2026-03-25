@@ -23,21 +23,29 @@ type Config struct {
 	configDir     string   // unexported: directory containing fastplay.json
 }
 
+// Timeouts holds timeout configuration for a fastplay run.
+// Only TotalMs is enforced at runtime in the current implementation.
+// CompileMs and TestMs are reserved for future phase-aware execution;
+// they are accepted in the config file but have no runtime effect.
 type Timeouts struct {
-	CompileMs int64 `json:"compile_ms"`
-	TestMs    int64 `json:"test_ms"`
-	TotalMs   int64 `json:"total_ms"`
+	CompileMs int64 `json:"compile_ms"` // reserved; no runtime effect
+	TestMs    int64 `json:"test_ms"`    // reserved; no runtime effect
+	TotalMs   int64 `json:"total_ms"`   // enforced; default 300000
 }
 
 // Validate fills in default values and validates required fields.
 // It mutates the Config in place.
-func (c *Config) Validate() error {
-	// Unity path: config field → env var
-	if c.UnityPath == "" {
-		c.UnityPath = os.Getenv("UNITY_PATH")
-	}
-	if c.UnityPath == "" {
-		return fmt.Errorf("%w", ErrUnityPathMissing)
+// When requireUnity is true, unity_path (or UNITY_PATH env var) must be present.
+// When requireUnity is false, the unity_path check is skipped (used by list/result).
+func (c *Config) Validate(requireUnity bool) error {
+	if requireUnity {
+		// Unity path: config field → env var
+		if c.UnityPath == "" {
+			c.UnityPath = os.Getenv("UNITY_PATH")
+		}
+		if c.UnityPath == "" {
+			return fmt.Errorf("%w", ErrUnityPathMissing)
+		}
 	}
 
 	// Project path: default to directory containing config file
@@ -52,19 +60,13 @@ func (c *Config) Validate() error {
 		c.ResultDir = ".fastplay/results"
 	}
 
-	// Default timeouts
-	if c.Timeout.CompileMs == 0 {
-		c.Timeout.CompileMs = 120000
-	}
-	if c.Timeout.TestMs == 0 {
-		c.Timeout.TestMs = 30000
-	}
+	// Default total timeout
 	if c.Timeout.TotalMs == 0 {
 		c.Timeout.TotalMs = 300000
 	}
 
-	// Reject negative timeout values (checked after defaults so zero → default → positive is valid)
-	if c.Timeout.CompileMs < 0 || c.Timeout.TestMs < 0 || c.Timeout.TotalMs < 0 {
+	// Reject negative total timeout (checked after default so zero → default → positive is valid)
+	if c.Timeout.TotalMs < 0 {
 		return fmt.Errorf("%w: timeout values must be positive", ErrConfigInvalid)
 	}
 

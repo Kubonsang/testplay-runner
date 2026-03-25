@@ -1,6 +1,6 @@
 # testplay-runner
 
-**Go CLI that makes Unity Play Mode tests reliable for AI agents**
+**Go CLI that makes Unity tests reliable for AI agents**
 
 [한국어](README.ko.md) | English
 
@@ -45,8 +45,6 @@ Create `fastplay.json` in your project root:
   "unity_path": "/Applications/Unity/Hub/Editor/2022.3.0f1/Unity.app/Contents/MacOS/Unity",
   "project_path": "/path/to/your/UnityProject",
   "timeout": {
-    "compile_ms": 120000,
-    "test_ms": 30000,
     "total_ms": 300000
   },
   "result_dir": ".fastplay/results"
@@ -55,6 +53,8 @@ Create `fastplay.json` in your project root:
 
 `unity_path` falls back to the `UNITY_PATH` environment variable if omitted.
 `project_path` defaults to the directory containing `fastplay.json`.
+
+> **Note:** `compile_ms` and `test_ms` are accepted in the config file but currently have no runtime effect (reserved for future phase-aware implementation).
 
 ## Commands
 
@@ -106,7 +106,7 @@ fastplay list
 
 ### `fastplay run`
 
-Runs Unity Play Mode tests. Streams progress to `fastplay-status.json`.
+Runs Unity tests (currently EditMode). Streams progress to `fastplay-status.json`.
 
 ```bash
 fastplay run
@@ -198,7 +198,7 @@ fastplay result --last 3
 | 1 | Unity / project not found | Fix env, check `hint` field |
 | 2 | Compile failure | Fix source, see `errors[].absolute_path` + `line` |
 | 3 | Test failure | Fix test, see `tests[].absolute_path` + `line` |
-| 4 | Timeout | Check `timeout_type`: `compile` / `test` / `total` |
+| 4 | Timeout (`total_ms` exceeded) | Check `timeout_type`: `total` (current); `compile`/`test` reserved for future |
 | 5 | Config error | Fix or create `fastplay.json` |
 | 6 | Build failure | Check Unity license / build target |
 | 7 | Permission error | Fix path permissions |
@@ -222,7 +222,7 @@ During `fastplay run`, poll `fastplay-status.json` to track progress:
 ```
 
 Phase progression: `waiting → compiling → running → done`
-Failure phases: `timeout_compile`, `timeout_test`, `timeout_total`, `interrupted`
+Failure phases: `timeout_total`, `interrupted`
 
 ## Recommended Agent Flow
 

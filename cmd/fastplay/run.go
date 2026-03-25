@@ -46,7 +46,7 @@ func runRun(w io.Writer, deps runDeps) int {
 		writeJSON(w, map[string]any{"error": err.Error(), "new_failures": nil})
 		return 5
 	}
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.Validate(true); err != nil {
 		writeJSON(w, map[string]any{"error": err.Error(), "new_failures": nil})
 		return 1
 	}
@@ -82,13 +82,12 @@ func runRun(w io.Writer, deps runDeps) int {
 
 	// Build execution options
 	execOpts := unity.ExecuteOptions{
-		ProjectPath:      cfg.ProjectPath,
-		ResultsFile:      resultsFile,
-		StatusWriter:     status.NewWriter(deps.statusPath),
-		TimeoutType:      "total",
-		Filter:           deps.opts.Filter,
-		Category:         deps.opts.Category,
-		CompileTimeoutMs: cfg.Timeout.CompileMs,
+		ProjectPath:  cfg.ProjectPath,
+		ResultsFile:  resultsFile,
+		StatusWriter: status.NewWriter(deps.statusPath),
+		TimeoutType:  "total",
+		Filter:       deps.opts.Filter,
+		Category:     deps.opts.Category,
 	}
 
 	// Execute
@@ -163,7 +162,7 @@ var runFilter, runCategory, runCompareRun string
 
 var runCmd = &cobra.Command{
 	Use:   "run",
-	Short: "Execute Unity Play Mode tests",
+	Short: "Execute Unity tests",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()

@@ -38,6 +38,10 @@ func runList(w io.Writer, deps listDeps) int {
 		return nil
 	})
 	if err != nil {
+		if os.IsNotExist(err) {
+			writeJSON(w, map[string]any{"tests": tests})
+			return 0
+		}
 		writeJSON(w, map[string]any{"tests": tests, "error": err.Error()})
 		return 1
 	}
@@ -119,7 +123,7 @@ var listCmd = &cobra.Command{
 		// Try to load config to get project path
 		cfg, err := config.Load("fastplay.json")
 		if err == nil {
-			_ = cfg.Validate()
+			_ = cfg.Validate(false)
 			deps.projectPath = cfg.ProjectPath
 		}
 		code := runList(cmd.OutOrStdout(), deps)

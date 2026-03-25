@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"encoding/json"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -9,12 +9,18 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:   "fastplay",
-	Short: "Unity Play Mode test runner for AI agents",
+	Short: "Unity test runner for AI agents",
 }
 
 func main() {
+	rootCmd.SilenceErrors = true
+	rootCmd.SilenceUsage = true
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		enc := json.NewEncoder(os.Stdout)
+		_ = enc.Encode(map[string]any{
+			"schema_version": "1",
+			"error":          err.Error(),
+		})
 		os.Exit(1)
 	}
 }

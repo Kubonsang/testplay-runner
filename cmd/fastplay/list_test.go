@@ -85,3 +85,45 @@ func TestListCmd_SchemaVersionPresent(t *testing.T) {
 		t.Error("schema_version must be present in list output")
 	}
 }
+
+func TestListCmd_NoUnityPath_StillScansFiles(t *testing.T) {
+	dir := t.TempDir()
+	csContent := `using NUnit.Framework;
+public class MyTests {
+    [Test]
+    public void TestFoo() {}
+}`
+	if err := os.WriteFile(filepath.Join(dir, "MyTests.cs"), []byte(csContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	code := runList(&buf, listDeps{projectPath: dir})
+	if code != 0 {
+		t.Errorf("expected exit 0, got %d\noutput: %s", code, buf.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	tests, ok := out["tests"].([]any)
+	if !ok || len(tests) == 0 {
+		t.Errorf("expected at least one test, got: %v", out["tests"])
+	}
+}
+
+func TestListCmd_EmptyProjectPath_OutputsJSON(t *testing.T) {
+	// projectPath that doesn't exist — should still return valid JSON with empty tests
+	var buf bytes.Buffer
+	code := runList(&buf, listDeps{projectPath: "/nonexistent/path/that/does/not/exist"})
+	if code != 0 {
+		t.Errorf("expected exit 0 for missing dir (returns empty), got %d\noutput: %s", code, buf.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("output must be valid JSON: %v\n%s", err, buf.String())
+	}
+	if out["schema_version"] == nil {
+		t.Error("schema_version must be present in all JSON responses")
+	}
+}

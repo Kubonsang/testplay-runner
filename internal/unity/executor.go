@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/Kubonsang/testplay-runner/internal/history"
 	"github.com/Kubonsang/testplay-runner/internal/parser"
@@ -14,13 +13,12 @@ import (
 
 // ExecuteOptions configures a Unity test execution.
 type ExecuteOptions struct {
-	ProjectPath      string
-	ResultsFile      string
-	StatusWriter     status.WriterInterface
-	TimeoutType      string // "compile", "test", or "total" — used when context is cancelled
-	Filter           string
-	Category         string
-	CompileTimeoutMs int64 // if > 0, kills Unity if still in compile phase after this many ms
+	ProjectPath  string
+	ResultsFile  string
+	StatusWriter status.WriterInterface
+	TimeoutType  string // "total" — propagated to RunResult.TimeoutType on context cancellation
+	Filter       string
+	Category     string
 }
 
 // Execute runs Unity tests using the provided Runner and returns the result + exit code.
@@ -45,42 +43,18 @@ func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.
 	}
 	args := BuildRunArgs(opts.ProjectPath, runOpts)
 
-	// Apply compile-phase sub-context so Unity is killed if compile_ms expires.
-	compileCtx := ctx
-	compileCancel := func() {}
-	if opts.CompileTimeoutMs > 0 {
-		compileCtx, compileCancel = context.WithTimeout(ctx, time.Duration(opts.CompileTimeoutMs)*time.Millisecond)
-	}
-	defer compileCancel()
-
 	// Run Unity
-	_, stderr, _, err := runner.Run(compileCtx, args)
+	_, stderr, _, err := runner.Run(ctx, args)
 
 	// Check for context cancellation (timeout / interrupt)
 	if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-		timeoutType := opts.TimeoutType
-		// Attribute to compile timeout only when the compile sub-context is what
-		// expired and the parent context is still alive (i.e. total timeout has
-		// not fired yet).
-		if opts.CompileTimeoutMs > 0 && compileCtx.Err() != nil && ctx.Err() == nil {
-			timeoutType = "compile"
-		}
-		// else: parent context (total/interrupted) — keep opts.TimeoutType
-
 		if opts.StatusWriter != nil {
-			phase := status.PhaseTimeoutTotal
-			switch timeoutType {
-			case "compile":
-				phase = status.PhaseTimeoutCompile
-			case "test":
-				phase = status.PhaseTimeoutTest
-			}
-			_ = opts.StatusWriter.Write(status.Status{Phase: phase})
+			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseTimeoutTotal})
 		}
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      4,
-			TimeoutType:   timeoutType,
+			TimeoutType:   opts.TimeoutType,
 			Tests:         []parser.TestCase{},
 			Errors:        []history.CompileError{},
 		}, 4
