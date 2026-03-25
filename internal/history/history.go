@@ -37,6 +37,7 @@ type RunResult struct {
 	Total         int               `json:"total,omitempty"`
 	Passed        int               `json:"passed,omitempty"`
 	Failed        int               `json:"failed,omitempty"`
+	Skipped       int               `json:"skipped,omitempty"`
 	Tests         []parser.TestCase `json:"tests"`
 	Errors        []CompileError    `json:"errors,omitempty"`
 	NewFailures   []parser.TestCase `json:"new_failures"` // null when compare-run not specified

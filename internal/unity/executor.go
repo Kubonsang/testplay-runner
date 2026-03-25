@@ -135,6 +135,7 @@ func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.
 		Total:         parseResult.Total,
 		Passed:        parseResult.Passed,
 		Failed:        parseResult.Failed,
+		Skipped:       parseResult.Skipped,
 		Tests:         parseResult.Tests,
 	}, exitCode
 }

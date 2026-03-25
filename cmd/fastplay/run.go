@@ -142,6 +142,7 @@ func runRun(w io.Writer, deps runDeps) int {
 		"total":        len(result.Tests),
 		"passed":       countByResult(result.Tests, "Passed"),
 		"failed":       countByResult(result.Tests, "Failed"),
+		"skipped":      countByResult(result.Tests, "Skipped"),
 		"tests":        result.Tests,
 		"errors":       errors,
 		"new_failures": newFailures,

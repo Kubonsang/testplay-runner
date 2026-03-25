@@ -56,6 +56,12 @@ func TestRunCmd_AllPass_Exit0(t *testing.T) {
 	if out["run_id"] == nil || out["run_id"] == "" {
 		t.Error("run_id must be present and non-empty")
 	}
+	skipped, ok := out["skipped"]
+	if !ok {
+		t.Error("skipped field must be present in run output")
+	} else if skipped != float64(0) {
+		t.Errorf("expected skipped=0, got %v", skipped)
+	}
 }
 
 func TestRunCmd_TestFailure_Exit3(t *testing.T) {
