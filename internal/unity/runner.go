@@ -1,6 +1,7 @@
 package unity
 
 import (
+	"bytes"
 	"context"
 	"os/exec"
 )
@@ -19,14 +20,17 @@ type ProcessRunner struct {
 // Run executes the Unity binary with the provided args.
 func (r *ProcessRunner) Run(ctx context.Context, args []string) ([]byte, []byte, int, error) {
 	cmd := exec.CommandContext(ctx, r.UnityPath, args...)
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
 	stdout, err := cmd.Output()
-	stderr := []byte{}
+	stderr := stderrBuf.Bytes()
 	if exitErr, ok := err.(*exec.ExitError); ok {
-		stderr = exitErr.Stderr
+		// exitErr.Stderr is populated by cmd.Output() only when cmd.Stderr is nil.
+		// Since we set cmd.Stderr, use stderrBuf instead.
 		return stdout, stderr, exitErr.ExitCode(), nil
 	}
 	if err != nil {
-		return nil, nil, -1, err
+		return nil, stderr, -1, err
 	}
 	return stdout, stderr, 0, nil
 }
