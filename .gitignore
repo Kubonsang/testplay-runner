@@ -1,6 +1,6 @@
 # Go build artifacts
-fastplay
-fastplay.exe
+/fastplay
+/fastplay.exe
 
 # Test cache
 *.test
