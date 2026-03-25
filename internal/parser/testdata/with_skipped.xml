@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<test-run id="5" result="Failed" total="3" passed="1" failed="1" skipped="1" duration="0.300">
+  <test-suite type="Assembly" name="MyProject.Tests.dll" result="Failed">
+    <test-case id="1" name="MyTests.TestPass" fullname="MyTests.TestPass" result="Passed" duration="0.100" />
+    <test-case id="2" name="MyTests.TestFail" fullname="MyTests.TestFail" result="Failed" duration="0.150">
+      <failure>
+        <message><![CDATA[Expected 1 but got 2]]></message>
+        <stack-trace><![CDATA[ at MyTests.TestFail() in /home/user/MyProject/Assets/Tests/MyTests.cs:line 55]]></stack-trace>
+      </failure>
+    </test-case>
+    <test-case id="3" name="MyTests.TestSkip" fullname="MyTests.TestSkip" result="Skipped" duration="0.001">
+      <reason><message><![CDATA[Test ignored]]></message></reason>
+    </test-case>
+  </test-suite>
+</test-run>
