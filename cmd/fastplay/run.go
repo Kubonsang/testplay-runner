@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -29,6 +30,7 @@ type runDeps struct {
 	runner      unity.Runner
 	statusPath  string
 	resultStore *history.Store
+	saveFunc    func(string, *history.RunResult) error
 	opts        RunCmdOptions
 }
 
@@ -123,9 +125,15 @@ func runRun(w io.Writer, deps runDeps) int {
 		}
 	}
 
+	// Resolve saveFunc: use injected func (for tests) or default to resultStore.Save
+	saveFunc := deps.saveFunc
+	if saveFunc == nil {
+		saveFunc = deps.resultStore.Save
+	}
+
 	// Save result
 	result.NewFailures = newFailures
-	_ = deps.resultStore.Save(runID, result)
+	saveErr := saveFunc(runID, result)
 
 	// Build output — newFailures nil → JSON null when no --compare-run
 	output := map[string]any{
@@ -140,6 +148,10 @@ func runRun(w io.Writer, deps runDeps) int {
 	}
 	if result.TimeoutType != "" {
 		output["timeout_type"] = result.TimeoutType
+	}
+	if saveErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to save result: %v\n", saveErr)
+		output["warning"] = "result not saved: " + saveErr.Error()
 	}
 
 	writeJSON(w, output)
