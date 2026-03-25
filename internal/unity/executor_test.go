@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/Kubonsang/testplay-runner/internal/status"
@@ -104,15 +105,6 @@ func (s *spyWriter) Write(st status.Status) error {
 	return nil
 }
 
-func containsPhase(phases []status.Phase, p status.Phase) bool {
-	for _, ph := range phases {
-		if ph == p {
-			return true
-		}
-	}
-	return false
-}
-
 func TestExecute_WritesStatusPhases(t *testing.T) {
 	dir := t.TempDir()
 	xmlData := mustReadFixture(t, "../parser/testdata/passing.xml")
@@ -125,11 +117,9 @@ func TestExecute_WritesStatusPhases(t *testing.T) {
 		StatusWriter: spy,
 	})
 
-	if !containsPhase(spy.phases, status.PhaseCompiling) {
-		t.Error("expected PhaseCompiling to be written")
-	}
-	if !containsPhase(spy.phases, status.PhaseDone) {
-		t.Error("expected PhaseDone to be written")
+	expected := []status.Phase{status.PhaseCompiling, status.PhaseRunning, status.PhaseDone}
+	if !reflect.DeepEqual(spy.phases, expected) {
+		t.Errorf("expected phase sequence %v, got %v", expected, spy.phases)
 	}
 }
 
