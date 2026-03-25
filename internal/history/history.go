@@ -152,7 +152,7 @@ func Compare(prev, curr *RunResult) []parser.TestCase {
 		}
 	}
 
-	var newFails []parser.TestCase
+	newFails := make([]parser.TestCase, 0)
 	for _, tc := range curr.Tests {
 		if tc.Result == "Failed" && !prevFailed[tc.Name] {
 			newFails = append(newFails, tc)

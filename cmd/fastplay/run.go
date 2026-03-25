@@ -24,6 +24,7 @@ type RunCmdOptions struct {
 }
 
 type runDeps struct {
+	ctx         context.Context
 	loadConfig  func(string) (*config.Config, error)
 	runner      unity.Runner
 	statusPath  string
@@ -32,6 +33,11 @@ type runDeps struct {
 }
 
 func runRun(w io.Writer, deps runDeps) int {
+	ctx := deps.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	// Load config
 	cfg, err := deps.loadConfig("fastplay.json")
 	if err != nil {
@@ -41,6 +47,14 @@ func runRun(w io.Writer, deps runDeps) int {
 	if err := cfg.Validate(); err != nil {
 		writeJSON(w, map[string]any{"error": err.Error(), "new_failures": nil})
 		return 1
+	}
+
+	// Lazily initialise runner and store from config when not injected (production path)
+	if deps.runner == nil {
+		deps.runner = &unity.ProcessRunner{UnityPath: cfg.UnityPath}
+	}
+	if deps.resultStore == nil {
+		deps.resultStore = history.NewStore(cfg.ResultDir)
 	}
 
 	// Generate run_id
@@ -66,7 +80,6 @@ func runRun(w io.Writer, deps runDeps) int {
 	}
 
 	// Execute
-	ctx := context.Background()
 	result, exitCode := unity.Execute(ctx, deps.runner, execOpts)
 	result.RunID = runID
 	result.SchemaVersion = "1"
@@ -74,6 +87,24 @@ func runRun(w io.Writer, deps runDeps) int {
 	// Ensure tests is never null
 	if result.Tests == nil {
 		result.Tests = make([]parser.TestCase, 0)
+	}
+
+	// Fix File fields to be relative to the project path
+	for i := range result.Tests {
+		if result.Tests[i].AbsolutePath != "" {
+			result.Tests[i].File = parser.MakeRelative(cfg.ProjectPath, result.Tests[i].AbsolutePath)
+		}
+	}
+	for i := range result.Errors {
+		if result.Errors[i].AbsolutePath != "" {
+			result.Errors[i].File = parser.MakeRelative(cfg.ProjectPath, result.Errors[i].AbsolutePath)
+		}
+	}
+
+	// Ensure errors is never null
+	errors := result.Errors
+	if errors == nil {
+		errors = make([]history.CompileError, 0)
 	}
 
 	// Compare runs if requested — newFailures stays nil when no --compare-run
@@ -100,7 +131,7 @@ func runRun(w io.Writer, deps runDeps) int {
 		"passed":       countByResult(result.Tests, "Passed"),
 		"failed":       countByResult(result.Tests, "Failed"),
 		"tests":        result.Tests,
-		"errors":       result.Errors,
+		"errors":       errors,
 		"new_failures": newFailures,
 	}
 	if result.TimeoutType != "" {
@@ -128,22 +159,22 @@ var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Execute Unity Play Mode tests",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Load("fastplay.json")
-		if err != nil {
-			return err
-		}
-		if err := cfg.Validate(); err != nil {
-			return err
-		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 
-		runner := &unity.ProcessRunner{UnityPath: cfg.UnityPath}
-		store := history.NewStore(cfg.ResultDir)
+		statusPath := "fastplay-status.json"
+		sigCh := setupSignals()
+		go watchSignals(ctx, cancel, sigCh, func() {
+			// Best-effort: write interrupted status so pollers see the phase change
+			_ = status.NewWriter(statusPath).Write(status.Status{Phase: status.PhaseInterrupted})
+		})
 
 		deps := runDeps{
-			loadConfig:  config.Load,
-			runner:      runner,
-			statusPath:  "fastplay-status.json",
-			resultStore: store,
+			ctx:        ctx,
+			loadConfig: config.Load,
+			// runner and resultStore are intentionally nil; runRun initialises them
+			// from config after loading, avoiding a double config-load.
+			statusPath: statusPath,
 			opts: RunCmdOptions{
 				Filter:     runFilter,
 				Category:   runCategory,

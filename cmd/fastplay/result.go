@@ -22,7 +22,7 @@ func runResult(w io.Writer, deps resultDeps) int {
 			"error": err.Error(),
 			"runs":  make([]*history.RunResult, 0),
 		})
-		return 1
+		return 5
 	}
 
 	if runs == nil {
