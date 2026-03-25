@@ -198,7 +198,7 @@ fastplay result --last 3
 | 1 | Unity / 프로젝트 경로 없음 | 환경 수정, `hint` 필드 참조 |
 | 2 | 컴파일 실패 | 소스 수정, `errors[].absolute_path` + `line` 참조 |
 | 3 | 테스트 실패 | 테스트 수정, `tests[].absolute_path` + `line` 참조 |
-| 4 | 타임아웃 | `timeout_type` 확인: `total` |
+| 4 | 타임아웃 (`total_ms` 초과) | `timeout_type` 확인: 현재는 `total`만 지원; `compile`/`test`는 향후 지원 예정 |
 | 5 | 설정 오류 | `fastplay.json` 수정 또는 생성 |
 | 6 | 빌드 실패 | Unity 라이선스 / 빌드 타겟 확인 |
 | 7 | 권한 오류 | 경로 권한 수정 |

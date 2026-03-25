@@ -198,7 +198,7 @@ fastplay result --last 3
 | 1 | Unity / project not found | Fix env, check `hint` field |
 | 2 | Compile failure | Fix source, see `errors[].absolute_path` + `line` |
 | 3 | Test failure | Fix test, see `tests[].absolute_path` + `line` |
-| 4 | Timeout | Check `timeout_type`: `total` |
+| 4 | Timeout (`total_ms` exceeded) | Check `timeout_type`: `total` (current); `compile`/`test` reserved for future |
 | 5 | Config error | Fix or create `fastplay.json` |
 | 6 | Build failure | Check Unity license / build target |
 | 7 | Permission error | Fix path permissions |

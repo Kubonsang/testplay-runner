@@ -8,6 +8,7 @@ import (
 )
 
 func TestLoad_ValidConfig(t *testing.T) {
+	t.Setenv("UNITY_PATH", "/fake/unity")
 	cfg, err := config.Load("testdata/valid.json")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -15,8 +16,9 @@ func TestLoad_ValidConfig(t *testing.T) {
 	if cfg.SchemaVersion != "1" {
 		t.Errorf("got schema_version %q, want %q", cfg.SchemaVersion, "1")
 	}
-	if cfg.Timeout.CompileMs != 120000 {
-		t.Errorf("got compile_ms %d, want 120000", cfg.Timeout.CompileMs)
+	// Verify a loaded config can be validated successfully
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("loaded config failed Validate(): %v", err)
 	}
 }
 
