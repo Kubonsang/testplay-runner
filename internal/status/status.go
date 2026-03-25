@@ -3,6 +3,7 @@ package status
 import (
 	"encoding/json"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -35,6 +36,7 @@ type Status struct {
 // Writer writes Status atomically to a file path.
 type Writer struct {
 	path string
+	mu   sync.Mutex
 }
 
 // NewWriter creates a Writer targeting path.
@@ -45,6 +47,9 @@ func NewWriter(path string) *Writer {
 // Write serializes s to JSON and atomically replaces the target file.
 // It always sets schema_version and updated_at before writing.
 func (w *Writer) Write(s Status) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	s.SchemaVersion = "1"
 	s.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
