@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"encoding/json"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -13,8 +13,14 @@ var rootCmd = &cobra.Command{
 }
 
 func main() {
+	rootCmd.SilenceErrors = true
+	rootCmd.SilenceUsage = true
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		enc := json.NewEncoder(os.Stdout)
+		_ = enc.Encode(map[string]any{
+			"schema_version": "1",
+			"error":          err.Error(),
+		})
 		os.Exit(1)
 	}
 }

@@ -129,5 +129,25 @@ func TestResultCmd_NoUnityPath_StillWorks(t *testing.T) {
 	}
 }
 
+func TestResultCmd_MissingFastplayJson_OutputsJSON(t *testing.T) {
+	// Even when fastplay.json is missing, result should output valid JSON
+	dir := t.TempDir()
+	store := history.NewStore(filepath.Join(dir, "nonexistent-results"))
+
+	var buf bytes.Buffer
+	code := runResult(&buf, resultDeps{store: store, last: 0})
+	// Should be 0 (empty history is not an error)
+	if code != 0 {
+		t.Errorf("expected exit 0 for empty history, got %d", code)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("output must be valid JSON: %v\n%s", err, buf.String())
+	}
+	if out["schema_version"] == nil {
+		t.Error("schema_version must be present in all JSON responses")
+	}
+}
+
 // suppress unused import warning
 var _ = os.DevNull
