@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -29,13 +30,14 @@ type runDeps struct {
 	runner      unity.Runner
 	statusPath  string
 	resultStore *history.Store
+	saveFunc    func(string, *history.RunResult) error
 	opts        RunCmdOptions
 }
 
 func runRun(w io.Writer, deps runDeps) int {
-	ctx := deps.ctx
-	if ctx == nil {
-		ctx = context.Background()
+	baseCtx := deps.ctx
+	if baseCtx == nil {
+		baseCtx = context.Background()
 	}
 
 	// Load config
@@ -49,12 +51,21 @@ func runRun(w io.Writer, deps runDeps) int {
 		return 1
 	}
 
+	// Apply total timeout from config so Unity cannot hang forever.
+	ctx, cancel := context.WithTimeout(baseCtx, time.Duration(cfg.Timeout.TotalMs)*time.Millisecond)
+	defer cancel()
+
 	// Lazily initialise runner and store from config when not injected (production path)
 	if deps.runner == nil {
 		deps.runner = &unity.ProcessRunner{UnityPath: cfg.UnityPath}
 	}
 	if deps.resultStore == nil {
 		deps.resultStore = history.NewStore(cfg.ResultDir)
+	}
+	// Resolve saveFunc here, immediately after resultStore is guaranteed non-nil.
+	saveFunc := deps.saveFunc
+	if saveFunc == nil {
+		saveFunc = deps.resultStore.Save
 	}
 
 	// Generate run_id
@@ -71,23 +82,19 @@ func runRun(w io.Writer, deps runDeps) int {
 
 	// Build execution options
 	execOpts := unity.ExecuteOptions{
-		ProjectPath:  cfg.ProjectPath,
-		ResultsFile:  resultsFile,
-		StatusWriter: status.NewWriter(deps.statusPath),
-		TimeoutType:  "total",
-		Filter:       deps.opts.Filter,
-		Category:     deps.opts.Category,
+		ProjectPath:      cfg.ProjectPath,
+		ResultsFile:      resultsFile,
+		StatusWriter:     status.NewWriter(deps.statusPath),
+		TimeoutType:      "total",
+		Filter:           deps.opts.Filter,
+		Category:         deps.opts.Category,
+		CompileTimeoutMs: cfg.Timeout.CompileMs,
 	}
 
 	// Execute
 	result, exitCode := unity.Execute(ctx, deps.runner, execOpts)
 	result.RunID = runID
 	result.SchemaVersion = "1"
-
-	// Ensure tests is never null
-	if result.Tests == nil {
-		result.Tests = make([]parser.TestCase, 0)
-	}
 
 	// Fix File fields to be relative to the project path
 	for i := range result.Tests {
@@ -99,12 +106,6 @@ func runRun(w io.Writer, deps runDeps) int {
 		if result.Errors[i].AbsolutePath != "" {
 			result.Errors[i].File = parser.MakeRelative(cfg.ProjectPath, result.Errors[i].AbsolutePath)
 		}
-	}
-
-	// Ensure errors is never null
-	errors := result.Errors
-	if errors == nil {
-		errors = make([]history.CompileError, 0)
 	}
 
 	// Compare runs if requested — newFailures stays nil when no --compare-run
@@ -121,7 +122,7 @@ func runRun(w io.Writer, deps runDeps) int {
 
 	// Save result
 	result.NewFailures = newFailures
-	_ = deps.resultStore.Save(runID, result)
+	saveErr := saveFunc(runID, result)
 
 	// Build output — newFailures nil → JSON null when no --compare-run
 	output := map[string]any{
@@ -130,12 +131,17 @@ func runRun(w io.Writer, deps runDeps) int {
 		"total":        len(result.Tests),
 		"passed":       countByResult(result.Tests, "Passed"),
 		"failed":       countByResult(result.Tests, "Failed"),
+		"skipped":      countByResult(result.Tests, "Skipped"),
 		"tests":        result.Tests,
-		"errors":       errors,
+		"errors":       result.Errors,
 		"new_failures": newFailures,
 	}
 	if result.TimeoutType != "" {
 		output["timeout_type"] = result.TimeoutType
+	}
+	if saveErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to save result: %v\n", saveErr)
+		output["warning"] = "result not saved: " + saveErr.Error()
 	}
 
 	writeJSON(w, output)

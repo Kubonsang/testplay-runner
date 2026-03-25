@@ -70,6 +70,19 @@ func TestValidate_DefaultResultDir(t *testing.T) {
 	}
 }
 
+func TestValidate_NegativeTimeout_ReturnsError(t *testing.T) {
+	t.Setenv("UNITY_PATH", "/fake/unity")
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		ProjectPath:   "/tmp/proj",
+		Timeout:       config.Timeouts{CompileMs: -1},
+	}
+	err := cfg.Validate()
+	if !errors.Is(err, config.ErrConfigInvalid) {
+		t.Errorf("got %v, want ErrConfigInvalid", err)
+	}
+}
+
 func TestValidate_DefaultTimeouts(t *testing.T) {
 	t.Setenv("UNITY_PATH", "/fake/unity")
 	cfg := &config.Config{SchemaVersion: "1", ProjectPath: "/tmp/proj"}

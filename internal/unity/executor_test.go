@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/Kubonsang/testplay-runner/internal/status"
@@ -104,15 +105,6 @@ func (s *spyWriter) Write(st status.Status) error {
 	return nil
 }
 
-func containsPhase(phases []status.Phase, p status.Phase) bool {
-	for _, ph := range phases {
-		if ph == p {
-			return true
-		}
-	}
-	return false
-}
-
 func TestExecute_WritesStatusPhases(t *testing.T) {
 	dir := t.TempDir()
 	xmlData := mustReadFixture(t, "../parser/testdata/passing.xml")
@@ -125,12 +117,47 @@ func TestExecute_WritesStatusPhases(t *testing.T) {
 		StatusWriter: spy,
 	})
 
-	if !containsPhase(spy.phases, status.PhaseCompiling) {
-		t.Error("expected PhaseCompiling to be written")
+	expected := []status.Phase{status.PhaseCompiling, status.PhaseRunning, status.PhaseDone}
+	if !reflect.DeepEqual(spy.phases, expected) {
+		t.Errorf("expected phase sequence %v, got %v", expected, spy.phases)
 	}
-	if !containsPhase(spy.phases, status.PhaseDone) {
-		t.Error("expected PhaseDone to be written")
+}
+
+func TestExecute_CompileTimeout_Returns4WithCompileType(t *testing.T) {
+	dir := t.TempDir()
+	// blockingRunner blocks until its context is cancelled, simulating a Unity
+	// process that never finishes compilation before the compile timeout fires.
+	blockingRunner := &funcRunner{
+		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+			<-ctx.Done()
+			return nil, nil, -1, ctx.Err()
+		},
 	}
+	sw := status.NewWriter(filepath.Join(dir, "status.json"))
+
+	result, code := unity.Execute(context.Background(), blockingRunner, unity.ExecuteOptions{
+		ProjectPath:      dir,
+		ResultsFile:      filepath.Join(dir, "results.xml"),
+		StatusWriter:     sw,
+		TimeoutType:      "total",
+		CompileTimeoutMs: 10, // very short — expires immediately
+	})
+	if code != 4 {
+		t.Errorf("expected exit 4, got %d", code)
+	}
+	if result.TimeoutType != "compile" {
+		t.Errorf("expected timeout_type 'compile', got %q", result.TimeoutType)
+	}
+}
+
+// funcRunner implements Runner via a pluggable function, for tests that need
+// custom blocking or error behaviour that fakeRunner cannot provide.
+type funcRunner struct {
+	run func(ctx context.Context, args []string) ([]byte, []byte, int, error)
+}
+
+func (f *funcRunner) Run(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+	return f.run(ctx, args)
 }
 
 func TestExecute_CompileErrorsInStderr_Returns2(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/Kubonsang/testplay-runner/internal/history"
 	"github.com/Kubonsang/testplay-runner/internal/parser"
@@ -13,12 +14,13 @@ import (
 
 // ExecuteOptions configures a Unity test execution.
 type ExecuteOptions struct {
-	ProjectPath  string
-	ResultsFile  string
-	StatusWriter status.WriterInterface
-	TimeoutType  string // "compile", "test", or "total" — used when context is cancelled
-	Filter       string
-	Category     string
+	ProjectPath      string
+	ResultsFile      string
+	StatusWriter     status.WriterInterface
+	TimeoutType      string // "compile", "test", or "total" — used when context is cancelled
+	Filter           string
+	Category         string
+	CompileTimeoutMs int64 // if > 0, kills Unity if still in compile phase after this many ms
 }
 
 // Execute runs Unity tests using the provided Runner and returns the result + exit code.
@@ -43,14 +45,31 @@ func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.
 	}
 	args := BuildRunArgs(opts.ProjectPath, runOpts)
 
+	// Apply compile-phase sub-context so Unity is killed if compile_ms expires.
+	compileCtx := ctx
+	compileCancel := func() {}
+	if opts.CompileTimeoutMs > 0 {
+		compileCtx, compileCancel = context.WithTimeout(ctx, time.Duration(opts.CompileTimeoutMs)*time.Millisecond)
+	}
+	defer compileCancel()
+
 	// Run Unity
-	_, stderr, _, err := runner.Run(ctx, args)
+	_, stderr, _, err := runner.Run(compileCtx, args)
 
 	// Check for context cancellation (timeout / interrupt)
 	if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+		timeoutType := opts.TimeoutType
+		// Attribute to compile timeout only when the compile sub-context is what
+		// expired and the parent context is still alive (i.e. total timeout has
+		// not fired yet).
+		if opts.CompileTimeoutMs > 0 && compileCtx.Err() != nil && ctx.Err() == nil {
+			timeoutType = "compile"
+		}
+		// else: parent context (total/interrupted) — keep opts.TimeoutType
+
 		if opts.StatusWriter != nil {
 			phase := status.PhaseTimeoutTotal
-			switch opts.TimeoutType {
+			switch timeoutType {
 			case "compile":
 				phase = status.PhaseTimeoutCompile
 			case "test":
@@ -61,8 +80,9 @@ func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      4,
-			TimeoutType:   opts.TimeoutType,
-			Tests:         make([]parser.TestCase, 0),
+			TimeoutType:   timeoutType,
+			Tests:         []parser.TestCase{},
+			Errors:        []history.CompileError{},
 		}, 4
 	}
 
@@ -82,7 +102,7 @@ func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      2,
-			Tests:         make([]parser.TestCase, 0),
+			Tests:         []parser.TestCase{},
 			Errors:        compileErrors,
 		}, 2
 	}
@@ -97,7 +117,7 @@ func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      2,
-			Tests:         make([]parser.TestCase, 0),
+			Tests:         []parser.TestCase{},
 			Errors:        compileErrors,
 		}, 2
 	}
@@ -108,10 +128,8 @@ func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      2,
-			Tests:         make([]parser.TestCase, 0),
-			Errors: []history.CompileError{{
-				Message: fmt.Sprintf("failed to parse test results: %v", parseErr),
-			}},
+			Tests:         []parser.TestCase{},
+			Errors:        []history.CompileError{{Message: fmt.Sprintf("failed to parse test results: %v", parseErr)}},
 		}, 2
 	}
 
@@ -135,6 +153,8 @@ func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.
 		Total:         parseResult.Total,
 		Passed:        parseResult.Passed,
 		Failed:        parseResult.Failed,
+		Skipped:       parseResult.Skipped,
 		Tests:         parseResult.Tests,
+		Errors:        []history.CompileError{},
 	}, exitCode
 }

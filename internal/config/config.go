@@ -63,6 +63,11 @@ func (c *Config) Validate() error {
 		c.Timeout.TotalMs = 300000
 	}
 
+	// Reject negative timeout values (checked after defaults so zero → default → positive is valid)
+	if c.Timeout.CompileMs < 0 || c.Timeout.TestMs < 0 || c.Timeout.TotalMs < 0 {
+		return fmt.Errorf("%w: timeout values must be positive", ErrConfigInvalid)
+	}
+
 	return nil
 }
 

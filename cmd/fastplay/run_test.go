@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -54,6 +55,12 @@ func TestRunCmd_AllPass_Exit0(t *testing.T) {
 	}
 	if out["run_id"] == nil || out["run_id"] == "" {
 		t.Error("run_id must be present and non-empty")
+	}
+	skipped, ok := out["skipped"]
+	if !ok {
+		t.Error("skipped field must be present in run output")
+	} else if skipped != float64(0) {
+		t.Errorf("expected skipped=0, got %v", skipped)
 	}
 }
 
@@ -198,6 +205,53 @@ func TestRunCmd_FilterForwarded(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected -testFilter MyTest.Foo in args, got: %v", cap.lastArgs)
+	}
+}
+
+func TestRunCmd_SaveFailure_IncludesWarning(t *testing.T) {
+	dir := t.TempDir()
+	xmlData := mustReadXMLFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeCmdRunner{resultsXML: xmlData, exitCode: 0}
+
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		UnityPath:     "/fake/unity",
+		ProjectPath:   dir,
+		ResultDir:     filepath.Join(dir, "results"),
+		Timeout:       config.Timeouts{CompileMs: 120000, TestMs: 30000, TotalMs: 300000},
+	}
+
+	saveErr := errors.New("disk full")
+	failingSave := func(runID string, result *history.RunResult) error {
+		return saveErr
+	}
+
+	var buf bytes.Buffer
+	code := runRun(&buf, runDeps{
+		loadConfig:  func(string) (*config.Config, error) { return cfg, nil },
+		runner:      fake,
+		statusPath:  filepath.Join(dir, "status.json"),
+		resultStore: history.NewStore(filepath.Join(dir, "results")),
+		saveFunc:    failingSave,
+		opts:        RunCmdOptions{},
+	})
+
+	// Exit code must not change due to save failure
+	if code != 0 {
+		t.Errorf("expected exit 0 (all tests passed), got %d\noutput: %s", code, buf.String())
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, buf.String())
+	}
+	warning, ok := out["warning"]
+	if !ok {
+		t.Fatalf("expected 'warning' field in JSON output, got: %s", buf.String())
+	}
+	warnStr, _ := warning.(string)
+	if warnStr == "" {
+		t.Error("warning field must be a non-empty string")
 	}
 }
 

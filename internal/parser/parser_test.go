@@ -74,6 +74,33 @@ func TestParse_EmptySuite(t *testing.T) {
 	}
 }
 
+func TestParse_WithSkipped(t *testing.T) {
+	data, err := os.ReadFile("testdata/with_skipped.xml")
+	if err != nil {
+		t.Fatalf("failed to read fixture: %v", err)
+	}
+	result, err := parser.Parse(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Total != 3 {
+		t.Errorf("got Total=%d, want 3", result.Total)
+	}
+	if result.Passed != 1 {
+		t.Errorf("got Passed=%d, want 1", result.Passed)
+	}
+	if result.Failed != 1 {
+		t.Errorf("got Failed=%d, want 1", result.Failed)
+	}
+	if result.Skipped != 1 {
+		t.Errorf("got Skipped=%d, want 1", result.Skipped)
+	}
+	failed := result.FailedTests()
+	if len(failed) != 1 {
+		t.Errorf("got %d failed tests, want 1", len(failed))
+	}
+}
+
 func TestMakeRelative_UnderProjectPath(t *testing.T) {
 	rel := parser.MakeRelative("/home/user/proj", "/home/user/proj/Assets/Tests/Foo.cs")
 	if rel != "Assets/Tests/Foo.cs" {

@@ -20,3 +20,8 @@ fastplay-status.json.tmp
 # Claude Code
 CLAUDE.md
 .claude/
+제안서.docx
+
+# Git worktrees
+.worktrees/
+

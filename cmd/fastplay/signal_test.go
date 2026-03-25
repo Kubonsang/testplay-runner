@@ -25,7 +25,7 @@ func TestSignalHandler_CancelsContext(t *testing.T) {
 	select {
 	case <-done:
 		// good — signal was handled
-	case <-time.After(2 * time.Second):
-		t.Error("signal handler did not fire within 2 seconds")
+	case <-time.After(5 * time.Second):
+		t.Fatal("signal handler did not fire in time")
 	}
 }

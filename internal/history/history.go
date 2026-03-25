@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -13,9 +14,19 @@ import (
 )
 
 var (
-	ErrRunExists   = errors.New("run result already exists")
-	ErrRunNotFound = errors.New("run result not found")
+	ErrRunExists    = errors.New("run result already exists")
+	ErrRunNotFound  = errors.New("run result not found")
+	ErrInvalidRunID = errors.New("invalid run ID format")
 )
+
+var runIDPattern = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}$`)
+
+func validateRunID(runID string) error {
+	if !runIDPattern.MatchString(runID) {
+		return ErrInvalidRunID
+	}
+	return nil
+}
 
 // RunResult is the persisted result of a single fastplay run.
 type RunResult struct {
@@ -26,6 +37,7 @@ type RunResult struct {
 	Total         int               `json:"total,omitempty"`
 	Passed        int               `json:"passed,omitempty"`
 	Failed        int               `json:"failed,omitempty"`
+	Skipped       int               `json:"skipped,omitempty"`
 	Tests         []parser.TestCase `json:"tests"`
 	Errors        []CompileError    `json:"errors,omitempty"`
 	NewFailures   []parser.TestCase `json:"new_failures"` // null when compare-run not specified
@@ -53,6 +65,9 @@ func NewStore(dir string) *Store {
 // Save writes result to <dir>/<runID>.json.
 // Returns ErrRunExists if the file already exists (never overwrites).
 func (s *Store) Save(runID string, result *RunResult) error {
+	if err := validateRunID(runID); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(s.dir, 0755); err != nil {
 		return fmt.Errorf("creating result dir: %w", err)
 	}
@@ -60,11 +75,6 @@ func (s *Store) Save(runID string, result *RunResult) error {
 	path := filepath.Join(s.dir, runID+".json")
 	if _, err := os.Stat(path); err == nil {
 		return fmt.Errorf("%w: %s", ErrRunExists, runID)
-	}
-
-	// Ensure Tests is never null in JSON
-	if result.Tests == nil {
-		result.Tests = make([]parser.TestCase, 0)
 	}
 
 	data, err := json.MarshalIndent(result, "", "  ")
@@ -78,6 +88,9 @@ func (s *Store) Save(runID string, result *RunResult) error {
 // Load reads and parses <dir>/<runID>.json.
 // Returns ErrRunNotFound if the file does not exist.
 func (s *Store) Load(runID string) (*RunResult, error) {
+	if err := validateRunID(runID); err != nil {
+		return nil, err
+	}
 	path := filepath.Join(s.dir, runID+".json")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -92,7 +105,7 @@ func (s *Store) Load(runID string) (*RunResult, error) {
 		return nil, err
 	}
 	if result.Tests == nil {
-		result.Tests = make([]parser.TestCase, 0)
+		result.Tests = []parser.TestCase{}
 	}
 	return &result, nil
 }
