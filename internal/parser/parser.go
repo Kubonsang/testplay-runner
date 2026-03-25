@@ -3,6 +3,7 @@ package parser
 import (
 	"encoding/xml"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -120,6 +121,20 @@ func collectCases(out *[]TestCase, suite xmlTestSuite) {
 	for _, sub := range suite.TestSuites {
 		collectCases(out, sub)
 	}
+}
+
+// MakeRelative returns the path relative to projectPath.
+// If absPath is not under projectPath, it returns absPath unchanged.
+func MakeRelative(projectPath, absPath string) string {
+	rel, err := filepath.Rel(projectPath, absPath)
+	if err != nil {
+		return absPath
+	}
+	// If the result starts with "..", it's outside the project
+	if strings.HasPrefix(rel, "..") {
+		return absPath
+	}
+	return rel
 }
 
 // extractFileAndLine extracts file path and line number from a Unity stack trace.

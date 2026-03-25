@@ -73,3 +73,17 @@ func TestParse_EmptySuite(t *testing.T) {
 		t.Error("Tests must be empty slice, not nil")
 	}
 }
+
+func TestMakeRelative_UnderProjectPath(t *testing.T) {
+	rel := parser.MakeRelative("/home/user/proj", "/home/user/proj/Assets/Tests/Foo.cs")
+	if rel != "Assets/Tests/Foo.cs" {
+		t.Errorf("got %q", rel)
+	}
+}
+
+func TestMakeRelative_OutsideProjectPath(t *testing.T) {
+	rel := parser.MakeRelative("/home/user/proj", "/etc/other/File.cs")
+	if rel != "/etc/other/File.cs" {
+		t.Errorf("got %q, want absolute path unchanged", rel)
+	}
+}
