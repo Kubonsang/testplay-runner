@@ -149,5 +149,23 @@ func TestResultCmd_MissingFastplayJson_OutputsJSON(t *testing.T) {
 	}
 }
 
+func TestRunResult_WithWarning_IncludesWarningInJSON(t *testing.T) {
+	dir := t.TempDir()
+	store := history.NewStore(filepath.Join(dir, "results"))
+
+	var buf bytes.Buffer
+	code := runResult(&buf, resultDeps{store: store, last: 0, warning: "using default result_dir"})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if out["warning"] != "using default result_dir" {
+		t.Errorf("expected warning field, got: %v", out["warning"])
+	}
+}
+
 // suppress unused import warning
 var _ = os.DevNull

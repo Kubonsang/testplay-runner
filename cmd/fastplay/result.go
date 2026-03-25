@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"io"
 	"os"
 
@@ -11,8 +12,9 @@ import (
 )
 
 type resultDeps struct {
-	store *history.Store
-	last  int
+	store   *history.Store
+	last    int
+	warning string
 }
 
 func runResult(w io.Writer, deps resultDeps) int {
@@ -29,7 +31,11 @@ func runResult(w io.Writer, deps resultDeps) int {
 		runs = make([]*history.RunResult, 0)
 	}
 
-	writeJSON(w, map[string]any{"runs": runs})
+	out := map[string]any{"runs": runs}
+	if deps.warning != "" {
+		out["warning"] = deps.warning
+	}
+	writeJSON(w, out)
 	return 0
 }
 
@@ -39,15 +45,21 @@ var resultCmd = &cobra.Command{
 	Use:   "result",
 	Short: "View stored test result history",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		resultDir := ".fastplay/results" // fallback default
+		resultDir := ".fastplay/results"
+		var warn string
 		cfg, err := config.Load("fastplay.json")
 		if err == nil {
 			if valErr := cfg.Validate(false); valErr == nil && cfg.ResultDir != "" {
 				resultDir = cfg.ResultDir
+			} else if valErr != nil {
+				warn = "fastplay.json validation failed, using default result_dir: " + valErr.Error()
 			}
+		} else if !errors.Is(err, config.ErrConfigNotFound) {
+			// fastplay.json exists but is malformed
+			warn = "fastplay.json load failed, using default result_dir: " + err.Error()
 		}
 		store := history.NewStore(resultDir)
-		deps := resultDeps{store: store, last: resultLast}
+		deps := resultDeps{store: store, last: resultLast, warning: warn}
 		code := runResult(cmd.OutOrStdout(), deps)
 		os.Exit(code)
 		return nil
