@@ -14,8 +14,8 @@ import (
 )
 
 var (
-	ErrRunExists   = errors.New("run result already exists")
-	ErrRunNotFound = errors.New("run result not found")
+	ErrRunExists    = errors.New("run result already exists")
+	ErrRunNotFound  = errors.New("run result not found")
 	ErrInvalidRunID = errors.New("invalid run ID format")
 )
 

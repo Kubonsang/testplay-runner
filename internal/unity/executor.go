@@ -81,7 +81,8 @@ func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.
 			SchemaVersion: "1",
 			ExitCode:      4,
 			TimeoutType:   timeoutType,
-			Tests:         make([]parser.TestCase, 0),
+			Tests:         []parser.TestCase{},
+			Errors:        []history.CompileError{},
 		}, 4
 	}
 
@@ -101,7 +102,7 @@ func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      2,
-			Tests:         make([]parser.TestCase, 0),
+			Tests:         []parser.TestCase{},
 			Errors:        compileErrors,
 		}, 2
 	}
@@ -116,7 +117,7 @@ func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      2,
-			Tests:         make([]parser.TestCase, 0),
+			Tests:         []parser.TestCase{},
 			Errors:        compileErrors,
 		}, 2
 	}
@@ -127,10 +128,8 @@ func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      2,
-			Tests:         make([]parser.TestCase, 0),
-			Errors: []history.CompileError{{
-				Message: fmt.Sprintf("failed to parse test results: %v", parseErr),
-			}},
+			Tests:         []parser.TestCase{},
+			Errors:        []history.CompileError{{Message: fmt.Sprintf("failed to parse test results: %v", parseErr)}},
 		}, 2
 	}
 

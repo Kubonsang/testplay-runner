@@ -62,6 +62,11 @@ func runRun(w io.Writer, deps runDeps) int {
 	if deps.resultStore == nil {
 		deps.resultStore = history.NewStore(cfg.ResultDir)
 	}
+	// Resolve saveFunc here, immediately after resultStore is guaranteed non-nil.
+	saveFunc := deps.saveFunc
+	if saveFunc == nil {
+		saveFunc = deps.resultStore.Save
+	}
 
 	// Generate run_id
 	runID := time.Now().Format("20060102-150405")
@@ -113,12 +118,6 @@ func runRun(w io.Writer, deps runDeps) int {
 			// When compare-run specified but not found, return empty array (not null)
 			newFailures = make([]parser.TestCase, 0)
 		}
-	}
-
-	// Resolve saveFunc: use injected func (for tests) or default to resultStore.Save
-	saveFunc := deps.saveFunc
-	if saveFunc == nil {
-		saveFunc = deps.resultStore.Save
 	}
 
 	// Save result
