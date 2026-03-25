@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -20,13 +19,6 @@ type checkDeps struct {
 func runCheck(w io.Writer, deps checkDeps) int {
 	cfg, err := deps.loadConfig(deps.configPath)
 	if err != nil {
-		if errors.Is(err, config.ErrConfigNotFound) || errors.Is(err, config.ErrConfigInvalid) {
-			writeJSON(w, map[string]any{
-				"ready": false,
-				"error": err.Error(),
-			})
-			return 5
-		}
 		writeJSON(w, map[string]any{
 			"ready": false,
 			"error": err.Error(),
