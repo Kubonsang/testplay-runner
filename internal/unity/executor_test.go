@@ -124,9 +124,8 @@ func TestExecute_WritesStatusPhases(t *testing.T) {
 	}
 }
 
-func TestExecute_CompileTimeoutMs_NeverOverridesTimeoutType(t *testing.T) {
-	// With CompileTimeoutMs set, current code returns "compile" even though
-	// TimeoutType is "total". After fix, opts.TimeoutType always wins.
+func TestExecute_TimeoutType_AlwaysPropagated(t *testing.T) {
+	// opts.TimeoutType is always propagated to the result.
 	dir := t.TempDir()
 	blockingRunner := &funcRunner{
 		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
