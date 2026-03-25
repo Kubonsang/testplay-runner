@@ -1,0 +1,62 @@
+package unity
+
+import (
+	"context"
+	"os/exec"
+)
+
+// Runner abstracts the Unity subprocess, allowing tests to inject a fake.
+type Runner interface {
+	// Run executes Unity with the given args.
+	Run(ctx context.Context, args []string) (stdout []byte, stderr []byte, exitCode int, err error)
+}
+
+// ProcessRunner is the real implementation backed by exec.Cmd.
+type ProcessRunner struct {
+	UnityPath string
+}
+
+// Run executes the Unity binary with the provided args.
+func (r *ProcessRunner) Run(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+	cmd := exec.CommandContext(ctx, r.UnityPath, args...)
+	stdout, err := cmd.Output()
+	stderr := []byte{}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		stderr = exitErr.Stderr
+		return stdout, stderr, exitErr.ExitCode(), nil
+	}
+	if err != nil {
+		return nil, nil, -1, err
+	}
+	return stdout, stderr, 0, nil
+}
+
+// RunOptions configures a Unity test run.
+type RunOptions struct {
+	Filter          string
+	Category        string
+	ResultsFilePath string
+}
+
+// BuildRunArgs constructs the Unity CLI arguments for a test run.
+func BuildRunArgs(projectPath string, opts *RunOptions) []string {
+	args := []string{
+		"-batchmode",
+		"-nographics",
+		"-runTests",
+		"-testPlatform", "EditMode",
+		"-projectPath", projectPath,
+	}
+
+	if opts.ResultsFilePath != "" {
+		args = append(args, "-testResults", opts.ResultsFilePath)
+	}
+	if opts.Filter != "" {
+		args = append(args, "-testFilter", opts.Filter)
+	}
+	if opts.Category != "" {
+		args = append(args, "-testCategory", opts.Category)
+	}
+
+	return args
+}
