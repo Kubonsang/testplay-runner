@@ -23,6 +23,9 @@ type RunResult struct {
 	RunID         string            `json:"run_id"`
 	ExitCode      int               `json:"exit_code"`
 	TimeoutType   string            `json:"timeout_type,omitempty"`
+	Total         int               `json:"total,omitempty"`
+	Passed        int               `json:"passed,omitempty"`
+	Failed        int               `json:"failed,omitempty"`
 	Tests         []parser.TestCase `json:"tests"`
 	Errors        []CompileError    `json:"errors,omitempty"`
 	NewFailures   []parser.TestCase `json:"new_failures"` // null when compare-run not specified
