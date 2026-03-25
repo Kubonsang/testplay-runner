@@ -10,9 +10,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/fastplay/runner/internal/config"
-	"github.com/fastplay/runner/internal/history"
-	"github.com/fastplay/runner/internal/parser"
+	"github.com/Kubonsang/fastplay-runner/internal/config"
+	"github.com/Kubonsang/fastplay-runner/internal/history"
+	"github.com/Kubonsang/fastplay-runner/internal/parser"
 )
 
 // integrationRunner is a fake Unity runner for integration tests.

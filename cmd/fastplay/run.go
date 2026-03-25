@@ -9,11 +9,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/fastplay/runner/internal/config"
-	"github.com/fastplay/runner/internal/history"
-	"github.com/fastplay/runner/internal/parser"
-	"github.com/fastplay/runner/internal/status"
-	"github.com/fastplay/runner/internal/unity"
+	"github.com/Kubonsang/fastplay-runner/internal/config"
+	"github.com/Kubonsang/fastplay-runner/internal/history"
+	"github.com/Kubonsang/fastplay-runner/internal/parser"
+	"github.com/Kubonsang/fastplay-runner/internal/status"
+	"github.com/Kubonsang/fastplay-runner/internal/unity"
 )
 
 // RunCmdOptions holds the flag values for `fastplay run`.

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/fastplay/runner/internal/status"
+	"github.com/Kubonsang/fastplay-runner/internal/status"
 )
 
 func TestWrite_CreatesFile(t *testing.T) {

@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/fastplay/runner/internal/history"
-	"github.com/fastplay/runner/internal/parser"
-	"github.com/fastplay/runner/internal/status"
+	"github.com/Kubonsang/fastplay-runner/internal/history"
+	"github.com/Kubonsang/fastplay-runner/internal/parser"
+	"github.com/Kubonsang/fastplay-runner/internal/status"
 )
 
 // ExecuteOptions configures a Unity test execution.

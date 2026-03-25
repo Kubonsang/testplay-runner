@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/fastplay/runner/internal/config"
+	"github.com/Kubonsang/fastplay-runner/internal/config"
 )
 
 func TestLoad_ValidConfig(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/fastplay/runner/internal/status"
+	"github.com/Kubonsang/fastplay-runner/internal/status"
 )
 
 func TestWrite_ConcurrentWrites_NoRaceCondition(t *testing.T) {

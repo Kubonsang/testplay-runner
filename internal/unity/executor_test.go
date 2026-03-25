@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/fastplay/runner/internal/status"
-	"github.com/fastplay/runner/internal/unity"
+	"github.com/Kubonsang/fastplay-runner/internal/status"
+	"github.com/Kubonsang/fastplay-runner/internal/unity"
 )
 
 func mustReadFixture(t *testing.T, path string) []byte {

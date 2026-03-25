@@ -3,7 +3,7 @@ package unity_test
 import (
 	"testing"
 
-	"github.com/fastplay/runner/internal/unity"
+	"github.com/Kubonsang/fastplay-runner/internal/unity"
 )
 
 func TestBuildRunArgs_AlwaysIncludesRunTestsAndPlatform(t *testing.T) {

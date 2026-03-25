@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/fastplay/runner/internal/config"
+	"github.com/Kubonsang/fastplay-runner/internal/config"
 )
 
 func TestCheckCmd_ReadyTrue(t *testing.T) {
