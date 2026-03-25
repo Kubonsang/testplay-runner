@@ -16,3 +16,7 @@ fastplay-status.json.tmp
 # Editor
 .idea/
 .vscode/
+
+# Claude Code
+CLAUDE.md
+.claude/
