@@ -21,7 +21,11 @@ type Store struct {
 // NewStore creates a Store rooted at the given directory
 // (typically .fastplay/runs relative to the project).
 func NewStore(root string) *Store {
-	return &Store{root: root}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		abs = root // fallback: keep as-is if Abs fails
+	}
+	return &Store{root: abs}
 }
 
 // PrepareRunDir creates <root>/<runID>/ and returns its absolute path.
@@ -47,7 +51,12 @@ func (s *Store) SaveSummary(runID string, v any) error {
 		return fmt.Errorf("marshalling summary for run %s: %w", runID, err)
 	}
 	path := filepath.Join(s.root, runID, "summary.json")
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		return fmt.Errorf("writing summary.json for run %s: %w", runID, err)
+	}
+	defer f.Close()
+	if _, err := f.Write(data); err != nil {
 		return fmt.Errorf("writing summary.json for run %s: %w", runID, err)
 	}
 	return nil

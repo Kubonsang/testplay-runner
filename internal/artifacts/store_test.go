@@ -29,7 +29,10 @@ func TestStore_PrepareRunDir_PathContainsRunID(t *testing.T) {
 	root := t.TempDir()
 	store := artifacts.NewStore(filepath.Join(root, ".fastplay", "runs"))
 
-	dir, _ := store.PrepareRunDir("20260326-120000")
+	dir, err := store.PrepareRunDir("20260326-120000")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if filepath.Base(dir) != "20260326-120000" {
 		t.Errorf("expected directory name to be run_id, got %q", filepath.Base(dir))
 	}
