@@ -221,6 +221,61 @@ func TestService_SummaryJSON_WrittenToArtifactDir(t *testing.T) {
 	}
 }
 
+func TestService_ManifestAndLogs_WrittenToArtifactDir(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeRunner{resultsXML: xmlData, stderr: []byte("unity stderr")}
+	artifactRoot := filepath.Join(dir, ".fastplay", "runs")
+
+	svc := &runsvc.Service{
+		Runner:    fake,
+		Store:     history.NewStore(cfg.ResultDir),
+		Artifacts: artifacts.NewStore(artifactRoot),
+		Clock:     func() time.Time { return time.Date(2026, 3, 26, 14, 30, 55, 0, time.UTC) },
+	}
+
+	resp, err := svc.Run(context.Background(), runsvc.Request{Config: cfg})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	runDir := filepath.Join(artifactRoot, resp.RunID)
+
+	// manifest.json must exist and contain required fields
+	manifestPath := filepath.Join(runDir, "manifest.json")
+	mData, mErr := os.ReadFile(manifestPath)
+	if mErr != nil {
+		t.Fatalf("manifest.json not written: %v", mErr)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(mData, &m); err != nil {
+		t.Fatalf("manifest.json invalid JSON: %v", err)
+	}
+	for _, field := range []string{"schema_version", "run_id", "artifact_root", "results_xml", "stdout_log", "stderr_log", "started_at", "finished_at", "exit_code"} {
+		if m[field] == nil {
+			t.Errorf("manifest.json missing field %q", field)
+		}
+	}
+	if m["run_id"] != resp.RunID {
+		t.Errorf("manifest run_id = %v, want %q", m["run_id"], resp.RunID)
+	}
+
+	// stderr.log must contain the captured stderr
+	stderrPath := filepath.Join(runDir, "stderr.log")
+	got, readErr := os.ReadFile(stderrPath)
+	if readErr != nil {
+		t.Fatalf("stderr.log not written: %v", readErr)
+	}
+	if string(got) != "unity stderr" {
+		t.Errorf("stderr.log = %q, want %q", got, "unity stderr")
+	}
+
+	// stdout.log must exist (may be empty)
+	if _, statErr := os.Stat(filepath.Join(runDir, "stdout.log")); statErr != nil {
+		t.Errorf("stdout.log not written: %v", statErr)
+	}
+}
+
 func TestService_Filter_ForwardedToRunner(t *testing.T) {
 	cfg, dir := baseConfig(t)
 	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")

@@ -77,3 +77,76 @@ func TestStore_ResultsFilePath_ReturnsPathInsideRunDir(t *testing.T) {
 		t.Errorf("expected results.xml inside run dir, got %q", path)
 	}
 }
+
+func TestStore_SaveRawLogs_WritesStdoutAndStderr(t *testing.T) {
+	root := t.TempDir()
+	store := artifacts.NewStore(filepath.Join(root, ".fastplay", "runs"))
+	if _, err := store.PrepareRunDir("20260326-120000"); err != nil {
+		t.Fatalf("PrepareRunDir: %v", err)
+	}
+
+	if err := store.SaveRawLogs("20260326-120000", []byte("out data"), []byte("err data")); err != nil {
+		t.Fatalf("SaveRawLogs: %v", err)
+	}
+
+	stdoutPath := store.StdoutFilePath("20260326-120000")
+	stderrPath := store.StderrFilePath("20260326-120000")
+
+	got, err := os.ReadFile(stdoutPath)
+	if err != nil {
+		t.Fatalf("stdout.log not found: %v", err)
+	}
+	if string(got) != "out data" {
+		t.Errorf("stdout.log content = %q, want %q", got, "out data")
+	}
+
+	got, err = os.ReadFile(stderrPath)
+	if err != nil {
+		t.Fatalf("stderr.log not found: %v", err)
+	}
+	if string(got) != "err data" {
+		t.Errorf("stderr.log content = %q, want %q", got, "err data")
+	}
+}
+
+func TestStore_SaveManifest_WritesManifestJSON(t *testing.T) {
+	root := t.TempDir()
+	store := artifacts.NewStore(filepath.Join(root, ".fastplay", "runs"))
+	if _, err := store.PrepareRunDir("20260326-120000"); err != nil {
+		t.Fatalf("PrepareRunDir: %v", err)
+	}
+
+	m := artifacts.Manifest{
+		SchemaVersion: "1",
+		RunID:         "20260326-120000",
+		ArtifactRoot:  store.RunDir("20260326-120000"),
+		ResultsXML:    store.ResultsFilePath("20260326-120000"),
+		StdoutLog:     store.StdoutFilePath("20260326-120000"),
+		StderrLog:     store.StderrFilePath("20260326-120000"),
+		StartedAt:     "2026-03-26T12:00:00Z",
+		FinishedAt:    "2026-03-26T12:01:00Z",
+		ExitCode:      0,
+	}
+	if err := store.SaveManifest("20260326-120000", m); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+
+	manifestPath := filepath.Join(root, ".fastplay", "runs", "20260326-120000", "manifest.json")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatalf("manifest.json not found: %v", err)
+	}
+	var got artifacts.Manifest
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("manifest.json invalid JSON: %v", err)
+	}
+	if got.RunID != "20260326-120000" {
+		t.Errorf("manifest run_id = %q, want %q", got.RunID, "20260326-120000")
+	}
+	if got.ExitCode != 0 {
+		t.Errorf("manifest exit_code = %d, want 0", got.ExitCode)
+	}
+	if got.StdoutLog == "" {
+		t.Error("manifest stdout_log must not be empty")
+	}
+}
