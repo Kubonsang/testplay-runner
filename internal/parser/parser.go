@@ -9,11 +9,16 @@ import (
 	"strings"
 )
 
-// fileLineRe matches Unity stack trace lines like:
+// fileLineRe matches Unity NUnit stack trace lines like:
 //
 //	at Foo() in /path/file.cs:line 42
 //	at Foo() in C:\path\file.cs:line 42
 var fileLineRe = regexp.MustCompile(`(?m) in (.+):line (\d+)`)
+
+// fileLineReAlt matches Unity editor-style stack trace lines like:
+//
+//	Foo () (at /path/file.cs:42)
+var fileLineReAlt = regexp.MustCompile(`(?m)\(at (.+):(\d+)\)`)
 
 // Result holds the parsed NUnit test-run output.
 type Result struct {
@@ -138,12 +143,16 @@ func MakeRelative(projectPath, absPath string) string {
 }
 
 // extractFileAndLine extracts file path and line number from a Unity stack trace.
-// It returns the first match (innermost frame).
+// It tries the NUnit format first ("in path:line N"), then the editor format ("(at path:N)").
+// Returns ("", 0) if neither pattern matches.
 func extractFileAndLine(stackTrace string) (string, int) {
-	m := fileLineRe.FindStringSubmatch(stackTrace)
-	if m == nil {
-		return "", 0
+	if m := fileLineRe.FindStringSubmatch(stackTrace); m != nil {
+		line, _ := strconv.Atoi(m[2])
+		return strings.TrimSpace(m[1]), line
 	}
-	line, _ := strconv.Atoi(m[2])
-	return strings.TrimSpace(m[1]), line
+	if m := fileLineReAlt.FindStringSubmatch(stackTrace); m != nil {
+		line, _ := strconv.Atoi(m[2])
+		return strings.TrimSpace(m[1]), line
+	}
+	return "", 0
 }

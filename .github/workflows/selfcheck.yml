@@ -1,0 +1,22 @@
+name: Shell Self-Check
+
+# Runs on every push and pull request — no Unity required.
+# Verifies that smoke.sh JSON helpers and failure-path control flow
+# behave correctly on the standard ubuntu runner.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  selfcheck:
+    name: Smoke Helper Self-Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run smoke helper self-check
+        run: bash scripts/smoke_selfcheck.sh

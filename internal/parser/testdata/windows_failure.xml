@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<test-run id="2" result="Failed" total="1" passed="0" failed="1" skipped="0" duration="0.100">
+  <test-suite type="Assembly" name="MyProject.Tests.dll" result="Failed">
+    <test-case id="1" name="MyTests.TestSub" fullname="MyTests.TestSub" result="Failed" duration="0.100">
+      <failure>
+        <message><![CDATA[Expected 2 but was 3]]></message>
+        <stack-trace><![CDATA[at MyTests.TestSub () [0x00000] in C:\Users\user\MyProject\Assets\Tests\MyTests.cs:line 55]]></stack-trace>
+      </failure>
+    </test-case>
+  </test-suite>
+</test-run>
