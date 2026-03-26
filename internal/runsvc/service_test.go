@@ -1,0 +1,263 @@
+// internal/runsvc/service_test.go
+package runsvc_test
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/Kubonsang/testplay-runner/internal/artifacts"
+	"github.com/Kubonsang/testplay-runner/internal/config"
+	"github.com/Kubonsang/testplay-runner/internal/history"
+	"github.com/Kubonsang/testplay-runner/internal/parser"
+	"github.com/Kubonsang/testplay-runner/internal/runsvc"
+	"github.com/Kubonsang/testplay-runner/internal/status"
+)
+
+// fakeRunner writes resultsXML to the -testResults path and returns exitCode.
+type fakeRunner struct {
+	resultsXML []byte
+	stderr     []byte
+	exitCode   int
+	err        error
+	lastArgs   []string
+}
+
+func (f *fakeRunner) Run(_ context.Context, args []string) ([]byte, []byte, int, error) {
+	f.lastArgs = args
+	for i, a := range args {
+		if a == "-testResults" && i+1 < len(args) && f.resultsXML != nil {
+			_ = os.WriteFile(args[i+1], f.resultsXML, 0644)
+		}
+	}
+	return nil, f.stderr, f.exitCode, f.err
+}
+
+func mustReadFixture(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("fixture %s: %v", path, err)
+	}
+	return data
+}
+
+func baseConfig(t *testing.T) (*config.Config, string) {
+	t.Helper()
+	dir := t.TempDir()
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		UnityPath:     "/fake/unity",
+		ProjectPath:   dir,
+		ResultDir:     filepath.Join(dir, "results"),
+		Timeout:       config.Timeouts{TotalMs: 300000},
+		TestPlatform:  "edit_mode",
+	}
+	return cfg, dir
+}
+
+func TestService_AllPass_ExitCode0(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+
+	svc := &runsvc.Service{
+		Runner:    fake,
+		Store:     history.NewStore(cfg.ResultDir),
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		StatusWriter: status.NewWriter(filepath.Join(dir, "status.json")),
+		Clock:     func() time.Time { return time.Date(2026, 3, 26, 12, 0, 0, 0, time.UTC) },
+	}
+
+	resp, err := svc.Run(context.Background(), runsvc.Request{Config: cfg})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.ExitCode != 0 {
+		t.Errorf("expected exit 0, got %d", resp.ExitCode)
+	}
+	if resp.RunID == "" {
+		t.Error("RunID must be non-empty")
+	}
+}
+
+func TestService_TestFailure_ExitCode3(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/one_failure.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+
+	svc := &runsvc.Service{
+		Runner:    fake,
+		Store:     history.NewStore(cfg.ResultDir),
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Clock:     func() time.Time { return time.Now() },
+	}
+
+	resp, _ := svc.Run(context.Background(), runsvc.Request{Config: cfg})
+	if resp.ExitCode != 3 {
+		t.Errorf("expected exit 3, got %d", resp.ExitCode)
+	}
+}
+
+func TestService_CompileFailure_ExitCode2(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	// No resultsXML → simulate compile failure (no results.xml produced)
+	fake := &fakeRunner{stderr: []byte("Assets/Foo.cs(1,1): error CS0246: Type 'Bar' not found")}
+
+	svc := &runsvc.Service{
+		Runner:    fake,
+		Store:     history.NewStore(cfg.ResultDir),
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Clock:     func() time.Time { return time.Now() },
+	}
+
+	resp, _ := svc.Run(context.Background(), runsvc.Request{Config: cfg})
+	if resp.ExitCode != 2 {
+		t.Errorf("expected exit 2, got %d", resp.ExitCode)
+	}
+}
+
+func TestService_RunID_MatchesClock(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+
+	fixed := time.Date(2026, 3, 26, 14, 30, 55, 0, time.UTC)
+	svc := &runsvc.Service{
+		Runner:    fake,
+		Store:     history.NewStore(cfg.ResultDir),
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Clock:     func() time.Time { return fixed },
+	}
+
+	resp, _ := svc.Run(context.Background(), runsvc.Request{Config: cfg})
+	if resp.RunID != "20260326-143055" {
+		t.Errorf("expected run_id '20260326-143055', got %q", resp.RunID)
+	}
+}
+
+func TestService_SummaryJSON_WrittenToArtifactDir(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+	artifactRoot := filepath.Join(dir, ".fastplay", "runs")
+	fixed := time.Date(2026, 3, 26, 14, 30, 55, 0, time.UTC)
+
+	svc := &runsvc.Service{
+		Runner:    fake,
+		Store:     history.NewStore(cfg.ResultDir),
+		Artifacts: artifacts.NewStore(artifactRoot),
+		Clock:     func() time.Time { return fixed },
+	}
+
+	resp, _ := svc.Run(context.Background(), runsvc.Request{Config: cfg})
+	summaryPath := filepath.Join(artifactRoot, resp.RunID, "summary.json")
+	data, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatalf("summary.json not written: %v", err)
+	}
+	var summary map[string]any
+	if err := json.Unmarshal(data, &summary); err != nil {
+		t.Fatalf("summary.json invalid JSON: %v", err)
+	}
+	if summary["run_id"] != resp.RunID {
+		t.Errorf("summary run_id mismatch: got %v", summary["run_id"])
+	}
+}
+
+func TestService_Filter_ForwardedToRunner(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+
+	svc := &runsvc.Service{
+		Runner:    fake,
+		Store:     history.NewStore(cfg.ResultDir),
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Clock:     func() time.Time { return time.Now() },
+	}
+
+	svc.Run(context.Background(), runsvc.Request{Config: cfg, Filter: "MyTest.Foo"})
+
+	found := false
+	for i, a := range fake.lastArgs {
+		if a == "-testFilter" && i+1 < len(fake.lastArgs) && fake.lastArgs[i+1] == "MyTest.Foo" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected -testFilter MyTest.Foo in runner args, got: %v", fake.lastArgs)
+	}
+}
+
+func TestService_CompareRun_PopulatesNewFailures(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	store := history.NewStore(cfg.ResultDir)
+
+	// Seed a prev run where TestSub passed
+	prevID := "20250301-090000"
+	_ = store.Save(prevID, &history.RunResult{
+		RunID: prevID, SchemaVersion: "1",
+		Tests: []parser.TestCase{{Name: "MyTests.TestSub", Result: "Passed"}},
+	})
+
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/one_failure.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+
+	svc := &runsvc.Service{
+		Runner:    fake,
+		Store:     store,
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Clock:     func() time.Time { return time.Now() },
+	}
+
+	resp, _ := svc.Run(context.Background(), runsvc.Request{Config: cfg, CompareRun: prevID})
+	if resp.Result.NewFailures == nil {
+		t.Error("expected NewFailures to be populated when CompareRun set")
+	}
+}
+
+func TestService_NoCompareRun_NewFailuresIsNil(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+
+	svc := &runsvc.Service{
+		Runner:    fake,
+		Store:     history.NewStore(cfg.ResultDir),
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Clock:     func() time.Time { return time.Now() },
+	}
+
+	resp, _ := svc.Run(context.Background(), runsvc.Request{Config: cfg})
+	if resp.Result.NewFailures != nil {
+		t.Error("expected NewFailures nil when no CompareRun")
+	}
+}
+
+func TestService_SaveFailure_ReturnsWarning(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+
+	// Point result dir at a read-only path to force save error
+	cfg.ResultDir = "/dev/null/impossible"
+
+	svc := &runsvc.Service{
+		Runner:    fake,
+		Store:     history.NewStore(cfg.ResultDir),
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Clock:     func() time.Time { return time.Now() },
+	}
+
+	resp, _ := svc.Run(context.Background(), runsvc.Request{Config: cfg})
+	if resp.ExitCode != 0 {
+		t.Errorf("save failure must not change exit code, got %d", resp.ExitCode)
+	}
+	if len(resp.Warnings) == 0 {
+		t.Error("expected at least one warning when save fails")
+	}
+}
