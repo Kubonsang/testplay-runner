@@ -10,9 +10,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Kubonsang/testplay-runner/internal/artifacts"
 	"github.com/Kubonsang/testplay-runner/internal/config"
 	"github.com/Kubonsang/testplay-runner/internal/history"
 	"github.com/Kubonsang/testplay-runner/internal/parser"
+	"github.com/Kubonsang/testplay-runner/internal/runsvc"
 	"github.com/Kubonsang/testplay-runner/internal/status"
 	"github.com/Kubonsang/testplay-runner/internal/unity"
 )
@@ -30,7 +32,7 @@ type runDeps struct {
 	runner      unity.Runner
 	statusPath  string
 	resultStore *history.Store
-	saveFunc    func(string, *history.RunResult) error
+	saveFunc    func(string, *history.RunResult) error // kept for test injection
 	opts        RunCmdOptions
 }
 
@@ -40,114 +42,72 @@ func runRun(w io.Writer, deps runDeps) int {
 		baseCtx = context.Background()
 	}
 
-	// Load config
 	cfg, err := deps.loadConfig("fastplay.json")
 	if err != nil {
-		writeJSON(w, map[string]any{"error": err.Error(), "new_failures": nil})
+		writeJSON(w, map[string]any{"schema_version": "1", "error": err.Error(), "new_failures": nil})
 		return 5
 	}
 	if err := cfg.Validate(true); err != nil {
-		writeJSON(w, map[string]any{"error": err.Error(), "new_failures": nil})
+		writeJSON(w, map[string]any{"schema_version": "1", "error": err.Error(), "new_failures": nil})
 		return 1
 	}
 
-	// Apply total timeout from config so Unity cannot hang forever.
 	ctx, cancel := context.WithTimeout(baseCtx, time.Duration(cfg.Timeout.TotalMs)*time.Millisecond)
 	defer cancel()
 
-	// Lazily initialise runner and store from config when not injected (production path)
 	if deps.runner == nil {
 		deps.runner = &unity.ProcessRunner{UnityPath: cfg.UnityPath}
 	}
 	if deps.resultStore == nil {
 		deps.resultStore = history.NewStore(cfg.ResultDir)
 	}
-	// Resolve saveFunc here, immediately after resultStore is guaranteed non-nil.
-	saveFunc := deps.saveFunc
-	if saveFunc == nil {
-		saveFunc = deps.resultStore.Save
+
+	artifactRoot := filepath.Join(filepath.Dir(cfg.ResultDir), "runs")
+	svc := &runsvc.Service{
+		Runner:       deps.runner,
+		Store:        deps.resultStore,
+		Artifacts:    artifacts.NewStore(artifactRoot),
+		StatusWriter: status.NewWriter(deps.statusPath),
+	}
+	// Allow test injection of saveFunc.
+	if deps.saveFunc != nil {
+		svc.Store = &saveOverrideStore{inner: deps.resultStore, save: deps.saveFunc}
 	}
 
-	// Generate run_id
-	runID := time.Now().Format("20060102-150405")
-
-	// Create temp directory for results XML
-	tmpDir, err := os.MkdirTemp("", "fastplay-*")
-	if err != nil {
-		writeJSON(w, map[string]any{"error": err.Error(), "new_failures": nil})
+	resp, infraErr := svc.Run(ctx, runsvc.Request{
+		Config:     cfg,
+		Filter:     deps.opts.Filter,
+		Category:   deps.opts.Category,
+		CompareRun: deps.opts.CompareRun,
+	})
+	if infraErr != nil {
+		writeJSON(w, map[string]any{"schema_version": "1", "error": infraErr.Error(), "new_failures": nil})
 		return 1
 	}
-	defer os.RemoveAll(tmpDir)
-	resultsFile := filepath.Join(tmpDir, "results.xml")
 
-	// Build execution options
-	execOpts := unity.ExecuteOptions{
-		ProjectPath:  cfg.ProjectPath,
-		ResultsFile:  resultsFile,
-		StatusWriter: status.NewWriter(deps.statusPath),
-		TimeoutType:  "total",
-		Filter:       deps.opts.Filter,
-		Category:     deps.opts.Category,
-		TestPlatform: cfg.TestPlatform,
-		CompileMs:    cfg.Timeout.CompileMs,
-		TestMs:       cfg.Timeout.TestMs,
-	}
-
-	// Execute
-	result, exitCode := unity.Execute(ctx, deps.runner, execOpts)
-	result.RunID = runID
-	result.SchemaVersion = "1"
-
-	// Fix File fields to be relative to the project path
-	for i := range result.Tests {
-		if result.Tests[i].AbsolutePath != "" {
-			result.Tests[i].File = parser.MakeRelative(cfg.ProjectPath, result.Tests[i].AbsolutePath)
-		}
-	}
-	for i := range result.Errors {
-		if result.Errors[i].AbsolutePath != "" {
-			result.Errors[i].File = parser.MakeRelative(cfg.ProjectPath, result.Errors[i].AbsolutePath)
-		}
-	}
-
-	// Compare runs if requested — newFailures stays nil when no --compare-run
-	var newFailures []parser.TestCase
-	if deps.opts.CompareRun != "" {
-		prevResult, loadErr := deps.resultStore.Load(deps.opts.CompareRun)
-		if loadErr == nil {
-			newFailures = history.Compare(prevResult, result)
-		} else {
-			// When compare-run specified but not found, return empty array (not null)
-			newFailures = make([]parser.TestCase, 0)
-		}
-	}
-
-	// Save result
-	result.NewFailures = newFailures
-	saveErr := saveFunc(runID, result)
-
-	// Build output — newFailures nil → JSON null when no --compare-run
+	result := resp.Result
 	output := map[string]any{
-		"run_id":       runID,
-		"exit_code":    exitCode,
-		"total":        len(result.Tests),
-		"passed":       countByResult(result.Tests, "Passed"),
-		"failed":       countByResult(result.Tests, "Failed"),
-		"skipped":      countByResult(result.Tests, "Skipped"),
-		"tests":        result.Tests,
-		"errors":       result.Errors,
-		"new_failures": newFailures,
+		"schema_version": "1",
+		"run_id":         resp.RunID,
+		"exit_code":      resp.ExitCode,
+		"total":          len(result.Tests),
+		"passed":         countByResult(result.Tests, "Passed"),
+		"failed":         countByResult(result.Tests, "Failed"),
+		"skipped":        countByResult(result.Tests, "Skipped"),
+		"tests":          result.Tests,
+		"errors":         result.Errors,
+		"new_failures":   result.NewFailures,
 	}
 	if result.TimeoutType != "" {
 		output["timeout_type"] = result.TimeoutType
 	}
-	if saveErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to save result: %v\n", saveErr)
-		output["warning"] = "result not saved: " + saveErr.Error()
+	for _, w2 := range resp.Warnings {
+		fmt.Fprintln(os.Stderr, "warning:", w2)
+		output["warning"] = w2 // last warning wins (Phase A: at most one)
 	}
 
 	writeJSON(w, output)
-	return exitCode
+	return resp.ExitCode
 }
 
 func countByResult(tests []parser.TestCase, result string) int {
@@ -158,6 +118,23 @@ func countByResult(tests []parser.TestCase, result string) int {
 		}
 	}
 	return n
+}
+
+// saveOverrideStore wraps history.Store but substitutes the Save method.
+// Used only in tests that inject a failing saveFunc.
+// Note: this adapter is only used in TestRunCmd_SaveFailure_IncludesWarning,
+// which does NOT set CompareRun, so Load() is never called in that test path.
+type saveOverrideStore struct {
+	inner *history.Store
+	save  func(string, *history.RunResult) error
+}
+
+func (s *saveOverrideStore) Save(runID string, r *history.RunResult) error {
+	return s.save(runID, r)
+}
+
+func (s *saveOverrideStore) Load(runID string) (*history.RunResult, error) {
+	return s.inner.Load(runID)
 }
 
 // runFilter, runCategory and runCompareRun are cobra flag values.
