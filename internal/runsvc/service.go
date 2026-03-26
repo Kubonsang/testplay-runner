@@ -4,6 +4,7 @@ package runsvc
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/Kubonsang/testplay-runner/internal/artifacts"
@@ -62,16 +63,31 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	runID := clock().Format("20060102-150405")
 
 	// Prepare artifact directory and get results XML path.
-	if _, err := s.Artifacts.PrepareRunDir(runID); err != nil {
+	runDir, err := s.Artifacts.PrepareRunDir(runID)
+	if err != nil {
 		return Response{}, fmt.Errorf("runsvc: prepare artifact dir: %w", err)
 	}
 	resultsFile := s.Artifacts.ResultsFilePath(runID)
+
+	// Build status writer: combine snapshot writer with per-run event log,
+	// then stamp run_id into every write via runIDWriter.
+	var sw status.WriterInterface = s.StatusWriter
+	if sw != nil {
+		eventsPath := filepath.Join(runDir, "events.ndjson")
+		sw = status.NewManager(sw, status.NewEventLog(eventsPath))
+		sw = &runIDWriter{inner: sw, runID: runID}
+	}
+
+	// Wrap runner to capture raw stdout/stderr for artifact storage.
+	cap := &logCapture{inner: s.Runner}
+
+	startedAt := clock()
 
 	// Execute Unity.
 	execOpts := unity.ExecuteOptions{
 		ProjectPath:  req.Config.ProjectPath,
 		ResultsFile:  resultsFile,
-		StatusWriter: s.StatusWriter,
+		StatusWriter: sw,
 		TimeoutType:  "total",
 		Filter:       req.Filter,
 		Category:     req.Category,
@@ -79,7 +95,10 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		CompileMs:    req.Config.Timeout.CompileMs,
 		TestMs:       req.Config.Timeout.TestMs,
 	}
-	result, exitCode := unity.Execute(ctx, s.Runner, execOpts)
+	result, exitCode := unity.Execute(ctx, cap, execOpts)
+
+	finishedAt := clock()
+
 	result.RunID = runID
 	result.SchemaVersion = "1"
 	result.ExitCode = exitCode
@@ -123,12 +142,61 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		warnings = append(warnings, fmt.Sprintf("summary not written: %v", err))
 	}
 
+	// Write stdout.log and stderr.log.
+	if err := s.Artifacts.SaveRawLogs(runID, cap.stdout, cap.stderr); err != nil {
+		warnings = append(warnings, fmt.Sprintf("raw logs not written: %v", err))
+	}
+
+	// Write manifest.json.
+	manifest := artifacts.Manifest{
+		SchemaVersion: "1",
+		RunID:         runID,
+		ArtifactRoot:  s.Artifacts.RunDir(runID),
+		ResultsXML:    s.Artifacts.ResultsFilePath(runID),
+		StdoutLog:     s.Artifacts.StdoutFilePath(runID),
+		StderrLog:     s.Artifacts.StderrFilePath(runID),
+		StartedAt:     startedAt.UTC().Format(time.RFC3339),
+		FinishedAt:    finishedAt.UTC().Format(time.RFC3339),
+		ExitCode:      exitCode,
+	}
+	if err := s.Artifacts.SaveManifest(runID, manifest); err != nil {
+		warnings = append(warnings, fmt.Sprintf("manifest not written: %v", err))
+	}
+
 	return Response{
 		RunID:    runID,
 		Result:   result,
 		ExitCode: exitCode,
 		Warnings: warnings,
 	}, nil
+}
+
+// logCapture wraps a Runner to accumulate stdout and stderr across all Run calls.
+// In two-phase execution both invocations are captured and concatenated.
+// Not goroutine-safe: Run calls must be sequential, which is guaranteed by
+// both executeSinglePhase and executeTwoPhase calling runner.Run sequentially.
+type logCapture struct {
+	inner  unity.Runner
+	stdout []byte
+	stderr []byte
+}
+
+func (l *logCapture) Run(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+	stdout, stderr, code, err := l.inner.Run(ctx, args)
+	l.stdout = append(l.stdout, stdout...)
+	l.stderr = append(l.stderr, stderr...)
+	return stdout, stderr, code, err
+}
+
+// runIDWriter wraps a WriterInterface to stamp RunID into every status write.
+type runIDWriter struct {
+	inner status.WriterInterface
+	runID string
+}
+
+func (r *runIDWriter) Write(s status.Status) error {
+	s.RunID = r.runID
+	return r.inner.Write(s)
 }
 
 // buildSummary constructs the map written to summary.json.

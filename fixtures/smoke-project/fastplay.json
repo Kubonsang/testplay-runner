@@ -1,0 +1,10 @@
+{
+  "schema_version": "1",
+  "unity_path": "",
+  "project_path": "",
+  "test_platform": "edit_mode",
+  "timeout": {
+    "total_ms": 300000
+  },
+  "result_dir": ".fastplay/results"
+}

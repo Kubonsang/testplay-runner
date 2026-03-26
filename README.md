@@ -277,6 +277,34 @@ go test -tags=integration ./cmd/fastplay/...
 go build ./cmd/fastplay
 ```
 
+## Unity Smoke Verification
+
+A minimal Unity project (`fixtures/smoke-project/`) is included to verify that
+`fastplay run` works end-to-end with a real Unity installation. It contains one
+EditMode test and one PlayMode (`[UnityTest]`) test.
+
+**Local reproduction:**
+
+```bash
+# Prerequisites: Unity installed, UNITY_PATH set
+export UNITY_PATH=/Applications/Unity/Hub/Editor/2022.3.0f1/Unity.app/Contents/MacOS/Unity
+./scripts/smoke.sh
+```
+
+The script:
+1. Writes a `fastplay.json` for each platform (EditMode then PlayMode)
+2. Runs `fastplay check` + `fastplay run`
+3. Verifies `results.xml`, `summary.json`, `manifest.json`, `stdout.log`, `stderr.log`, `events.ndjson` are all present in the run artifact directory
+
+**CI (opt-in):**
+
+```bash
+gh workflow run smoke.yml
+```
+
+See `.github/workflows/smoke.yml`. Requires a self-hosted runner with Unity
+and `UNITY_PATH` set in the runner environment.
+
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE).

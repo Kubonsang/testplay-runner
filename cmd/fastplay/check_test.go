@@ -77,6 +77,33 @@ func TestCheckCmd_UnityNotFound_Exit1WithHint(t *testing.T) {
 	}
 }
 
+func TestCheckCmd_InvalidConfig_Exit5(t *testing.T) {
+	// compile_ms set without test_ms → validation error → exit 5
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		UnityPath:     "/fake/unity",
+		ProjectPath:   "/fake/project",
+		Timeout:       config.Timeouts{CompileMs: 1000}, // test_ms missing → invalid
+	}
+	var buf bytes.Buffer
+	code := runCheck(&buf, checkDeps{
+		loadConfig: func(string) (*config.Config, error) { return cfg, nil },
+		fileExists: func(string) bool { return true },
+		configPath: "fastplay.json",
+	})
+	if code != 5 {
+		t.Errorf("expected exit 5, got %d", code)
+	}
+	var out map[string]any
+	json.Unmarshal(buf.Bytes(), &out)
+	if out["ready"] != false {
+		t.Error("ready should be false")
+	}
+	if out["hint"] != nil {
+		t.Error("hint must not be present on exit 5 (config error)")
+	}
+}
+
 func TestCheckCmd_ProjectDirMissing_Exit1WithHint(t *testing.T) {
 	cfg := &config.Config{
 		SchemaVersion: "1",

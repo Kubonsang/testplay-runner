@@ -22,6 +22,25 @@ func mustReadXMLFixture(t *testing.T, path string) []byte {
 	return data
 }
 
+func TestRunCmd_InvalidConfig_Exit5(t *testing.T) {
+	dir := t.TempDir()
+	// compile_ms without test_ms → Validate returns ErrConfigInvalid
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		UnityPath:     "/fake/unity",
+		ProjectPath:   dir,
+		Timeout:       config.Timeouts{CompileMs: 1000},
+	}
+	var buf bytes.Buffer
+	code := runRun(&buf, runDeps{
+		loadConfig: func(string) (*config.Config, error) { return cfg, nil },
+		opts:       RunCmdOptions{},
+	})
+	if code != 5 {
+		t.Errorf("expected exit 5, got %d", code)
+	}
+}
+
 func TestRunCmd_AllPass_Exit0(t *testing.T) {
 	dir := t.TempDir()
 	xmlData := mustReadXMLFixture(t, "../../internal/parser/testdata/passing.xml")

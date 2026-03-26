@@ -31,9 +31,8 @@ func runCheck(w io.Writer, deps checkDeps) int {
 		writeJSON(w, map[string]any{
 			"ready": false,
 			"error": err.Error(),
-			"hint":  "Set unity_path in fastplay.json or UNITY_PATH environment variable",
 		})
-		return 1
+		return 5
 	}
 
 	// Check Unity binary exists

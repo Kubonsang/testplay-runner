@@ -84,6 +84,109 @@ func TestService_AllPass_ExitCode0(t *testing.T) {
 	}
 }
 
+func TestService_StatusSnapshot_ContainsRunID(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+	statusPath := filepath.Join(dir, "status.json")
+
+	svc := &runsvc.Service{
+		Runner:       fake,
+		Store:        history.NewStore(cfg.ResultDir),
+		Artifacts:    artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		StatusWriter: status.NewWriter(statusPath),
+		Clock:        func() time.Time { return time.Date(2026, 3, 26, 12, 0, 0, 0, time.UTC) },
+	}
+
+	resp, err := svc.Run(context.Background(), runsvc.Request{Config: cfg})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(statusPath)
+	if err != nil {
+		t.Fatalf("status.json not written: %v", err)
+	}
+	var snap map[string]any
+	if err := json.Unmarshal(data, &snap); err != nil {
+		t.Fatalf("status.json invalid JSON: %v", err)
+	}
+	if snap["run_id"] != resp.RunID {
+		t.Errorf("status run_id = %v, want %q", snap["run_id"], resp.RunID)
+	}
+}
+
+func TestService_EventsNDJSON_WrittenToArtifactDir(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+	artifactRoot := filepath.Join(dir, ".fastplay", "runs")
+
+	svc := &runsvc.Service{
+		Runner:       fake,
+		Store:        history.NewStore(cfg.ResultDir),
+		Artifacts:    artifacts.NewStore(artifactRoot),
+		StatusWriter: status.NewWriter(filepath.Join(dir, "status.json")),
+		Clock:        func() time.Time { return time.Date(2026, 3, 26, 12, 0, 0, 0, time.UTC) },
+	}
+
+	resp, err := svc.Run(context.Background(), runsvc.Request{Config: cfg})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	eventsPath := filepath.Join(artifactRoot, resp.RunID, "events.ndjson")
+	data, readErr := os.ReadFile(eventsPath)
+	if readErr != nil {
+		t.Fatalf("events.ndjson not written: %v", readErr)
+	}
+	if len(data) == 0 {
+		t.Fatal("events.ndjson is empty")
+	}
+
+	// Each line must be valid JSON with event and run_id fields.
+	var parsedLines []map[string]any
+	for i, line := range splitLines(data) {
+		if len(line) == 0 {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal(line, &m); err != nil {
+			t.Fatalf("line %d: invalid JSON: %v", i, err)
+		}
+		if m["event"] == nil {
+			t.Errorf("line %d: missing event field", i)
+		}
+		if m["run_id"] != resp.RunID {
+			t.Errorf("line %d: run_id = %v, want %q", i, m["run_id"], resp.RunID)
+		}
+		parsedLines = append(parsedLines, m)
+	}
+
+	// Last event must be run_finished.
+	if len(parsedLines) == 0 {
+		t.Fatal("no events parsed from events.ndjson")
+	}
+	if last := parsedLines[len(parsedLines)-1]["event"]; last != "run_finished" {
+		t.Errorf("last event = %v, want run_finished", last)
+	}
+}
+
+func splitLines(data []byte) [][]byte {
+	var lines [][]byte
+	start := 0
+	for i, b := range data {
+		if b == '\n' {
+			lines = append(lines, data[start:i])
+			start = i + 1
+		}
+	}
+	if start < len(data) {
+		lines = append(lines, data[start:])
+	}
+	return lines
+}
+
 func TestService_TestFailure_ExitCode3(t *testing.T) {
 	cfg, dir := baseConfig(t)
 	xmlData := mustReadFixture(t, "../../internal/parser/testdata/one_failure.xml")
@@ -186,6 +289,61 @@ func TestService_SummaryJSON_WrittenToArtifactDir(t *testing.T) {
 	}
 	if summary["run_id"] != resp.RunID {
 		t.Errorf("summary run_id mismatch: got %v", summary["run_id"])
+	}
+}
+
+func TestService_ManifestAndLogs_WrittenToArtifactDir(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeRunner{resultsXML: xmlData, stderr: []byte("unity stderr")}
+	artifactRoot := filepath.Join(dir, ".fastplay", "runs")
+
+	svc := &runsvc.Service{
+		Runner:    fake,
+		Store:     history.NewStore(cfg.ResultDir),
+		Artifacts: artifacts.NewStore(artifactRoot),
+		Clock:     func() time.Time { return time.Date(2026, 3, 26, 14, 30, 55, 0, time.UTC) },
+	}
+
+	resp, err := svc.Run(context.Background(), runsvc.Request{Config: cfg})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	runDir := filepath.Join(artifactRoot, resp.RunID)
+
+	// manifest.json must exist and contain required fields
+	manifestPath := filepath.Join(runDir, "manifest.json")
+	mData, mErr := os.ReadFile(manifestPath)
+	if mErr != nil {
+		t.Fatalf("manifest.json not written: %v", mErr)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(mData, &m); err != nil {
+		t.Fatalf("manifest.json invalid JSON: %v", err)
+	}
+	for _, field := range []string{"schema_version", "run_id", "artifact_root", "results_xml", "stdout_log", "stderr_log", "started_at", "finished_at", "exit_code"} {
+		if m[field] == nil {
+			t.Errorf("manifest.json missing field %q", field)
+		}
+	}
+	if m["run_id"] != resp.RunID {
+		t.Errorf("manifest run_id = %v, want %q", m["run_id"], resp.RunID)
+	}
+
+	// stderr.log must contain the captured stderr
+	stderrPath := filepath.Join(runDir, "stderr.log")
+	got, readErr := os.ReadFile(stderrPath)
+	if readErr != nil {
+		t.Fatalf("stderr.log not written: %v", readErr)
+	}
+	if string(got) != "unity stderr" {
+		t.Errorf("stderr.log = %q, want %q", got, "unity stderr")
+	}
+
+	// stdout.log must exist (may be empty)
+	if _, statErr := os.Stat(filepath.Join(runDir, "stdout.log")); statErr != nil {
+		t.Errorf("stdout.log not written: %v", statErr)
 	}
 }
 
