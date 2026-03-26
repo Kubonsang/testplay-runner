@@ -15,7 +15,6 @@ type Event struct {
 	RunID     string `json:"run_id,omitempty"`
 	Phase     string `json:"phase,omitempty"`
 	Timestamp string `json:"timestamp"`
-	ExitCode  *int   `json:"exit_code,omitempty"`
 	Reason    string `json:"reason,omitempty"`
 }
 

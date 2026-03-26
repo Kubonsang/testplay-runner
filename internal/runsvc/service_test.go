@@ -145,6 +145,7 @@ func TestService_EventsNDJSON_WrittenToArtifactDir(t *testing.T) {
 	}
 
 	// Each line must be valid JSON with event and run_id fields.
+	var parsedLines []map[string]any
 	for i, line := range splitLines(data) {
 		if len(line) == 0 {
 			continue
@@ -159,6 +160,15 @@ func TestService_EventsNDJSON_WrittenToArtifactDir(t *testing.T) {
 		if m["run_id"] != resp.RunID {
 			t.Errorf("line %d: run_id = %v, want %q", i, m["run_id"], resp.RunID)
 		}
+		parsedLines = append(parsedLines, m)
+	}
+
+	// Last event must be run_finished.
+	if len(parsedLines) == 0 {
+		t.Fatal("no events parsed from events.ndjson")
+	}
+	if last := parsedLines[len(parsedLines)-1]["event"]; last != "run_finished" {
+		t.Errorf("last event = %v, want run_finished", last)
 	}
 }
 

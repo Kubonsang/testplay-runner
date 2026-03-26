@@ -14,6 +14,7 @@
 #   2. PlayMode smoke: fastplay run → same artifacts, test_platform=play_mode
 #
 # The script exits non-zero if any check fails.
+# Dependencies: bash, grep, cut, go — no python3 or jq required.
 
 set -euo pipefail
 
@@ -52,6 +53,18 @@ echo "==> Using fastplay:   $FASTPLAY"
 echo "==> Using Unity:      $UNITY_PATH"
 echo "==> Smoke project:    $SMOKE_DIR"
 echo ""
+
+# ── Helper: extract a string field from a single-line JSON object ─────────────
+# Usage: json_str <json> <field>
+# Works with grep+cut — no python3 or jq required.
+json_str() {
+  echo "$1" | grep -o "\"$2\":\"[^\"]*\"" | cut -d'"' -f4
+}
+
+# ── Helper: extract a numeric field from a single-line JSON object ────────────
+json_num() {
+  echo "$1" | grep -o "\"$2\":[0-9-]*" | cut -d':' -f2
+}
 
 # ── Helper: generate fastplay.json ───────────────────────────────────────────
 
@@ -103,10 +116,9 @@ echo "  fastplay check..."
 
 echo "  fastplay run (edit_mode)..."
 output=$("$FASTPLAY" run)
-echo "$output" | python3 -m json.tool > /dev/null || { echo "  ERROR: run output is not valid JSON" >&2; exit 1; }
 
-run_id=$(echo "$output" | python3 -c "import sys,json; print(json.load(sys.stdin)['run_id'])")
-exit_code=$(echo "$output" | python3 -c "import sys,json; print(json.load(sys.stdin)['exit_code'])")
+run_id=$(json_str "$output" "run_id")
+exit_code=$(json_num "$output" "exit_code")
 
 echo "  run_id:    $run_id"
 echo "  exit_code: $exit_code"
@@ -131,10 +143,9 @@ echo "  fastplay check..."
 
 echo "  fastplay run (play_mode)..."
 output=$("$FASTPLAY" run)
-echo "$output" | python3 -m json.tool > /dev/null || { echo "  ERROR: run output is not valid JSON" >&2; exit 1; }
 
-run_id=$(echo "$output" | python3 -c "import sys,json; print(json.load(sys.stdin)['run_id'])")
-exit_code=$(echo "$output" | python3 -c "import sys,json; print(json.load(sys.stdin)['exit_code'])")
+run_id=$(json_str "$output" "run_id")
+exit_code=$(json_num "$output" "exit_code")
 
 echo "  run_id:    $run_id"
 echo "  exit_code: $exit_code"

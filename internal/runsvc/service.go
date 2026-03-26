@@ -173,6 +173,8 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 
 // logCapture wraps a Runner to accumulate stdout and stderr across all Run calls.
 // In two-phase execution both invocations are captured and concatenated.
+// Not goroutine-safe: Run calls must be sequential, which is guaranteed by
+// both executeSinglePhase and executeTwoPhase calling runner.Run sequentially.
 type logCapture struct {
 	inner  unity.Runner
 	stdout []byte
