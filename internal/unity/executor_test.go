@@ -162,6 +162,31 @@ func (f *funcRunner) Run(ctx context.Context, args []string) ([]byte, []byte, in
 	return f.run(ctx, args)
 }
 
+func TestExecute_PlayMode_PassesPlayModeToRunner(t *testing.T) {
+	dir := t.TempDir()
+	var capturedArgs []string
+	capturingRunner := &funcRunner{
+		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+			capturedArgs = args
+			return nil, nil, -1, context.Canceled
+		},
+	}
+
+	unity.Execute(context.Background(), capturingRunner, unity.ExecuteOptions{
+		ProjectPath:  dir,
+		ResultsFile:  filepath.Join(dir, "results.xml"),
+		TestPlatform: "play_mode",
+	})
+
+	idx := indexOf(capturedArgs, "-testPlatform")
+	if idx == -1 || idx+1 >= len(capturedArgs) {
+		t.Fatal("-testPlatform not found in args")
+	}
+	if capturedArgs[idx+1] != "PlayMode" {
+		t.Errorf("expected PlayMode, got %q", capturedArgs[idx+1])
+	}
+}
+
 func TestExecute_CompileErrorsInStderr_Returns2(t *testing.T) {
 	dir := t.TempDir()
 	// fakeRunner writes an empty XML but also has compile errors in stderr

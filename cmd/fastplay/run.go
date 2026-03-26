@@ -88,6 +88,7 @@ func runRun(w io.Writer, deps runDeps) int {
 		TimeoutType:  "total",
 		Filter:       deps.opts.Filter,
 		Category:     deps.opts.Category,
+		TestPlatform: cfg.TestPlatform,
 	}
 
 	// Execute

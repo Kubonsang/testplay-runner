@@ -79,7 +79,7 @@ func scanCSharpTestFile(path string) ([]string, error) {
 			}
 		}
 
-		if strings.Contains(line, "[Test]") {
+		if strings.Contains(line, "[Test]") || strings.Contains(line, "[UnityTest]") {
 			nextIsTest = true
 			continue
 		}

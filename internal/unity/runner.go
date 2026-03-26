@@ -40,15 +40,21 @@ type RunOptions struct {
 	Filter          string
 	Category        string
 	ResultsFilePath string
+	TestPlatform    string // "edit_mode" | "play_mode"; defaults to EditMode if empty
 }
 
 // BuildRunArgs constructs the Unity CLI arguments for a test run.
 func BuildRunArgs(projectPath string, opts *RunOptions) []string {
+	platform := "EditMode"
+	if opts.TestPlatform == "play_mode" {
+		platform = "PlayMode"
+	}
+
 	args := []string{
 		"-batchmode",
 		"-nographics",
 		"-runTests",
-		"-testPlatform", "EditMode",
+		"-testPlatform", platform,
 		"-projectPath", projectPath,
 	}
 

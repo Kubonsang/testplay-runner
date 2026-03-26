@@ -124,3 +124,42 @@ func TestValidate_RequireUnityFalse_SkipsUnityCheck(t *testing.T) {
 		t.Errorf("expected no error with requireUnity=false, got %v", err)
 	}
 }
+
+func TestValidate_PlayMode_IsAccepted(t *testing.T) {
+	t.Setenv("UNITY_PATH", "/fake/unity")
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		ProjectPath:   "/tmp/proj",
+		TestPlatform:  "play_mode",
+	}
+	if err := cfg.Validate(true); err != nil {
+		t.Fatalf("expected no error for play_mode, got %v", err)
+	}
+	if cfg.TestPlatform != "play_mode" {
+		t.Errorf("expected test_platform 'play_mode', got %q", cfg.TestPlatform)
+	}
+}
+
+func TestValidate_EmptyTestPlatform_DefaultsToEditMode(t *testing.T) {
+	t.Setenv("UNITY_PATH", "/fake/unity")
+	cfg := &config.Config{SchemaVersion: "1", ProjectPath: "/tmp/proj"}
+	if err := cfg.Validate(true); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.TestPlatform != "edit_mode" {
+		t.Errorf("expected default 'edit_mode', got %q", cfg.TestPlatform)
+	}
+}
+
+func TestValidate_InvalidTestPlatform_ReturnsError(t *testing.T) {
+	t.Setenv("UNITY_PATH", "/fake/unity")
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		ProjectPath:   "/tmp/proj",
+		TestPlatform:  "web_gl",
+	}
+	err := cfg.Validate(true)
+	if !errors.Is(err, config.ErrConfigInvalid) {
+		t.Errorf("got %v, want ErrConfigInvalid for invalid test_platform", err)
+	}
+}

@@ -78,3 +78,37 @@ func indexOf(slice []string, val string) int {
 	}
 	return -1
 }
+
+func TestBuildRunArgs_PlayMode_UsesPlayModeArg(t *testing.T) {
+	args := unity.BuildRunArgs("/proj", &unity.RunOptions{TestPlatform: "play_mode"})
+	idx := indexOf(args, "-testPlatform")
+	if idx == -1 || idx+1 >= len(args) {
+		t.Fatal("-testPlatform arg missing")
+	}
+	if args[idx+1] != "PlayMode" {
+		t.Errorf("expected PlayMode, got %q", args[idx+1])
+	}
+}
+
+func TestBuildRunArgs_EditMode_UsesEditModeArg(t *testing.T) {
+	args := unity.BuildRunArgs("/proj", &unity.RunOptions{TestPlatform: "edit_mode"})
+	idx := indexOf(args, "-testPlatform")
+	if idx == -1 || idx+1 >= len(args) {
+		t.Fatal("-testPlatform arg missing")
+	}
+	if args[idx+1] != "EditMode" {
+		t.Errorf("expected EditMode, got %q", args[idx+1])
+	}
+}
+
+func TestBuildRunArgs_EmptyTestPlatform_DefaultsToEditMode(t *testing.T) {
+	// Callers that don't set TestPlatform must still get EditMode (backward compat)
+	args := unity.BuildRunArgs("/proj", &unity.RunOptions{})
+	idx := indexOf(args, "-testPlatform")
+	if idx == -1 || idx+1 >= len(args) {
+		t.Fatal("-testPlatform arg missing")
+	}
+	if args[idx+1] != "EditMode" {
+		t.Errorf("expected EditMode default, got %q", args[idx+1])
+	}
+}

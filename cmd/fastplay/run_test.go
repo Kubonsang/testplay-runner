@@ -255,6 +255,45 @@ func TestRunCmd_SaveFailure_IncludesWarning(t *testing.T) {
 	}
 }
 
+func TestRunCmd_PlayMode_PassesPlayModeToRunner(t *testing.T) {
+	dir := t.TempDir()
+	xmlData := mustReadXMLFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeCmdRunner{resultsXML: xmlData, exitCode: 0}
+
+	store := history.NewStore(filepath.Join(dir, "results"))
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		UnityPath:     "/fake/unity",
+		ProjectPath:   dir,
+		ResultDir:     filepath.Join(dir, "results"),
+		Timeout:       config.Timeouts{TotalMs: 300000},
+		TestPlatform:  "play_mode",
+	}
+
+	var buf bytes.Buffer
+	runRun(&buf, runDeps{
+		loadConfig:  func(string) (*config.Config, error) { return cfg, nil },
+		runner:      fake,
+		statusPath:  filepath.Join(dir, "status.json"),
+		resultStore: store,
+		opts:        RunCmdOptions{},
+	})
+
+	idx := -1
+	for i, a := range fake.lastArgs {
+		if a == "-testPlatform" {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 || idx+1 >= len(fake.lastArgs) {
+		t.Fatal("-testPlatform not found in runner args")
+	}
+	if fake.lastArgs[idx+1] != "PlayMode" {
+		t.Errorf("expected PlayMode, got %q", fake.lastArgs[idx+1])
+	}
+}
+
 func TestRunCmd_WithCompareRun_PopulatesNewFailures(t *testing.T) {
 	dir := t.TempDir()
 	resultsDir := filepath.Join(dir, "results")

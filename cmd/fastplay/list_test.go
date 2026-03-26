@@ -127,3 +127,72 @@ func TestListCmd_EmptyProjectPath_OutputsJSON(t *testing.T) {
 		t.Error("schema_version must be present in all JSON responses")
 	}
 }
+
+func TestListCmd_FindsUnityTestMethods(t *testing.T) {
+	dir := t.TempDir()
+	testFile := filepath.Join(dir, "PlayTests.cs")
+	content := `using NUnit.Framework;
+using UnityEngine.TestTools;
+using System.Collections;
+public class PlayTests {
+    [UnityTest]
+    public IEnumerator TestSpawn() { yield return null; }
+    [UnityTest]
+    public IEnumerator TestNetwork() { yield return null; }
+    public void NotATest() {}
+}
+`
+	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	code := runList(&buf, listDeps{projectPath: dir})
+	if code != 0 {
+		t.Errorf("expected exit 0, got %d", code)
+	}
+
+	var out struct {
+		Tests []string `json:"tests"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v\noutput: %s", err, buf.String())
+	}
+	if len(out.Tests) < 2 {
+		t.Errorf("expected at least 2 [UnityTest] methods, got %d: %v", len(out.Tests), out.Tests)
+	}
+	for _, name := range out.Tests {
+		if name != "PlayTests.TestSpawn" && name != "PlayTests.TestNetwork" {
+			t.Errorf("unexpected test name: %q", name)
+		}
+	}
+}
+
+func TestListCmd_MixedTestAndUnityTest(t *testing.T) {
+	dir := t.TempDir()
+	testFile := filepath.Join(dir, "Mixed.cs")
+	content := `using NUnit.Framework;
+public class Mixed {
+    [Test]
+    public void EditModeTest() {}
+    [UnityTest]
+    public System.Collections.IEnumerator PlayModeTest() { yield return null; }
+}
+`
+	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	runList(&buf, listDeps{projectPath: dir})
+
+	var out struct {
+		Tests []string `json:"tests"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v\noutput: %s", err, buf.String())
+	}
+	if len(out.Tests) != 2 {
+		t.Errorf("expected 2 tests ([Test] + [UnityTest]), got %d: %v", len(out.Tests), out.Tests)
+	}
+}
