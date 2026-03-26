@@ -4,6 +4,7 @@ package runsvc
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/Kubonsang/testplay-runner/internal/artifacts"
@@ -62,14 +63,18 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	runID := clock().Format("20060102-150405")
 
 	// Prepare artifact directory and get results XML path.
-	if _, err := s.Artifacts.PrepareRunDir(runID); err != nil {
+	runDir, err := s.Artifacts.PrepareRunDir(runID)
+	if err != nil {
 		return Response{}, fmt.Errorf("runsvc: prepare artifact dir: %w", err)
 	}
 	resultsFile := s.Artifacts.ResultsFilePath(runID)
 
-	// Wrap the StatusWriter to stamp run_id into every status write.
+	// Build status writer: combine snapshot writer with per-run event log,
+	// then stamp run_id into every write via runIDWriter.
 	var sw status.WriterInterface = s.StatusWriter
 	if sw != nil {
+		eventsPath := filepath.Join(runDir, "events.ndjson")
+		sw = status.NewManager(sw, status.NewEventLog(eventsPath))
 		sw = &runIDWriter{inner: sw, runID: runID}
 	}
 
