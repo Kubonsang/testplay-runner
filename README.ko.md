@@ -277,6 +277,33 @@ go test -tags=integration ./cmd/fastplay/...
 go build ./cmd/fastplay
 ```
 
+## Unity Smoke 검증
+
+`fixtures/smoke-project/`에 실제 Unity 설치 환경에서 `fastplay run`의 end-to-end 동작을 검증하는 최소 Unity 프로젝트가 포함되어 있습니다. EditMode 테스트 1개와 PlayMode(`[UnityTest]`) 테스트 1개로 구성됩니다.
+
+**로컬 실행:**
+
+```bash
+# 사전 조건: Unity 설치, UNITY_PATH 설정
+export UNITY_PATH=/Applications/Unity/Hub/Editor/2022.3.0f1/Unity.app/Contents/MacOS/Unity
+./scripts/smoke.sh
+```
+
+스크립트 동작:
+1. EditMode → PlayMode 순으로 각 플랫폼에 맞는 `fastplay.json`을 생성
+2. `fastplay check` + `fastplay run` 실행
+3. 각 run의 아티팩트 디렉터리(`.fastplay/runs/<run_id>/`)에 아래 6개 파일이 모두 존재하는지 확인:
+   - `results.xml`, `summary.json`, `manifest.json`, `stdout.log`, `stderr.log`, `events.ndjson`
+4. 프로젝트 루트의 `fastplay-status.json`(run 디렉터리 바깥의 스냅샷) 존재 확인
+
+**CI (opt-in):**
+
+```bash
+gh workflow run smoke.yml
+```
+
+`.github/workflows/smoke.yml` 참조. Unity가 설치된 self-hosted runner와 `UNITY_PATH` 환경변수가 필요합니다.
+
 ## 라이선스
 
 Apache 2.0 — [LICENSE](LICENSE) 참조.

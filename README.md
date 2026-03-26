@@ -294,7 +294,9 @@ export UNITY_PATH=/Applications/Unity/Hub/Editor/2022.3.0f1/Unity.app/Contents/M
 The script:
 1. Writes a `fastplay.json` for each platform (EditMode then PlayMode)
 2. Runs `fastplay check` + `fastplay run`
-3. Verifies `results.xml`, `summary.json`, `manifest.json`, `stdout.log`, `stderr.log`, `events.ndjson` are all present in the run artifact directory
+3. Verifies all 6 run artifacts are present in `.fastplay/runs/<run_id>/`:
+   `results.xml`, `summary.json`, `manifest.json`, `stdout.log`, `stderr.log`, `events.ndjson`
+4. Verifies `fastplay-status.json` exists in the project root (status snapshot, outside the run artifact directory)
 
 **CI (opt-in):**
 
