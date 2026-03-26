@@ -19,6 +19,7 @@ type ExecuteOptions struct {
 	TimeoutType  string // "total" — propagated to RunResult.TimeoutType on context cancellation
 	Filter       string
 	Category     string
+	TestPlatform string // "edit_mode" | "play_mode"; forwarded to BuildRunArgs
 }
 
 // Execute runs Unity tests using the provided Runner and returns the result + exit code.
@@ -40,6 +41,7 @@ func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.
 		ResultsFilePath: opts.ResultsFile,
 		Filter:          opts.Filter,
 		Category:        opts.Category,
+		TestPlatform:    opts.TestPlatform,
 	}
 	args := BuildRunArgs(opts.ProjectPath, runOpts)
 
