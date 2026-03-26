@@ -100,6 +100,9 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		prev, loadErr := s.Store.Load(req.CompareRun)
 		if loadErr == nil {
 			result.NewFailures = history.Compare(prev, result)
+			if result.NewFailures == nil {
+				result.NewFailures = make([]parser.TestCase, 0)
+			}
 		} else {
 			result.NewFailures = make([]parser.TestCase, 0)
 		}
