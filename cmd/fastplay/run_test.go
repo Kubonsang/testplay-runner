@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -221,18 +220,13 @@ func TestRunCmd_SaveFailure_IncludesWarning(t *testing.T) {
 		Timeout:       config.Timeouts{CompileMs: 120000, TestMs: 30000, TotalMs: 300000},
 	}
 
-	saveErr := errors.New("disk full")
-	failingSave := func(runID string, result *history.RunResult) error {
-		return saveErr
-	}
-
 	var buf bytes.Buffer
 	code := runRun(&buf, runDeps{
 		loadConfig:  func(string) (*config.Config, error) { return cfg, nil },
 		runner:      fake,
 		statusPath:  filepath.Join(dir, "status.json"),
-		resultStore: history.NewStore(filepath.Join(dir, "results")),
-		saveFunc:    failingSave,
+		// Point store at an impossible path to force a save error.
+		resultStore: history.NewStore("/dev/null/impossible"),
 		opts:        RunCmdOptions{},
 	})
 
@@ -245,13 +239,13 @@ func TestRunCmd_SaveFailure_IncludesWarning(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
 		t.Fatalf("invalid JSON: %v\n%s", err, buf.String())
 	}
-	warning, ok := out["warning"]
+	warnings, ok := out["warnings"]
 	if !ok {
-		t.Fatalf("expected 'warning' field in JSON output, got: %s", buf.String())
+		t.Fatalf("expected 'warnings' field in JSON output, got: %s", buf.String())
 	}
-	warnStr, _ := warning.(string)
-	if warnStr == "" {
-		t.Error("warning field must be a non-empty string")
+	warnList, _ := warnings.([]any)
+	if len(warnList) == 0 {
+		t.Error("warnings field must be a non-empty array")
 	}
 }
 
@@ -291,6 +285,45 @@ func TestRunCmd_PlayMode_PassesPlayModeToRunner(t *testing.T) {
 	}
 	if fake.lastArgs[idx+1] != "PlayMode" {
 		t.Errorf("expected PlayMode, got %q", fake.lastArgs[idx+1])
+	}
+}
+
+func TestRunCmd_SummaryJSON_WrittenToArtifactDir(t *testing.T) {
+	dir := t.TempDir()
+	xmlData := mustReadXMLFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeCmdRunner{resultsXML: xmlData, exitCode: 0}
+
+	resultDir := filepath.Join(dir, ".fastplay", "results")
+	store := history.NewStore(resultDir)
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		UnityPath:     "/fake/unity",
+		ProjectPath:   dir,
+		ResultDir:     resultDir,
+		Timeout:       config.Timeouts{TotalMs: 300000},
+	}
+
+	var buf bytes.Buffer
+	runRun(&buf, runDeps{
+		loadConfig:  func(string) (*config.Config, error) { return cfg, nil },
+		runner:      fake,
+		statusPath:  filepath.Join(dir, "status.json"),
+		resultStore: store,
+		opts:        RunCmdOptions{},
+	})
+
+	var out map[string]any
+	json.Unmarshal(buf.Bytes(), &out)
+	runID, _ := out["run_id"].(string)
+	if runID == "" {
+		t.Fatal("run_id not in output")
+	}
+
+	// artifactRoot = cfg.ProjectPath + "/.fastplay/runs"
+	artifactRoot := filepath.Join(dir, ".fastplay", "runs")
+	summaryPath := filepath.Join(artifactRoot, runID, "summary.json")
+	if _, err := os.Stat(summaryPath); err != nil {
+		t.Errorf("expected summary.json at %s, got error: %v", summaryPath, err)
 	}
 }
 

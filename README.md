@@ -60,8 +60,8 @@ Create `fastplay.json` in your project root:
 
 **Timeout configuration:**
 - `total_ms` (default 300000): outer safety-net deadline for the entire run.
-- `compile_ms` + `test_ms`: when both are set, enables two-phase execution — Unity runs compile-only first (`compile_ms` deadline), then runs tests (`test_ms` deadline). Timeouts emit `timeout_type: "compile"` or `"test"` instead of `"total"`.
-- When only `total_ms` is set, single-phase execution is used.
+- `compile_ms` + `test_ms`: **both must be set together** to enable two-phase execution — Unity runs compile-only first (`compile_ms` deadline), then runs tests (`test_ms` deadline). Timeouts emit `timeout_type: "compile"` or `"test"` instead of `"total"`. Setting only one of the two is a config validation error.
+- When neither `compile_ms` nor `test_ms` is set, single-phase execution is used (compile + test in one Unity invocation, governed by `total_ms`).
 
 > **Note:** PlayMode network harness and NGO orchestration are not yet supported.
 
@@ -133,6 +133,7 @@ fastplay run --compare-run 20250301-102200
   "total": 10,
   "passed": 10,
   "failed": 0,
+  "skipped": 0,
   "tests": [],
   "new_failures": null
 }
@@ -147,6 +148,7 @@ fastplay run --compare-run 20250301-102200
   "total": 10,
   "passed": 9,
   "failed": 1,
+  "skipped": 0,
   "tests": [
     {
       "name": "MyTests.PlayerTests.TestJump",
@@ -207,10 +209,31 @@ fastplay result --last 3
 | 1 | Unity / project not found | Fix env, check `hint` field |
 | 2 | Compile failure | Fix source, see `errors[].absolute_path` + `line` |
 | 3 | Test failure | Fix test, see `tests[].absolute_path` + `line` |
-| 4 | Timeout or signal interruption | Check `timeout_type: "total"`; signal interruption (`fastplay-status.json` phase `interrupted`) also returns exit 4 |
+| 4 | Timeout or signal interruption | Check `timeout_type` in the JSON result — see table below |
 | 5 | Config error | Fix or create `fastplay.json` |
 | 6 | Build failure (not yet returned) | Check Unity license / build target |
 | 7 | Permission error (not yet returned) | Fix path permissions |
+
+### Exit 4 — timeout_type values
+
+| `timeout_type` | `phase` in status | Cause |
+|---|---|---|
+| `"compile"` | `timeout_compile` | Compile-only phase exceeded `compile_ms` deadline |
+| `"test"` | `timeout_test` | Test phase exceeded `test_ms` deadline |
+| `"total"` | `timeout_total` | Outer `total_ms` deadline expired (fires in either phase) |
+| *(absent)* | `interrupted` | SIGINT / SIGTERM — retry without code changes |
+
+Example JSON for a compile-phase timeout:
+
+```json
+{
+  "schema_version": "1",
+  "exit_code": 4,
+  "timeout_type": "compile",
+  "tests": [],
+  "errors": []
+}
+```
 
 ## Progress Monitoring
 
@@ -230,7 +253,7 @@ During `fastplay run`, poll `fastplay-status.json` to track progress:
 ```
 
 Phase progression: `waiting → compiling → running → done`
-Failure phases: `timeout_total`, `interrupted`
+Failure phases: `timeout_compile`, `timeout_test`, `timeout_total`, `interrupted`
 
 ## Recommended Agent Flow
 

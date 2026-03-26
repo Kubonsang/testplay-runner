@@ -60,8 +60,8 @@ GOOS=windows GOARCH=amd64 go build -o fastplay.exe ./cmd/fastplay
 
 **타임아웃 설정:**
 - `total_ms` (기본값 300000): 전체 실행의 외부 안전망 데드라인.
-- `compile_ms` + `test_ms`: 둘 다 설정 시 two-phase 실행 활성화 — Unity가 컴파일만 먼저 실행(`compile_ms` 데드라인), 이후 테스트 실행(`test_ms` 데드라인). 타임아웃 시 `timeout_type: "compile"` 또는 `"test"`를 emit.
-- `total_ms`만 설정 시 single-phase 실행.
+- `compile_ms` + `test_ms`: **반드시 둘 다 함께 설정해야** two-phase 실행이 활성화됨 — Unity가 컴파일만 먼저 실행(`compile_ms` 데드라인), 이후 테스트 실행(`test_ms` 데드라인). 타임아웃 시 `timeout_type: "compile"` 또는 `"test"`를 emit. 하나만 설정하면 validation error.
+- 둘 다 설정하지 않으면 single-phase 실행 (컴파일+테스트를 Unity 한 번 호출로 처리, `total_ms` 기준).
 
 > **참고:** PlayMode 네트워크 하네스와 NGO 오케스트레이션은 아직 미지원입니다.
 
@@ -133,6 +133,7 @@ fastplay run --compare-run 20250301-102200
   "total": 10,
   "passed": 10,
   "failed": 0,
+  "skipped": 0,
   "tests": [],
   "new_failures": null
 }
@@ -147,6 +148,7 @@ fastplay run --compare-run 20250301-102200
   "total": 10,
   "passed": 9,
   "failed": 1,
+  "skipped": 0,
   "tests": [
     {
       "name": "MyTests.PlayerTests.TestJump",
@@ -207,10 +209,31 @@ fastplay result --last 3
 | 1 | Unity / 프로젝트 경로 없음 | 환경 수정, `hint` 필드 참조 |
 | 2 | 컴파일 실패 | 소스 수정, `errors[].absolute_path` + `line` 참조 |
 | 3 | 테스트 실패 | 테스트 수정, `tests[].absolute_path` + `line` 참조 |
-| 4 | 타임아웃 또는 시그널 중단 | `timeout_type: "total"` 확인; 시그널 중단 시 `fastplay-status.json` phase가 `interrupted`로 표시되며 동일하게 exit 4 반환 |
+| 4 | 타임아웃 또는 시그널 중단 | JSON 결과의 `timeout_type` 확인 — 아래 표 참조 |
 | 5 | 설정 오류 | `fastplay.json` 수정 또는 생성 |
 | 6 | 빌드 실패 (미구현) | Unity 라이선스 / 빌드 타겟 확인 |
 | 7 | 권한 오류 (미구현) | 경로 권한 수정 |
+
+### Exit 4 — timeout_type 값
+
+| `timeout_type` | status의 `phase` | 원인 |
+|---|---|---|
+| `"compile"` | `timeout_compile` | 컴파일 단계가 `compile_ms` 데드라인 초과 |
+| `"test"` | `timeout_test` | 테스트 단계가 `test_ms` 데드라인 초과 |
+| `"total"` | `timeout_total` | 외부 `total_ms` 데드라인 만료 (어느 단계에서든 발생) |
+| *(없음)* | `interrupted` | SIGINT / SIGTERM — 코드 변경 없이 재시도 |
+
+컴파일 단계 타임아웃 JSON 예시:
+
+```json
+{
+  "schema_version": "1",
+  "exit_code": 4,
+  "timeout_type": "compile",
+  "tests": [],
+  "errors": []
+}
+```
 
 ## 진행 상황 모니터링
 
@@ -230,7 +253,7 @@ fastplay result --last 3
 ```
 
 페이즈 진행: `waiting → compiling → running → done`
-실패 페이즈: `timeout_total`, `interrupted`
+실패 페이즈: `timeout_compile`, `timeout_test`, `timeout_total`, `interrupted`
 
 ## 권장 에이전트 흐름
 

@@ -61,15 +61,19 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 | 1 | Dependency error (Unity/project not found) | Fix env, check `hint` field | ✅ |
 | 2 | Compile failure | Fix source code, see `errors[].absolute_path` + `line` | ✅ |
 | 3 | Test failure | Fix test logic, see `tests[].absolute_path` + `line` | ✅ |
-| 4 | Timeout **or** interrupted by signal | Check `timeout_type: "total"`; signal interruption also returns 4 | ✅ (partial) |
+| 4 | Timeout **or** interrupted by signal | Check `timeout_type` — `"compile"`, `"test"`, or `"total"`; absent means signal | ✅ |
 | 5 | Config error (fastplay.json missing/invalid) | Fix config file | ✅ |
 | 6 | Build failure (missing build target, license) | Fix build environment | ❌ not yet returned |
 | 7 | Permission error | Fix path/permissions | ❌ not yet returned |
 | 8 | Interrupted by signal | Retry without code changes | ❌ signal currently returns exit 4 |
 
-**Current timeout_type:** Only `"total"` is emitted. `"compile"` and `"test"` sub-types are reserved for future phase-aware runner (P1).
+**timeout_type values for exit 4:**
+- `"compile"` — compile-only phase exceeded `compile_ms` deadline (two-phase mode)
+- `"test"` — test phase exceeded `test_ms` deadline (two-phase mode)
+- `"total"` — outer `total_ms` deadline expired (either phase)
+- *(absent)* — SIGINT/SIGTERM signal interruption
 
-**Signal behavior:** SIGINT/SIGTERM cancels the context (`cancel()`) → executor sees `context.Canceled` → returns exit 4. Exit 8 is not yet implemented.
+**Signal behavior:** SIGINT/SIGTERM cancels the context (`cancel()`) → executor sees `context.Canceled` → returns exit 4 with no `timeout_type`. Exit 8 is not yet implemented.
 
 ## fastplay.json (project config)
 
@@ -90,7 +94,7 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 
 `unity_path` falls back to `UNITY_PATH` env var if omitted. `project_path` defaults to the directory containing `fastplay.json`.
 
-**Reserved but no runtime effect:** `compile_ms`, `test_ms` — accepted in config for forward compatibility but ignored at runtime. Set only `total_ms`.
+**Two-phase execution:** when both `compile_ms` and `test_ms` are set (both > 0), two-phase execution is enabled. Both fields must be set together — setting only one is a validation error. When neither is set, single-phase execution uses only `total_ms`.
 
 **Config path:** Always loaded from `"fastplay.json"` in cwd. No `--config` flag yet — working directory must contain `fastplay.json`.
 
@@ -98,9 +102,9 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 
 - `fastplay-status.json` — written atomically during `run`; poll this to observe progress.
   - **Path:** hardcoded to `"fastplay-status.json"` in cwd. No config option.
-  - **Phase values actually emitted:** `compiling → running → done | timeout_total | interrupted`
+  - **Phase values actually emitted:** `compiling → running → done | timeout_compile | timeout_test | timeout_total | interrupted`
   - `waiting` — defined but never written by the runner (pre-run initial state)
-  - `timeout_compile`, `timeout_test` — defined in code but **never written** (reserved for phase-aware runner, P1)
+  - `timeout_compile`, `timeout_test` — written in two-phase mode when the respective phase deadline fires
   - `running` — written *after* Unity exits, not when tests actually start (phase detection is approximate)
   - `interrupted` — best-effort write on SIGINT/SIGTERM before context cancel; process still exits 4
 - `.fastplay/results/<run_id>.json` — one file per run, never overwritten. `run_id` is a 1-second-granularity timestamp (e.g. `20250301-102200`); concurrent runs within the same second will collide.
@@ -137,6 +141,7 @@ Run `fastplay result` to review the `run_id` list and decide the `--compare-run`
 4. All file path fields include both `file` (relative) and `absolute_path`.
 5. `hint` field is included only on exit 1 — the one case where an agent can auto-recover.
 6. `new_failures` in exit 3 is only populated when `--compare-run` is specified; otherwise `null`.
+7. `warnings` (string array) is included only when non-fatal infrastructure issues occur (e.g. result save failed, summary write failed). Absent when no warnings.
 
 ## Known Limitations & Risks
 
@@ -146,7 +151,7 @@ Run `fastplay result` to review the `run_id` list and decide the `--compare-run`
 | Phase detection | `running` phase written after Unity exits, not when tests start — polling agents see misleading phase | Medium |
 | runID collision | 1-second timestamp granularity; concurrent runs within the same second overwrite the result file | Medium |
 | Signal exit code | SIGINT/SIGTERM returns exit 4 (timeout), not exit 8 (interrupted) — agents cannot distinguish | Medium |
-| Timeout sub-types | `compile_ms`/`test_ms` accepted in config but never enforced — compile hangs count against total budget | Medium |
+| Timeout sub-types | `compile_ms`/`test_ms` enforced in two-phase mode; single-phase uses only `total_ms` | — resolved |
 | Config path | Always loads `fastplay.json` from cwd; no `--config` flag — agents must `cd` to project root | Low |
 | Unimplemented exit codes | Exit 6 (build failure), exit 7 (permission) are documented but never returned | Low |
 
@@ -156,7 +161,7 @@ To reach the ultimate goal (PlayMode + network environment testing), these featu
 
 1. ~~**`test_platform` config field**~~ ✅ — implemented
 2. ~~**`[UnityTest]` detection in `list`**~~ ✅ — implemented
-3. **Phase-aware timeouts** — enforce `compile_ms` and `test_ms` as separate context deadlines; emit `timeout_compile` / `timeout_test` phases
+3. ~~**Phase-aware timeouts**~~ ✅ — implemented: `compile_ms`/`test_ms` as separate context deadlines; emits `timeout_compile` / `timeout_test` / `timeout_total` phases with correct classification
 4. **Exit 8 for signal interruption** — distinguish SIGINT/SIGTERM from timeout at the exit code level
 5. **Network test configuration** — timeout tuning for network-dependent tests (larger `test_ms`); test environment flags passed through to Unity
 6. **Unique runID** — nanosecond or UUID-based to prevent concurrent-run collision
