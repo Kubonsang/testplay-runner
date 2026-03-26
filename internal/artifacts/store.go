@@ -50,14 +50,26 @@ func (s *Store) SaveSummary(runID string, v any) error {
 	if err != nil {
 		return fmt.Errorf("marshalling summary for run %s: %w", runID, err)
 	}
-	path := filepath.Join(s.root, runID, "summary.json")
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	finalPath := filepath.Join(s.root, runID, "summary.json")
+	// Write to a temp file in the same directory, then rename atomically.
+	// This prevents partial files from blocking future saves for the same runID.
+	tmp, err := os.CreateTemp(filepath.Dir(finalPath), "summary-*.json.tmp")
 	if err != nil {
-		return fmt.Errorf("writing summary.json for run %s: %w", runID, err)
+		return fmt.Errorf("creating temp file for summary (run %s): %w", runID, err)
 	}
-	defer f.Close()
-	if _, err := f.Write(data); err != nil {
-		return fmt.Errorf("writing summary.json for run %s: %w", runID, err)
+	tmpName := tmp.Name()
+	_, writeErr := tmp.Write(data)
+	closeErr := tmp.Close()
+	if writeErr != nil || closeErr != nil {
+		_ = os.Remove(tmpName)
+		if writeErr != nil {
+			return fmt.Errorf("writing summary.json for run %s: %w", runID, writeErr)
+		}
+		return fmt.Errorf("closing temp file for summary (run %s): %w", runID, closeErr)
+	}
+	if err := os.Rename(tmpName, finalPath); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("committing summary.json for run %s: %w", runID, err)
 	}
 	return nil
 }
