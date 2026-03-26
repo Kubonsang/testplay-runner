@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -185,14 +186,14 @@ type capturingRunner struct {
 	lastArgs   []string
 }
 
-func (c *capturingRunner) Run(_ context.Context, args []string) ([]byte, []byte, int, error) {
+func (c *capturingRunner) Run(_ context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 	c.lastArgs = args
 	for i, a := range args {
 		if a == "-testResults" && i+1 < len(args) && c.resultsXML != nil {
 			_ = os.WriteFile(args[i+1], c.resultsXML, 0644)
 		}
 	}
-	return nil, nil, 0, nil
+	return 0, nil
 }
 
 func TestRunCmd_FilterForwarded(t *testing.T) {

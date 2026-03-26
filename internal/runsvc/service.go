@@ -78,8 +78,11 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		sw = &runIDWriter{inner: sw, runID: runID}
 	}
 
-	// Wrap runner to capture raw stdout/stderr for artifact storage.
-	cap := &logCapture{inner: s.Runner}
+	// Open log files for streaming writes during execution.
+	stdoutLog, stderrLog, err := s.Artifacts.OpenRunLogs(runID)
+	if err != nil {
+		return Response{}, fmt.Errorf("runsvc: open run logs: %w", err)
+	}
 
 	startedAt := clock()
 
@@ -94,8 +97,13 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		TestPlatform: req.Config.TestPlatform,
 		CompileMs:    req.Config.Timeout.CompileMs,
 		TestMs:       req.Config.Timeout.TestMs,
+		StdoutWriter: stdoutLog,
+		StderrWriter: stderrLog,
 	}
-	result, exitCode := unity.Execute(ctx, cap, execOpts)
+	result, exitCode := unity.Execute(ctx, s.Runner, execOpts)
+
+	_ = stdoutLog.Close()
+	_ = stderrLog.Close()
 
 	finishedAt := clock()
 
@@ -142,11 +150,6 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		warnings = append(warnings, fmt.Sprintf("summary not written: %v", err))
 	}
 
-	// Write stdout.log and stderr.log.
-	if err := s.Artifacts.SaveRawLogs(runID, cap.stdout, cap.stderr); err != nil {
-		warnings = append(warnings, fmt.Sprintf("raw logs not written: %v", err))
-	}
-
 	// Write manifest.json.
 	manifest := artifacts.Manifest{
 		SchemaVersion: "1",
@@ -169,23 +172,6 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		ExitCode: exitCode,
 		Warnings: warnings,
 	}, nil
-}
-
-// logCapture wraps a Runner to accumulate stdout and stderr across all Run calls.
-// In two-phase execution both invocations are captured and concatenated.
-// Not goroutine-safe: Run calls must be sequential, which is guaranteed by
-// both executeSinglePhase and executeTwoPhase calling runner.Run sequentially.
-type logCapture struct {
-	inner  unity.Runner
-	stdout []byte
-	stderr []byte
-}
-
-func (l *logCapture) Run(ctx context.Context, args []string) ([]byte, []byte, int, error) {
-	stdout, stderr, code, err := l.inner.Run(ctx, args)
-	l.stdout = append(l.stdout, stdout...)
-	l.stderr = append(l.stderr, stderr...)
-	return stdout, stderr, code, err
 }
 
 // runIDWriter wraps a WriterInterface to stamp RunID into every status write.

@@ -1,8 +1,8 @@
 package unity
 
 import (
-	"bytes"
 	"context"
+	"io"
 	"os/exec"
 )
 
@@ -16,8 +16,9 @@ import (
 // processes concurrently (e.g. server + client Unity instances). That will need a
 // different abstraction — Runner is intentionally kept minimal until then.
 type Runner interface {
-	// Run executes Unity with the given args.
-	Run(ctx context.Context, args []string) (stdout []byte, stderr []byte, exitCode int, err error)
+	// Run executes Unity with the given args, streaming stdout and stderr to the
+	// provided writers. Either writer may be nil (output is discarded).
+	Run(ctx context.Context, args []string, stdout, stderr io.Writer) (exitCode int, err error)
 }
 
 // ProcessRunner is the real implementation backed by exec.Cmd.
@@ -25,22 +26,19 @@ type ProcessRunner struct {
 	UnityPath string
 }
 
-// Run executes the Unity binary with the provided args.
-func (r *ProcessRunner) Run(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+// Run executes the Unity binary with the provided args, streaming output to
+// stdout and stderr. A nil writer discards the corresponding output.
+func (r *ProcessRunner) Run(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 	cmd := exec.CommandContext(ctx, r.UnityPath, args...)
-	var stderrBuf bytes.Buffer
-	cmd.Stderr = &stderrBuf
-	stdout, err := cmd.Output()
-	stderr := stderrBuf.Bytes()
-	if exitErr, ok := err.(*exec.ExitError); ok {
-		// exitErr.Stderr is populated by cmd.Output() only when cmd.Stderr is nil.
-		// Since we set cmd.Stderr, use stderrBuf instead.
-		return stdout, stderr, exitErr.ExitCode(), nil
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return exitErr.ExitCode(), nil
+		}
+		return -1, err
 	}
-	if err != nil {
-		return nil, stderr, -1, err
-	}
-	return stdout, stderr, 0, nil
+	return 0, nil
 }
 
 // BuildCompileArgs constructs the Unity CLI arguments for a compile-only run

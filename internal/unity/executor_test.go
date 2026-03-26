@@ -3,6 +3,7 @@ package unity_test
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -130,9 +131,9 @@ func TestExecute_TimeoutType_AlwaysPropagated(t *testing.T) {
 	// opts.TimeoutType is always propagated to the result.
 	dir := t.TempDir()
 	blockingRunner := &funcRunner{
-		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+		run: func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 			<-ctx.Done()
-			return nil, nil, -1, ctx.Err()
+			return -1, ctx.Err()
 		},
 	}
 	sw := status.NewWriter(filepath.Join(dir, "status.json"))
@@ -157,20 +158,20 @@ func TestExecute_TimeoutType_AlwaysPropagated(t *testing.T) {
 // funcRunner implements Runner via a pluggable function, for tests that need
 // custom blocking or error behaviour that fakeRunner cannot provide.
 type funcRunner struct {
-	run func(ctx context.Context, args []string) ([]byte, []byte, int, error)
+	run func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error)
 }
 
-func (f *funcRunner) Run(ctx context.Context, args []string) ([]byte, []byte, int, error) {
-	return f.run(ctx, args)
+func (f *funcRunner) Run(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
+	return f.run(ctx, args, stdout, stderr)
 }
 
 func TestExecute_PlayMode_PassesPlayModeToRunner(t *testing.T) {
 	dir := t.TempDir()
 	var capturedArgs []string
 	capturingRunner := &funcRunner{
-		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+		run: func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 			capturedArgs = args
-			return nil, nil, -1, context.Canceled
+			return -1, context.Canceled
 		},
 	}
 
@@ -224,9 +225,9 @@ func TestExecute_DeadlineExceeded_WritesTimeoutTotalPhase(t *testing.T) {
 	dir := t.TempDir()
 	spy := &spyWriter{}
 	blockingRunner := &funcRunner{
-		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+		run: func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 			<-ctx.Done()
-			return nil, nil, -1, ctx.Err()
+			return -1, ctx.Err()
 		},
 	}
 
@@ -259,11 +260,11 @@ func TestExecute_TwoPhase_CompileTimeout_EmitsTimeoutCompile(t *testing.T) {
 	spy := &spyWriter{}
 	callCount := 0
 	blockingCompile := &funcRunner{
-		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+		run: func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 			callCount++
 			// Phase 1 (compile): block until context fires
 			<-ctx.Done()
-			return nil, nil, -1, ctx.Err()
+			return -1, ctx.Err()
 		},
 	}
 
@@ -295,15 +296,15 @@ func TestExecute_TwoPhase_TestTimeout_EmitsTimeoutTest(t *testing.T) {
 	spy := &spyWriter{}
 	callCount := 0
 	runner := &funcRunner{
-		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+		run: func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 			callCount++
 			if callCount == 1 {
 				// Phase 1 (compile): succeed immediately
-				return nil, nil, 0, nil
+				return 0, nil
 			}
 			// Phase 2 (test): block until context fires
 			<-ctx.Done()
-			return nil, nil, -1, ctx.Err()
+			return -1, ctx.Err()
 		},
 	}
 
@@ -335,15 +336,15 @@ func TestExecute_TwoPhase_BothSucceed_Returns0(t *testing.T) {
 	xmlData := mustReadFixture(t, "../parser/testdata/passing.xml")
 	callCount := 0
 	runner := &funcRunner{
-		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+		run: func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 			callCount++
 			if callCount == 2 {
 				// Phase 2: write results XML
 				if err := os.WriteFile(filepath.Join(dir, "results.xml"), xmlData, 0644); err != nil {
-					return nil, nil, 1, err
+					return 1, err
 				}
 			}
-			return nil, nil, 0, nil
+			return 0, nil
 		},
 	}
 
@@ -369,12 +370,12 @@ func TestExecute_TwoPhase_PhaseSequence(t *testing.T) {
 	spy := &spyWriter{}
 	callCount := 0
 	runner := &funcRunner{
-		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+		run: func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 			callCount++
 			if callCount == 2 {
 				_ = os.WriteFile(filepath.Join(dir, "results.xml"), xmlData, 0644)
 			}
-			return nil, nil, 0, nil
+			return 0, nil
 		},
 	}
 
@@ -396,10 +397,13 @@ func TestExecute_TwoPhase_CompileError_SkipsTestPhase(t *testing.T) {
 	dir := t.TempDir()
 	callCount := 0
 	runner := &funcRunner{
-		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+		run: func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 			callCount++
 			// Phase 1: return compile error in stderr
-			return nil, []byte(`Assets/Foo.cs(1,1): error CS0246: Type 'Bar' not found`), 1, nil
+			if stderr != nil {
+				_, _ = stderr.Write([]byte(`Assets/Foo.cs(1,1): error CS0246: Type 'Bar' not found`))
+			}
+			return 1, nil
 		},
 	}
 
@@ -425,9 +429,9 @@ func TestExecute_TwoPhase_Phase1RunnerError_ReturnsExit2_SkipsPhase2(t *testing.
 	callCount := 0
 	someRunnerErr := fmt.Errorf("exec: unity: no such file")
 	runner := &funcRunner{
-		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+		run: func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 			callCount++
-			return nil, nil, -1, someRunnerErr
+			return -1, someRunnerErr
 		},
 	}
 
@@ -452,12 +456,12 @@ func TestExecute_TwoPhase_Phase2RunnerError_ReturnsExit2(t *testing.T) {
 	someRunnerErr := fmt.Errorf("exec: unity: no such file")
 	callCount := 0
 	runner := &funcRunner{
-		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+		run: func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 			callCount++
 			if callCount == 1 {
-				return nil, nil, 0, nil // compile phase succeeds
+				return 0, nil // compile phase succeeds
 			}
-			return nil, nil, -1, someRunnerErr
+			return -1, someRunnerErr
 		},
 	}
 
@@ -484,9 +488,9 @@ func TestExecute_TwoPhase_TotalTimeout_DuringCompile_EmitsTimeoutTotal(t *testin
 	spy := &spyWriter{}
 
 	blockingRunner := &funcRunner{
-		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+		run: func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 			<-ctx.Done()
-			return nil, nil, -1, ctx.Err()
+			return -1, ctx.Err()
 		},
 	}
 
@@ -523,15 +527,15 @@ func TestExecute_TwoPhase_TotalTimeout_DuringTest_EmitsTimeoutTotal(t *testing.T
 	callCount := 0
 
 	runner := &funcRunner{
-		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+		run: func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 			callCount++
 			if callCount == 1 {
 				// Compile phase: return immediately so we advance to test phase.
-				return nil, nil, 0, nil
+				return 0, nil
 			}
 			// Test phase: block until the context fires.
 			<-ctx.Done()
-			return nil, nil, -1, ctx.Err()
+			return -1, ctx.Err()
 		},
 	}
 
@@ -569,10 +573,13 @@ func TestExecute_TwoPhase_CompilePhase_NonZeroExit_NoCompileErrors_ReturnsExit2(
 	dir := t.TempDir()
 	callCount := 0
 	runner := &funcRunner{
-		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+		run: func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 			callCount++
 			// Non-zero exit with generic (non-compile-error) stderr, e.g. license failure.
-			return nil, []byte("Unity license check failed"), 1, nil
+			if stderr != nil {
+				_, _ = stderr.Write([]byte("Unity license check failed"))
+			}
+			return 1, nil
 		},
 	}
 
