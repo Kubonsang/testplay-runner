@@ -168,6 +168,49 @@ public class PlayTests {
 	}
 }
 
+func TestListCmd_MultipleAttributes_ExtractsCorrectMethodName(t *testing.T) {
+	// [UnityTest] followed by additional attributes like [Category] and [Timeout]
+	// should still extract the correct method name, not the attribute name.
+	dir := t.TempDir()
+	testFile := filepath.Join(dir, "MultiAttr.cs")
+	content := `using NUnit.Framework;
+using UnityEngine.TestTools;
+public class MultiAttr {
+    [UnityTest]
+    [Category("Network")]
+    [Timeout(30000)]
+    public System.Collections.IEnumerator TestSpawnWithCategory() { yield return null; }
+    [Test]
+    [Category("Smoke")]
+    public void EditModeWithCategory() {}
+}
+`
+	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	code := runList(&buf, listDeps{projectPath: dir})
+	if code != 0 {
+		t.Errorf("expected exit 0, got %d\noutput: %s", code, buf.String())
+	}
+
+	var out struct {
+		Tests []string `json:"tests"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v\noutput: %s", err, buf.String())
+	}
+	if len(out.Tests) != 2 {
+		t.Errorf("expected 2 tests, got %d: %v", len(out.Tests), out.Tests)
+	}
+	for _, name := range out.Tests {
+		if name != "MultiAttr.TestSpawnWithCategory" && name != "MultiAttr.EditModeWithCategory" {
+			t.Errorf("unexpected test name %q — attribute line mis-parsed as method name", name)
+		}
+	}
+}
+
 func TestListCmd_MixedTestAndUnityTest(t *testing.T) {
 	dir := t.TempDir()
 	testFile := filepath.Join(dir, "Mixed.cs")

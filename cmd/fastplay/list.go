@@ -50,9 +50,10 @@ func runList(w io.Writer, deps listDeps) int {
 	return 0
 }
 
-// scanCSharpTestFile returns method names annotated with [Test] in the file.
-// It uses a simple line-by-line scan: if a line contains "[Test]" and the next
-// non-empty line looks like a method signature, extract the method name.
+// scanCSharpTestFile returns method names annotated with [Test] or [UnityTest] in
+// the file. It uses a simple line-by-line scan: when a test attribute is found,
+// subsequent attribute lines (starting with '[') are skipped until a method
+// signature is reached.
 func scanCSharpTestFile(path string) ([]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -85,6 +86,10 @@ func scanCSharpTestFile(path string) ([]string, error) {
 		}
 
 		if nextIsTest && line != "" {
+			// Skip additional attribute lines (e.g. [Category("...")], [Timeout(...)]).
+			if strings.HasPrefix(line, "[") {
+				continue
+			}
 			nextIsTest = false
 			// Extract method name from line like: "public void TestAdd() {}"
 			methodName := extractMethodName(line)
