@@ -10,11 +10,16 @@
 #   SMOKE_DIR    Path to the smoke Unity project (default: ./fixtures/smoke-project)
 #
 # What this tests:
-#   1. EditMode smoke: fastplay run → exit 0, results.xml, summary.json, manifest.json, events.ndjson
+#   1. EditMode smoke: fastplay run → exit 0, all 6 run artifacts present
 #   2. PlayMode smoke: fastplay run → same artifacts, test_platform=play_mode
 #
+# Artifacts verified per run (inside .fastplay/runs/<run_id>/):
+#   results.xml, summary.json, manifest.json, stdout.log, stderr.log, events.ndjson
+# Snapshot (in smoke project root, outside run artifact dir):
+#   fastplay-status.json
+#
 # The script exits non-zero if any check fails.
-# Dependencies: bash, grep, cut, go — no python3 or jq required.
+# Dependencies: bash, grep, sed, go — no python3 or jq required.
 
 set -euo pipefail
 
@@ -54,19 +59,43 @@ echo "==> Using Unity:      $UNITY_PATH"
 echo "==> Smoke project:    $SMOKE_DIR"
 echo ""
 
-# ── Helper: extract a string field from a single-line JSON object ─────────────
-# Usage: json_str <json> <field>
-# Works with grep+cut — no python3 or jq required.
+# ── Helper: extract a string field from pretty or compact JSON ────────────────
+# Usage: json_str <json_text> <field>
+# Handles both compact  ("field":"value")
+#     and pretty output ("field": "value") from json.MarshalIndent.
+# Returns empty string if the field is not found.
 json_str() {
-  echo "$1" | grep -o "\"$2\":\"[^\"]*\"" | cut -d'"' -f4
+  printf '%s' "$1" \
+    | grep -o "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" \
+    | sed 's/.*"[[:space:]]*:[[:space:]]*"//' \
+    | tr -d '"'
 }
 
-# ── Helper: extract a numeric field from a single-line JSON object ────────────
+# ── Helper: extract a numeric field from pretty or compact JSON ───────────────
+# Usage: json_num <json_text> <field>
+# Handles both compact  ("field":0)
+#     and pretty output ("field": 0) from json.MarshalIndent.
+# Returns empty string if the field is not found.
 json_num() {
-  echo "$1" | grep -o "\"$2\":[0-9-]*" | cut -d':' -f2
+  printf '%s' "$1" \
+    | grep -o "\"$2\"[[:space:]]*:[[:space:]]*[0-9-][0-9]*" \
+    | sed 's/.*:[[:space:]]*//'
 }
 
-# ── Helper: generate fastplay.json ───────────────────────────────────────────
+# ── Helper: assert a parsed field is non-empty ────────────────────────────────
+# Usage: assert_field <stage> <field_name> <value> <raw_json>
+# Exits immediately with a diagnostic if the field is empty.
+assert_field() {
+  local stage="$1" field="$2" value="$3" raw="$4"
+  if [[ -z "$value" ]]; then
+    echo "  ERROR [$stage]: field '$field' is empty — JSON parsing failed." >&2
+    echo "  Raw fastplay output:" >&2
+    printf '%s\n' "$raw" | sed 's/^/    /' >&2
+    exit 1
+  fi
+}
+
+# ── Helper: generate fastplay.json for smoke project ─────────────────────────
 
 write_config() {
   local platform="$1"
@@ -84,81 +113,81 @@ write_config() {
 EOF
 }
 
-# ── Helper: verify artifact files exist ──────────────────────────────────────
-
+# ── Helper: verify all expected artifact files are present ───────────────────
+# Usage: check_artifacts <stage> <run_id>
+# Exits immediately if the artifact directory or any expected file is missing.
 check_artifacts() {
-  local run_id="$1"
+  local stage="$1" run_id="$2"
   local artifact_dir="$SMOKE_DIR/.fastplay/runs/$run_id"
 
-  local ok=true
+  if [[ ! -d "$artifact_dir" ]]; then
+    echo "  ERROR [$stage]: artifact directory not found: $artifact_dir" >&2
+    echo "  Possible cause: run_id extraction failed or fastplay did not create the run directory." >&2
+    exit 1
+  fi
+
+  local missing=false
+  # Run artifacts (inside .fastplay/runs/<run_id>/)
   for f in results.xml summary.json manifest.json stdout.log stderr.log events.ndjson; do
     if [[ ! -f "$artifact_dir/$f" ]]; then
-      echo "  MISSING: $artifact_dir/$f" >&2
-      ok=false
+      echo "  MISSING [$stage]: $artifact_dir/$f" >&2
+      missing=true
     fi
   done
+  # Status snapshot (in project root, outside the run artifact dir)
   if [[ ! -f "$SMOKE_DIR/fastplay-status.json" ]]; then
-    echo "  MISSING: $SMOKE_DIR/fastplay-status.json" >&2
-    ok=false
+    echo "  MISSING [$stage]: $SMOKE_DIR/fastplay-status.json (status snapshot)" >&2
+    missing=true
   fi
-  $ok
+  if [[ "$missing" == "true" ]]; then
+    exit 1
+  fi
 }
 
-# ── Smoke 1: EditMode ────────────────────────────────────────────────────────
+# ── Smoke runner ──────────────────────────────────────────────────────────────
+# Usage: run_smoke <stage_label> <platform>
+run_smoke() {
+  local stage="$1" platform="$2"
 
-echo "==> Smoke 1: EditMode"
-write_config "edit_mode"
+  echo "==> $stage ($platform)"
+  write_config "$platform"
+
+  echo "  fastplay check..."
+  "$FASTPLAY" check
+
+  echo "  fastplay run ($platform)..."
+  local output
+  output=$("$FASTPLAY" run)
+
+  local run_id exit_code
+  run_id=$(json_str "$output" "run_id")
+  exit_code=$(json_num "$output" "exit_code")
+
+  assert_field "$stage" "run_id"    "$run_id"    "$output"
+  assert_field "$stage" "exit_code" "$exit_code" "$output"
+
+  echo "  run_id:    $run_id"
+  echo "  exit_code: $exit_code"
+
+  if [[ "$exit_code" != "0" ]]; then
+    echo "  ERROR [$stage]: expected exit_code 0, got $exit_code" >&2
+    echo "  Raw fastplay output:" >&2
+    printf '%s\n' "$output" | sed 's/^/    /' >&2
+    exit 1
+  fi
+
+  echo "  Checking artifacts..."
+  check_artifacts "$stage" "$run_id"
+  echo "  OK"
+  echo ""
+}
+
+# ── Run both smoke stages ─────────────────────────────────────────────────────
 
 cd "$SMOKE_DIR"
 
-echo "  fastplay check..."
-"$FASTPLAY" check
-
-echo "  fastplay run (edit_mode)..."
-output=$("$FASTPLAY" run)
-
-run_id=$(json_str "$output" "run_id")
-exit_code=$(json_num "$output" "exit_code")
-
-echo "  run_id:    $run_id"
-echo "  exit_code: $exit_code"
-
-if [[ "$exit_code" != "0" ]]; then
-  echo "  ERROR: expected exit_code 0, got $exit_code" >&2
-  exit 1
-fi
-
-echo "  Checking artifacts..."
-check_artifacts "$run_id"
-echo "  OK"
-echo ""
-
-# ── Smoke 2: PlayMode ────────────────────────────────────────────────────────
-
-echo "==> Smoke 2: PlayMode"
-write_config "play_mode"
-
-echo "  fastplay check..."
-"$FASTPLAY" check
-
-echo "  fastplay run (play_mode)..."
-output=$("$FASTPLAY" run)
-
-run_id=$(json_str "$output" "run_id")
-exit_code=$(json_num "$output" "exit_code")
-
-echo "  run_id:    $run_id"
-echo "  exit_code: $exit_code"
-
-if [[ "$exit_code" != "0" ]]; then
-  echo "  ERROR: expected exit_code 0, got $exit_code" >&2
-  exit 1
-fi
-
-echo "  Checking artifacts..."
-check_artifacts "$run_id"
-echo "  OK"
-echo ""
+run_smoke "Smoke 1: EditMode" "edit_mode"
+run_smoke "Smoke 2: PlayMode" "play_mode"
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 
