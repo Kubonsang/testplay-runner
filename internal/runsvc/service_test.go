@@ -120,6 +120,27 @@ func TestService_CompileFailure_ExitCode2(t *testing.T) {
 	}
 }
 
+func TestService_CompileFailure_WithNonZeroExitCode_ExitCode2(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	// Simulate Unity exiting non-zero with compile errors in stderr
+	fake := &fakeRunner{
+		stderr:   []byte("Assets/Foo.cs(1,1): error CS0246: Type 'Bar' not found"),
+		exitCode: 1,
+	}
+
+	svc := &runsvc.Service{
+		Runner:    fake,
+		Store:     history.NewStore(cfg.ResultDir),
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Clock:     func() time.Time { return time.Now() },
+	}
+
+	resp, _ := svc.Run(context.Background(), runsvc.Request{Config: cfg})
+	if resp.ExitCode != 2 {
+		t.Errorf("expected exit 2, got %d", resp.ExitCode)
+	}
+}
+
 func TestService_RunID_MatchesClock(t *testing.T) {
 	cfg, dir := baseConfig(t)
 	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")

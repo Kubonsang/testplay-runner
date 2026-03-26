@@ -82,6 +82,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	result, exitCode := unity.Execute(ctx, s.Runner, execOpts)
 	result.RunID = runID
 	result.SchemaVersion = "1"
+	result.ExitCode = exitCode
 
 	// Normalise paths: make file fields relative to project.
 	for i := range result.Tests {
@@ -95,6 +96,8 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		}
 	}
 
+	var warnings []string
+
 	// Regression comparison.
 	if req.CompareRun != "" {
 		prev, loadErr := s.Store.Load(req.CompareRun)
@@ -105,10 +108,9 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 			}
 		} else {
 			result.NewFailures = make([]parser.TestCase, 0)
+			warnings = append(warnings, fmt.Sprintf("compare-run %q not found: %v", req.CompareRun, loadErr))
 		}
 	}
-
-	var warnings []string
 
 	// Persist to history store.
 	if err := s.Store.Save(runID, result); err != nil {
