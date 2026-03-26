@@ -89,6 +89,8 @@ func runRun(w io.Writer, deps runDeps) int {
 		Filter:       deps.opts.Filter,
 		Category:     deps.opts.Category,
 		TestPlatform: cfg.TestPlatform,
+		CompileMs:    cfg.Timeout.CompileMs,
+		TestMs:       cfg.Timeout.TestMs,
 	}
 
 	// Execute

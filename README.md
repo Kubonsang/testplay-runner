@@ -16,7 +16,7 @@ Unity's raw CLI is broken for automation: exit code 0 even on compile failure, X
 | XML-only output | All stdout is JSON with `schema_version` |
 | No pre-run validation | `fastplay check` validates environment before touching Unity |
 | No progress visibility | `fastplay-status.json` updated atomically during run |
-| Ambiguous timeout | `timeout_type: compile / test / total` in JSON |
+| Ambiguous timeout | `timeout_type: compile / test / total` in JSON; two-phase execution separates compile and test deadlines |
 | No regression tracking | `--compare-run` populates `new_failures` |
 | Platform path differences | Absolute + relative paths in every response |
 | No test discovery without running | `fastplay list` static-scans `[Test]` and `[UnityTest]` attributes |
@@ -46,7 +46,9 @@ Create `fastplay.json` in your project root:
   "project_path": "/path/to/your/UnityProject",
   "test_platform": "edit_mode",
   "timeout": {
-    "total_ms": 300000
+    "total_ms": 300000,
+    "compile_ms": 60000,
+    "test_ms": 240000
   },
   "result_dir": ".fastplay/results"
 }
@@ -56,7 +58,12 @@ Create `fastplay.json` in your project root:
 `project_path` defaults to the directory containing `fastplay.json`.
 `test_platform` accepts `"edit_mode"` (default) or `"play_mode"`. This is passed as `-testPlatform EditMode|PlayMode` to Unity.
 
-> **Note:** `compile_ms` and `test_ms` are accepted in the config file but currently have no runtime effect (reserved for future phase-aware implementation). PlayMode network harness and NGO orchestration are not yet supported.
+**Timeout configuration:**
+- `total_ms` (default 300000): outer safety-net deadline for the entire run.
+- `compile_ms` + `test_ms`: when both are set, enables two-phase execution — Unity runs compile-only first (`compile_ms` deadline), then runs tests (`test_ms` deadline). Timeouts emit `timeout_type: "compile"` or `"test"` instead of `"total"`.
+- When only `total_ms` is set, single-phase execution is used.
+
+> **Note:** PlayMode network harness and NGO orchestration are not yet supported.
 
 ## Commands
 

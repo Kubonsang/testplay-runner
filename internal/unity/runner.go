@@ -7,6 +7,14 @@ import (
 )
 
 // Runner abstracts the Unity subprocess, allowing tests to inject a fake.
+//
+// Current scope: single Unity process per invocation. Each call to Run starts
+// one Unity batch-mode process and waits for it to exit. There is no inter-process
+// communication, log streaming, or multi-process orchestration.
+//
+// Future work: network harness / NGO orchestration will require running multiple
+// processes concurrently (e.g. server + client Unity instances). That will need a
+// different abstraction — Runner is intentionally kept minimal until then.
 type Runner interface {
 	// Run executes Unity with the given args.
 	Run(ctx context.Context, args []string) (stdout []byte, stderr []byte, exitCode int, err error)
@@ -33,6 +41,18 @@ func (r *ProcessRunner) Run(ctx context.Context, args []string) ([]byte, []byte,
 		return nil, stderr, -1, err
 	}
 	return stdout, stderr, 0, nil
+}
+
+// BuildCompileArgs constructs the Unity CLI arguments for a compile-only run
+// (no -runTests, exits after compilation via -quit). Used by the two-phase
+// executor to enforce a separate compile timeout.
+func BuildCompileArgs(projectPath string) []string {
+	return []string{
+		"-batchmode",
+		"-nographics",
+		"-projectPath", projectPath,
+		"-quit",
+	}
 }
 
 // RunOptions configures a Unity test run.

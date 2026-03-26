@@ -25,13 +25,14 @@ type Config struct {
 }
 
 // Timeouts holds timeout configuration for a fastplay run.
-// Only TotalMs is enforced at runtime in the current implementation.
-// CompileMs and TestMs are reserved for future phase-aware execution;
-// they are accepted in the config file but have no runtime effect.
+// When both CompileMs and TestMs are > 0, two-phase execution is enabled:
+// Unity runs compile-only first (CompileMs deadline), then runs tests
+// (TestMs deadline). TotalMs remains as an outer safety-net context.
+// When only TotalMs is set, single-phase execution is used.
 type Timeouts struct {
-	CompileMs int64 `json:"compile_ms"` // reserved; no runtime effect
-	TestMs    int64 `json:"test_ms"`    // reserved; no runtime effect
-	TotalMs   int64 `json:"total_ms"`   // enforced; default 300000
+	CompileMs int64 `json:"compile_ms"` // compile-only phase deadline; two-phase when > 0 with TestMs
+	TestMs    int64 `json:"test_ms"`    // test phase deadline; two-phase when > 0 with CompileMs
+	TotalMs   int64 `json:"total_ms"`   // outer deadline; default 300000
 }
 
 // Validate fills in default values and validates required fields.
