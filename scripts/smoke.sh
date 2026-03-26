@@ -63,23 +63,25 @@ echo ""
 # Usage: json_str <json_text> <field>
 # Handles both compact  ("field":"value")
 #     and pretty output ("field": "value") from json.MarshalIndent.
-# Returns empty string if the field is not found.
+# Always returns 0; returns empty string if the field is not found.
+# (|| true prevents grep no-match from triggering set -e / set -o pipefail)
 json_str() {
   printf '%s' "$1" \
     | grep -o "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" \
     | sed 's/.*"[[:space:]]*:[[:space:]]*"//' \
-    | tr -d '"'
+    | tr -d '"' || true
 }
 
 # ── Helper: extract a numeric field from pretty or compact JSON ───────────────
 # Usage: json_num <json_text> <field>
 # Handles both compact  ("field":0)
 #     and pretty output ("field": 0) from json.MarshalIndent.
-# Returns empty string if the field is not found.
+# Always returns 0; returns empty string if the field is not found.
+# (|| true prevents grep no-match from triggering set -e / set -o pipefail)
 json_num() {
   printf '%s' "$1" \
     | grep -o "\"$2\"[[:space:]]*:[[:space:]]*[0-9-][0-9]*" \
-    | sed 's/.*:[[:space:]]*//'
+    | sed 's/.*:[[:space:]]*//' || true
 }
 
 # ── Helper: assert a parsed field is non-empty ────────────────────────────────
@@ -156,25 +158,27 @@ run_smoke() {
   "$FASTPLAY" check
 
   echo "  fastplay run ($platform)..."
-  local output
-  output=$("$FASTPLAY" run)
+  local output cmd_status=0
+  output=$("$FASTPLAY" run) || cmd_status=$?
 
   local run_id exit_code
   run_id=$(json_str "$output" "run_id")
   exit_code=$(json_num "$output" "exit_code")
+
+  if [[ "$cmd_status" -ne 0 ]]; then
+    echo "  ERROR [$stage]: fastplay run exited with status $cmd_status" >&2
+    echo "  run_id:    ${run_id:-(unparsed)}" >&2
+    echo "  exit_code: ${exit_code:-(unparsed)}" >&2
+    echo "  Raw fastplay output:" >&2
+    printf '%s\n' "$output" | sed 's/^/    /' >&2
+    exit 1
+  fi
 
   assert_field "$stage" "run_id"    "$run_id"    "$output"
   assert_field "$stage" "exit_code" "$exit_code" "$output"
 
   echo "  run_id:    $run_id"
   echo "  exit_code: $exit_code"
-
-  if [[ "$exit_code" != "0" ]]; then
-    echo "  ERROR [$stage]: expected exit_code 0, got $exit_code" >&2
-    echo "  Raw fastplay output:" >&2
-    printf '%s\n' "$output" | sed 's/^/    /' >&2
-    exit 1
-  fi
 
   echo "  Checking artifacts..."
   check_artifacts "$stage" "$run_id"
