@@ -294,6 +294,45 @@ func TestRunCmd_PlayMode_PassesPlayModeToRunner(t *testing.T) {
 	}
 }
 
+func TestRunCmd_SummaryJSON_WrittenToArtifactDir(t *testing.T) {
+	dir := t.TempDir()
+	xmlData := mustReadXMLFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeCmdRunner{resultsXML: xmlData, exitCode: 0}
+
+	resultDir := filepath.Join(dir, ".fastplay", "results")
+	store := history.NewStore(resultDir)
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		UnityPath:     "/fake/unity",
+		ProjectPath:   dir,
+		ResultDir:     resultDir,
+		Timeout:       config.Timeouts{TotalMs: 300000},
+	}
+
+	var buf bytes.Buffer
+	runRun(&buf, runDeps{
+		loadConfig:  func(string) (*config.Config, error) { return cfg, nil },
+		runner:      fake,
+		statusPath:  filepath.Join(dir, "status.json"),
+		resultStore: store,
+		opts:        RunCmdOptions{},
+	})
+
+	var out map[string]any
+	json.Unmarshal(buf.Bytes(), &out)
+	runID, _ := out["run_id"].(string)
+	if runID == "" {
+		t.Fatal("run_id not in output")
+	}
+
+	// artifactRoot = filepath.Dir(resultDir) + "/runs" = dir/.fastplay/runs
+	artifactRoot := filepath.Join(dir, ".fastplay", "runs")
+	summaryPath := filepath.Join(artifactRoot, runID, "summary.json")
+	if _, err := os.Stat(summaryPath); err != nil {
+		t.Errorf("expected summary.json at %s, got error: %v", summaryPath, err)
+	}
+}
+
 func TestRunCmd_WithCompareRun_PopulatesNewFailures(t *testing.T) {
 	dir := t.TempDir()
 	resultsDir := filepath.Join(dir, "results")
