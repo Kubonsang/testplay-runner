@@ -60,8 +60,8 @@ GOOS=windows GOARCH=amd64 go build -o fastplay.exe ./cmd/fastplay
 
 **타임아웃 설정:**
 - `total_ms` (기본값 300000): 전체 실행의 외부 안전망 데드라인.
-- `compile_ms` + `test_ms`: 둘 다 설정 시 two-phase 실행 활성화 — Unity가 컴파일만 먼저 실행(`compile_ms` 데드라인), 이후 테스트 실행(`test_ms` 데드라인). 타임아웃 시 `timeout_type: "compile"` 또는 `"test"`를 emit.
-- `total_ms`만 설정 시 single-phase 실행.
+- `compile_ms` + `test_ms`: **반드시 둘 다 함께 설정해야** two-phase 실행이 활성화됨 — Unity가 컴파일만 먼저 실행(`compile_ms` 데드라인), 이후 테스트 실행(`test_ms` 데드라인). 타임아웃 시 `timeout_type: "compile"` 또는 `"test"`를 emit. 하나만 설정하면 validation error.
+- 둘 다 설정하지 않으면 single-phase 실행 (컴파일+테스트를 Unity 한 번 호출로 처리, `total_ms` 기준).
 
 > **참고:** PlayMode 네트워크 하네스와 NGO 오케스트레이션은 아직 미지원입니다.
 
@@ -133,6 +133,7 @@ fastplay run --compare-run 20250301-102200
   "total": 10,
   "passed": 10,
   "failed": 0,
+  "skipped": 0,
   "tests": [],
   "new_failures": null
 }
@@ -147,6 +148,7 @@ fastplay run --compare-run 20250301-102200
   "total": 10,
   "passed": 9,
   "failed": 1,
+  "skipped": 0,
   "tests": [
     {
       "name": "MyTests.PlayerTests.TestJump",

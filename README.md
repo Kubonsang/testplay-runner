@@ -60,8 +60,8 @@ Create `fastplay.json` in your project root:
 
 **Timeout configuration:**
 - `total_ms` (default 300000): outer safety-net deadline for the entire run.
-- `compile_ms` + `test_ms`: when both are set, enables two-phase execution — Unity runs compile-only first (`compile_ms` deadline), then runs tests (`test_ms` deadline). Timeouts emit `timeout_type: "compile"` or `"test"` instead of `"total"`.
-- When only `total_ms` is set, single-phase execution is used.
+- `compile_ms` + `test_ms`: **both must be set together** to enable two-phase execution — Unity runs compile-only first (`compile_ms` deadline), then runs tests (`test_ms` deadline). Timeouts emit `timeout_type: "compile"` or `"test"` instead of `"total"`. Setting only one of the two is a config validation error.
+- When neither `compile_ms` nor `test_ms` is set, single-phase execution is used (compile + test in one Unity invocation, governed by `total_ms`).
 
 > **Note:** PlayMode network harness and NGO orchestration are not yet supported.
 
@@ -133,6 +133,7 @@ fastplay run --compare-run 20250301-102200
   "total": 10,
   "passed": 10,
   "failed": 0,
+  "skipped": 0,
   "tests": [],
   "new_failures": null
 }
@@ -147,6 +148,7 @@ fastplay run --compare-run 20250301-102200
   "total": 10,
   "passed": 9,
   "failed": 1,
+  "skipped": 0,
   "tests": [
     {
       "name": "MyTests.PlayerTests.TestJump",
