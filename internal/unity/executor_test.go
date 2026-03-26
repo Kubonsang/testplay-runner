@@ -476,6 +476,124 @@ func TestExecute_TwoPhase_Phase2RunnerError_ReturnsExit2(t *testing.T) {
 	}
 }
 
+// TestExecute_TwoPhase_TotalTimeout_DuringCompile_EmitsTimeoutTotal verifies that when
+// the outer total_ms context expires while in the compile phase, the result is
+// timeout_type "total" (not "compile").
+func TestExecute_TwoPhase_TotalTimeout_DuringCompile_EmitsTimeoutTotal(t *testing.T) {
+	dir := t.TempDir()
+	spy := &spyWriter{}
+
+	blockingRunner := &funcRunner{
+		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+			<-ctx.Done()
+			return nil, nil, -1, ctx.Err()
+		},
+	}
+
+	// Outer ctx (total_ms) fires before CompileMs deadline.
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	result, code := unity.Execute(ctx, blockingRunner, unity.ExecuteOptions{
+		ProjectPath:  dir,
+		ResultsFile:  filepath.Join(dir, "results.xml"),
+		StatusWriter: spy,
+		CompileMs:    5000,
+		TestMs:       5000,
+	})
+
+	if code != 4 {
+		t.Errorf("expected exit 4, got %d", code)
+	}
+	if result.TimeoutType != "total" {
+		t.Errorf("expected TimeoutType 'total' when outer ctx fires during compile, got %q", result.TimeoutType)
+	}
+	last := spy.phases[len(spy.phases)-1]
+	if last != status.PhaseTimeoutTotal {
+		t.Errorf("expected final phase %q, got %q", status.PhaseTimeoutTotal, last)
+	}
+}
+
+// TestExecute_TwoPhase_TotalTimeout_DuringTest_EmitsTimeoutTotal verifies that when
+// the outer total_ms context expires while in the test phase, the result is
+// timeout_type "total" (not "test").
+func TestExecute_TwoPhase_TotalTimeout_DuringTest_EmitsTimeoutTotal(t *testing.T) {
+	dir := t.TempDir()
+	spy := &spyWriter{}
+	callCount := 0
+
+	runner := &funcRunner{
+		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+			callCount++
+			if callCount == 1 {
+				// Compile phase: return immediately so we advance to test phase.
+				return nil, nil, 0, nil
+			}
+			// Test phase: block until the context fires.
+			<-ctx.Done()
+			return nil, nil, -1, ctx.Err()
+		},
+	}
+
+	// Outer ctx (total_ms) fires before TestMs deadline.
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	result, code := unity.Execute(ctx, runner, unity.ExecuteOptions{
+		ProjectPath:  dir,
+		ResultsFile:  filepath.Join(dir, "results.xml"),
+		StatusWriter: spy,
+		CompileMs:    5000,
+		TestMs:       5000,
+	})
+
+	if code != 4 {
+		t.Errorf("expected exit 4, got %d", code)
+	}
+	if result.TimeoutType != "total" {
+		t.Errorf("expected TimeoutType 'total' when outer ctx fires during test, got %q", result.TimeoutType)
+	}
+	last := spy.phases[len(spy.phases)-1]
+	if last != status.PhaseTimeoutTotal {
+		t.Errorf("expected final phase %q, got %q", status.PhaseTimeoutTotal, last)
+	}
+	if callCount != 2 {
+		t.Errorf("expected 2 runner calls (compile + test), got %d", callCount)
+	}
+}
+
+// TestExecute_TwoPhase_CompilePhase_NonZeroExit_NoCompileErrors_ReturnsExit2 verifies
+// that a non-zero exit from the compile phase with no recognisable compile errors
+// is still treated as a failure (exit 2) rather than silently passing to phase 2.
+func TestExecute_TwoPhase_CompilePhase_NonZeroExit_NoCompileErrors_ReturnsExit2(t *testing.T) {
+	dir := t.TempDir()
+	callCount := 0
+	runner := &funcRunner{
+		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+			callCount++
+			// Non-zero exit with generic (non-compile-error) stderr, e.g. license failure.
+			return nil, []byte("Unity license check failed"), 1, nil
+		},
+	}
+
+	result, code := unity.Execute(context.Background(), runner, unity.ExecuteOptions{
+		ProjectPath: dir,
+		ResultsFile: filepath.Join(dir, "results.xml"),
+		CompileMs:   5000,
+		TestMs:      5000,
+	})
+
+	if code != 2 {
+		t.Errorf("expected exit 2 for non-zero compile phase exit, got %d", code)
+	}
+	if callCount != 1 {
+		t.Errorf("expected runner called once (no test phase after compile failure), got %d", callCount)
+	}
+	if len(result.Errors) == 0 {
+		t.Error("expected at least one error entry for non-zero compile exit with no compile errors")
+	}
+}
+
 func TestExecute_CompileErrorsInStderr_Returns2(t *testing.T) {
 	dir := t.TempDir()
 	// fakeRunner writes an empty XML but also has compile errors in stderr

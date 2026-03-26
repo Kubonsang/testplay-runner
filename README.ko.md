@@ -207,10 +207,31 @@ fastplay result --last 3
 | 1 | Unity / 프로젝트 경로 없음 | 환경 수정, `hint` 필드 참조 |
 | 2 | 컴파일 실패 | 소스 수정, `errors[].absolute_path` + `line` 참조 |
 | 3 | 테스트 실패 | 테스트 수정, `tests[].absolute_path` + `line` 참조 |
-| 4 | 타임아웃 또는 시그널 중단 | `timeout_type: "total"` 확인; 시그널 중단 시 `fastplay-status.json` phase가 `interrupted`로 표시되며 동일하게 exit 4 반환 |
+| 4 | 타임아웃 또는 시그널 중단 | JSON 결과의 `timeout_type` 확인 — 아래 표 참조 |
 | 5 | 설정 오류 | `fastplay.json` 수정 또는 생성 |
 | 6 | 빌드 실패 (미구현) | Unity 라이선스 / 빌드 타겟 확인 |
 | 7 | 권한 오류 (미구현) | 경로 권한 수정 |
+
+### Exit 4 — timeout_type 값
+
+| `timeout_type` | status의 `phase` | 원인 |
+|---|---|---|
+| `"compile"` | `timeout_compile` | 컴파일 단계가 `compile_ms` 데드라인 초과 |
+| `"test"` | `timeout_test` | 테스트 단계가 `test_ms` 데드라인 초과 |
+| `"total"` | `timeout_total` | 외부 `total_ms` 데드라인 만료 (어느 단계에서든 발생) |
+| *(없음)* | `interrupted` | SIGINT / SIGTERM — 코드 변경 없이 재시도 |
+
+컴파일 단계 타임아웃 JSON 예시:
+
+```json
+{
+  "schema_version": "1",
+  "exit_code": 4,
+  "timeout_type": "compile",
+  "tests": [],
+  "errors": []
+}
+```
 
 ## 진행 상황 모니터링
 
@@ -230,7 +251,7 @@ fastplay result --last 3
 ```
 
 페이즈 진행: `waiting → compiling → running → done`
-실패 페이즈: `timeout_total`, `interrupted`
+실패 페이즈: `timeout_compile`, `timeout_test`, `timeout_total`, `interrupted`
 
 ## 권장 에이전트 흐름
 

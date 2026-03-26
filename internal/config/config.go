@@ -69,7 +69,18 @@ func (c *Config) Validate(requireUnity bool) error {
 
 	// Reject negative total timeout (checked after default so zero → default → positive is valid)
 	if c.Timeout.TotalMs < 0 {
-		return fmt.Errorf("%w: timeout values must be positive", ErrConfigInvalid)
+		return fmt.Errorf("%w: total_ms must be positive", ErrConfigInvalid)
+	}
+
+	// Reject negative phase timeouts.
+	if c.Timeout.CompileMs < 0 || c.Timeout.TestMs < 0 {
+		return fmt.Errorf("%w: compile_ms and test_ms must be non-negative", ErrConfigInvalid)
+	}
+
+	// Require both phase timeouts when either is set — partial config silently falls
+	// back to single-phase, which is almost certainly not what the user intended.
+	if (c.Timeout.CompileMs > 0) != (c.Timeout.TestMs > 0) {
+		return fmt.Errorf("%w: compile_ms and test_ms must both be set to enable two-phase execution", ErrConfigInvalid)
 	}
 
 	// Validate and default test_platform

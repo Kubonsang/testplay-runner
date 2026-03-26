@@ -207,10 +207,31 @@ fastplay result --last 3
 | 1 | Unity / project not found | Fix env, check `hint` field |
 | 2 | Compile failure | Fix source, see `errors[].absolute_path` + `line` |
 | 3 | Test failure | Fix test, see `tests[].absolute_path` + `line` |
-| 4 | Timeout or signal interruption | Check `timeout_type: "total"`; signal interruption (`fastplay-status.json` phase `interrupted`) also returns exit 4 |
+| 4 | Timeout or signal interruption | Check `timeout_type` in the JSON result — see table below |
 | 5 | Config error | Fix or create `fastplay.json` |
 | 6 | Build failure (not yet returned) | Check Unity license / build target |
 | 7 | Permission error (not yet returned) | Fix path permissions |
+
+### Exit 4 — timeout_type values
+
+| `timeout_type` | `phase` in status | Cause |
+|---|---|---|
+| `"compile"` | `timeout_compile` | Compile-only phase exceeded `compile_ms` deadline |
+| `"test"` | `timeout_test` | Test phase exceeded `test_ms` deadline |
+| `"total"` | `timeout_total` | Outer `total_ms` deadline expired (fires in either phase) |
+| *(absent)* | `interrupted` | SIGINT / SIGTERM — retry without code changes |
+
+Example JSON for a compile-phase timeout:
+
+```json
+{
+  "schema_version": "1",
+  "exit_code": 4,
+  "timeout_type": "compile",
+  "tests": [],
+  "errors": []
+}
+```
 
 ## Progress Monitoring
 
@@ -230,7 +251,7 @@ During `fastplay run`, poll `fastplay-status.json` to track progress:
 ```
 
 Phase progression: `waiting → compiling → running → done`
-Failure phases: `timeout_total`, `interrupted`
+Failure phases: `timeout_compile`, `timeout_test`, `timeout_total`, `interrupted`
 
 ## Recommended Agent Flow
 

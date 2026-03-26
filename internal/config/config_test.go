@@ -94,25 +94,76 @@ func TestValidate_DefaultTotalMs(t *testing.T) {
 	if cfg.Timeout.TotalMs != 300000 {
 		t.Errorf("TotalMs default: got %d, want 300000", cfg.Timeout.TotalMs)
 	}
-	// compile_ms and test_ms stay at zero — they are reserved fields
+	// compile_ms and test_ms stay at zero when not set — no default applied
 	if cfg.Timeout.CompileMs != 0 {
-		t.Errorf("CompileMs should remain 0 (reserved), got %d", cfg.Timeout.CompileMs)
+		t.Errorf("CompileMs should remain 0 when unset, got %d", cfg.Timeout.CompileMs)
 	}
 	if cfg.Timeout.TestMs != 0 {
-		t.Errorf("TestMs should remain 0 (reserved), got %d", cfg.Timeout.TestMs)
+		t.Errorf("TestMs should remain 0 when unset, got %d", cfg.Timeout.TestMs)
 	}
 }
 
-func TestValidate_NegativeCompileMs_IsAccepted(t *testing.T) {
-	// compile_ms has no runtime effect; negative values are tolerated
+func TestValidate_NegativeCompileMs_ReturnsError(t *testing.T) {
 	t.Setenv("UNITY_PATH", "/fake/unity")
 	cfg := &config.Config{
 		SchemaVersion: "1",
 		ProjectPath:   "/tmp/proj",
-		Timeout:       config.Timeouts{CompileMs: -1, TotalMs: 300000},
+		Timeout:       config.Timeouts{CompileMs: -1, TestMs: 5000, TotalMs: 300000},
+	}
+	err := cfg.Validate(true)
+	if !errors.Is(err, config.ErrConfigInvalid) {
+		t.Errorf("expected ErrConfigInvalid for negative compile_ms, got %v", err)
+	}
+}
+
+func TestValidate_NegativeTestMs_ReturnsError(t *testing.T) {
+	t.Setenv("UNITY_PATH", "/fake/unity")
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		ProjectPath:   "/tmp/proj",
+		Timeout:       config.Timeouts{CompileMs: 5000, TestMs: -1, TotalMs: 300000},
+	}
+	err := cfg.Validate(true)
+	if !errors.Is(err, config.ErrConfigInvalid) {
+		t.Errorf("expected ErrConfigInvalid for negative test_ms, got %v", err)
+	}
+}
+
+func TestValidate_OnlyCompileMsSet_ReturnsError(t *testing.T) {
+	t.Setenv("UNITY_PATH", "/fake/unity")
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		ProjectPath:   "/tmp/proj",
+		Timeout:       config.Timeouts{CompileMs: 5000, TotalMs: 300000},
+	}
+	err := cfg.Validate(true)
+	if !errors.Is(err, config.ErrConfigInvalid) {
+		t.Errorf("expected ErrConfigInvalid when only compile_ms is set, got %v", err)
+	}
+}
+
+func TestValidate_OnlyTestMsSet_ReturnsError(t *testing.T) {
+	t.Setenv("UNITY_PATH", "/fake/unity")
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		ProjectPath:   "/tmp/proj",
+		Timeout:       config.Timeouts{TestMs: 5000, TotalMs: 300000},
+	}
+	err := cfg.Validate(true)
+	if !errors.Is(err, config.ErrConfigInvalid) {
+		t.Errorf("expected ErrConfigInvalid when only test_ms is set, got %v", err)
+	}
+}
+
+func TestValidate_BothCompileAndTestMsSet_IsAccepted(t *testing.T) {
+	t.Setenv("UNITY_PATH", "/fake/unity")
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		ProjectPath:   "/tmp/proj",
+		Timeout:       config.Timeouts{CompileMs: 30000, TestMs: 120000, TotalMs: 300000},
 	}
 	if err := cfg.Validate(true); err != nil {
-		t.Errorf("expected no error for negative compile_ms (reserved field), got %v", err)
+		t.Errorf("expected no error when both compile_ms and test_ms are set, got %v", err)
 	}
 }
 

@@ -97,30 +97,10 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 	compileCtx, compileCancel := context.WithTimeout(ctx, time.Duration(opts.CompileMs)*time.Millisecond)
 	defer compileCancel()
 
-	_, stderr, _, err := runner.Run(compileCtx, BuildCompileArgs(opts.ProjectPath))
+	_, stderr, exitCode, err := runner.Run(compileCtx, BuildCompileArgs(opts.ProjectPath))
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			if opts.StatusWriter != nil {
-				_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseTimeoutCompile})
-			}
-			return &history.RunResult{
-				SchemaVersion: "1",
-				ExitCode:      4,
-				TimeoutType:   "compile",
-				Tests:         []parser.TestCase{},
-				Errors:        []history.CompileError{},
-			}, 4
-		}
-		if errors.Is(err, context.Canceled) {
-			if opts.StatusWriter != nil {
-				_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseInterrupted})
-			}
-			return &history.RunResult{
-				SchemaVersion: "1",
-				ExitCode:      4,
-				Tests:         []parser.TestCase{},
-				Errors:        []history.CompileError{},
-			}, 4
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return classifyPhaseContextErr(ctx, opts, status.PhaseTimeoutCompile, "compile")
 		}
 		// Non-context runner error (e.g. Unity binary missing) → compile failure.
 		if opts.StatusWriter != nil {
@@ -134,7 +114,7 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 		}, 2
 	}
 
-	// Compile errors in stderr → fail without running tests
+	// Compile errors in stderr → fail without running tests.
 	if compileErrors := ParseCompileErrorsWithProject(stderr, opts.ProjectPath); len(compileErrors) > 0 {
 		if opts.StatusWriter != nil {
 			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
@@ -144,6 +124,21 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 			ExitCode:      2,
 			Tests:         []parser.TestCase{},
 			Errors:        compileErrors,
+		}, 2
+	}
+
+	// Non-zero exit with no recognisable compile errors (e.g. license failure, bad args).
+	if exitCode != 0 {
+		if opts.StatusWriter != nil {
+			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
+		}
+		return &history.RunResult{
+			SchemaVersion: "1",
+			ExitCode:      2,
+			Tests:         []parser.TestCase{},
+			Errors: []history.CompileError{
+				{Message: fmt.Sprintf("compile phase exited with code %d (no compile errors in stderr)", exitCode)},
+			},
 		}, 2
 	}
 
@@ -163,28 +158,8 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 	}
 	_, testStderr, _, testErr := runner.Run(testCtx, BuildRunArgs(opts.ProjectPath, runOpts))
 	if testErr != nil {
-		if errors.Is(testErr, context.DeadlineExceeded) {
-			if opts.StatusWriter != nil {
-				_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseTimeoutTest})
-			}
-			return &history.RunResult{
-				SchemaVersion: "1",
-				ExitCode:      4,
-				TimeoutType:   "test",
-				Tests:         []parser.TestCase{},
-				Errors:        []history.CompileError{},
-			}, 4
-		}
-		if errors.Is(testErr, context.Canceled) {
-			if opts.StatusWriter != nil {
-				_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseInterrupted})
-			}
-			return &history.RunResult{
-				SchemaVersion: "1",
-				ExitCode:      4,
-				Tests:         []parser.TestCase{},
-				Errors:        []history.CompileError{},
-			}, 4
+		if errors.Is(testErr, context.DeadlineExceeded) || errors.Is(testErr, context.Canceled) {
+			return classifyPhaseContextErr(ctx, opts, status.PhaseTimeoutTest, "test")
 		}
 		// Non-context runner error in test phase → no results available.
 		if opts.StatusWriter != nil {
@@ -199,6 +174,48 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 	}
 
 	return parseResults(opts, testStderr)
+}
+
+// classifyPhaseContextErr determines the correct exit result when a phase context
+// fires (DeadlineExceeded or Canceled). It checks the outer ctx to distinguish
+// between a total_ms deadline, a signal interruption, and a phase-only deadline.
+func classifyPhaseContextErr(ctx context.Context, opts ExecuteOptions, phaseTimeoutStatus status.Phase, phaseTimeoutType string) (*history.RunResult, int) {
+	if outerErr := ctx.Err(); outerErr != nil {
+		if errors.Is(outerErr, context.DeadlineExceeded) {
+			// Outer total_ms deadline fired.
+			if opts.StatusWriter != nil {
+				_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseTimeoutTotal})
+			}
+			return &history.RunResult{
+				SchemaVersion: "1",
+				ExitCode:      4,
+				TimeoutType:   "total",
+				Tests:         []parser.TestCase{},
+				Errors:        []history.CompileError{},
+			}, 4
+		}
+		// context.Canceled → signal interruption.
+		if opts.StatusWriter != nil {
+			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseInterrupted})
+		}
+		return &history.RunResult{
+			SchemaVersion: "1",
+			ExitCode:      4,
+			Tests:         []parser.TestCase{},
+			Errors:        []history.CompileError{},
+		}, 4
+	}
+	// Outer ctx is still alive — only the phase deadline fired.
+	if opts.StatusWriter != nil {
+		_ = opts.StatusWriter.Write(status.Status{Phase: phaseTimeoutStatus})
+	}
+	return &history.RunResult{
+		SchemaVersion: "1",
+		ExitCode:      4,
+		TimeoutType:   phaseTimeoutType,
+		Tests:         []parser.TestCase{},
+		Errors:        []history.CompileError{},
+	}, 4
 }
 
 // handleContextErr maps context errors to the appropriate exit result.
