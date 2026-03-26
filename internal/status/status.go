@@ -32,6 +32,12 @@ type Status struct {
 	CurrentTest   string `json:"current_test,omitempty"`
 	ExitCode      *int   `json:"exit_code,omitempty"`
 	UpdatedAt     string `json:"updated_at"`
+
+	// Run-scoped metadata — written once at start, preserved across phase updates.
+	StartedAt       string `json:"started_at,omitempty"`
+	LastHeartbeatAt string `json:"last_heartbeat_at,omitempty"`
+	PID             int    `json:"pid,omitempty"`
+	ArtifactRoot    string `json:"artifact_root,omitempty"`
 }
 
 // WriterInterface is the interface for writing status updates.

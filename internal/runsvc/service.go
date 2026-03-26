@@ -4,6 +4,7 @@ package runsvc
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 	"github.com/Kubonsang/testplay-runner/internal/status"
 	"github.com/Kubonsang/testplay-runner/internal/unity"
 )
+
+const heartbeatInterval = 5 * time.Second
 
 // ResultStore is the subset of history.Store used by Service.
 // Defining it here (consumer side) follows standard Go interface practice
@@ -72,9 +75,11 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	// Build status writer: combine snapshot writer with per-run event log,
 	// then stamp run_id into every write via runIDWriter.
 	var sw status.WriterInterface = s.StatusWriter
+	var mgr *status.Manager // kept for heartbeat access
 	if sw != nil {
 		eventsPath := filepath.Join(runDir, "events.ndjson")
-		sw = status.NewManager(sw, status.NewEventLog(eventsPath))
+		mgr = status.NewManager(sw, status.NewEventLog(eventsPath))
+		sw = mgr
 		sw = &runIDWriter{inner: sw, runID: runID}
 	}
 
@@ -85,6 +90,36 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	}
 
 	startedAt := clock()
+
+	// Write initial status snapshot with run-scoped metadata so that
+	// heartbeats and phase updates can inherit StartedAt/PID/ArtifactRoot.
+	if sw != nil {
+		_ = sw.Write(status.Status{
+			Phase:        status.PhaseCompiling,
+			StartedAt:    startedAt.UTC().Format(time.RFC3339),
+			PID:          os.Getpid(),
+			ArtifactRoot: runDir,
+		})
+	}
+
+	// Heartbeat goroutine: ticks every heartbeatInterval while Unity runs,
+	// updating last_heartbeat_at so external pollers can detect stale runs.
+	hbCtx, hbCancel := context.WithCancel(ctx)
+	defer hbCancel()
+	if mgr != nil {
+		go func() {
+			ticker := time.NewTicker(heartbeatInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-hbCtx.Done():
+					return
+				case <-ticker.C:
+					_ = mgr.Heartbeat()
+				}
+			}
+		}()
+	}
 
 	// Execute Unity.
 	execOpts := unity.ExecuteOptions{
