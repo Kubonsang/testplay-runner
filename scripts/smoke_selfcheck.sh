@@ -18,20 +18,11 @@ set -euo pipefail
 PASS=0
 FAIL=0
 
-# ── Helpers under test (keep in sync with smoke.sh) ──────────────────────────
-
-json_str() {
-  printf '%s' "$1" \
-    | grep -o "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" \
-    | sed 's/.*"[[:space:]]*:[[:space:]]*"//' \
-    | tr -d '"' || true
-}
-
-json_num() {
-  printf '%s' "$1" \
-    | grep -o "\"$2\"[[:space:]]*:[[:space:]]*[0-9-][0-9]*" \
-    | sed 's/.*:[[:space:]]*//' || true
-}
+# ── Helpers under test ───────────────────────────────────────────────────────
+# Source the shared helpers so selfcheck always tests the live implementation.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=smoke_helpers.sh
+source "$SCRIPT_DIR/smoke_helpers.sh"
 
 # ── Test runner ───────────────────────────────────────────────────────────────
 
