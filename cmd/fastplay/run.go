@@ -95,9 +95,11 @@ func runRun(w io.Writer, deps runDeps) int {
 	if result.TimeoutType != "" {
 		output["timeout_type"] = result.TimeoutType
 	}
-	for _, w2 := range resp.Warnings {
-		fmt.Fprintln(os.Stderr, "warning:", w2)
-		output["warning"] = w2 // last warning wins (Phase A: at most one)
+	if len(resp.Warnings) > 0 {
+		for _, w2 := range resp.Warnings {
+			fmt.Fprintln(os.Stderr, "warning:", w2)
+		}
+		output["warnings"] = resp.Warnings
 	}
 
 	writeJSON(w, output)

@@ -239,13 +239,13 @@ func TestRunCmd_SaveFailure_IncludesWarning(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
 		t.Fatalf("invalid JSON: %v\n%s", err, buf.String())
 	}
-	warning, ok := out["warning"]
+	warnings, ok := out["warnings"]
 	if !ok {
-		t.Fatalf("expected 'warning' field in JSON output, got: %s", buf.String())
+		t.Fatalf("expected 'warnings' field in JSON output, got: %s", buf.String())
 	}
-	warnStr, _ := warning.(string)
-	if warnStr == "" {
-		t.Error("warning field must be a non-empty string")
+	warnList, _ := warnings.([]any)
+	if len(warnList) == 0 {
+		t.Error("warnings field must be a non-empty array")
 	}
 }
 

@@ -141,6 +141,7 @@ Run `fastplay result` to review the `run_id` list and decide the `--compare-run`
 4. All file path fields include both `file` (relative) and `absolute_path`.
 5. `hint` field is included only on exit 1 — the one case where an agent can auto-recover.
 6. `new_failures` in exit 3 is only populated when `--compare-run` is specified; otherwise `null`.
+7. `warnings` (string array) is included only when non-fatal infrastructure issues occur (e.g. result save failed, summary write failed). Absent when no warnings.
 
 ## Known Limitations & Risks
 
