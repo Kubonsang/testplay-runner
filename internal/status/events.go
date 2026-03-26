@@ -16,6 +16,7 @@ type Event struct {
 	Phase     string `json:"phase,omitempty"`
 	Timestamp string `json:"timestamp"`
 	Reason    string `json:"reason,omitempty"`
+	ExitCode  *int   `json:"exit_code,omitempty"`
 }
 
 // EventLog writes Event entries as newline-delimited JSON to a file.

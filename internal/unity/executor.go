@@ -308,10 +308,11 @@ func parseResults(opts ExecuteOptions, stderr []byte) (*history.RunResult, int) 
 
 	if opts.StatusWriter != nil {
 		_ = opts.StatusWriter.Write(status.Status{
-			Phase:  status.PhaseDone,
-			Total:  parseResult.Total,
-			Passed: parseResult.Passed,
-			Failed: parseResult.Failed,
+			Phase:    status.PhaseDone,
+			Total:    parseResult.Total,
+			Passed:   parseResult.Passed,
+			Failed:   parseResult.Failed,
+			ExitCode: &exitCode,
 		})
 	}
 

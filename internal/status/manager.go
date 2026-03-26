@@ -28,10 +28,11 @@ func (m *Manager) Write(s Status) error {
 
 	eventName, reason := phaseToEvent(s.Phase)
 	ev := Event{
-		Event:  eventName,
-		RunID:  s.RunID,
-		Phase:  string(s.Phase),
-		Reason: reason,
+		Event:    eventName,
+		RunID:    s.RunID,
+		Phase:    string(s.Phase),
+		Reason:   reason,
+		ExitCode: s.ExitCode,
 	}
 	// Event failures are non-fatal — the snapshot is already written.
 	// Callers that need to surface these should check the returned error.

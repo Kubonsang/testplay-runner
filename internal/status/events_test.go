@@ -133,6 +133,38 @@ func TestManager_Write_UpdatesSnapshotAndAppendsEvent(t *testing.T) {
 	}
 }
 
+func TestManager_Write_RunFinished_ExitCode(t *testing.T) {
+	dir := t.TempDir()
+	eventsPath := filepath.Join(dir, "events.ndjson")
+	mgr := status.NewManager(
+		status.NewWriter(filepath.Join(dir, "status.json")),
+		status.NewEventLog(eventsPath),
+	)
+
+	exitCode := 3
+	if err := mgr.Write(status.Status{Phase: status.PhaseDone, ExitCode: &exitCode}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	f, _ := os.Open(eventsPath)
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Scan()
+	var m map[string]any
+	json.Unmarshal(sc.Bytes(), &m)
+
+	if m["event"] != "run_finished" {
+		t.Errorf("event = %q, want run_finished", m["event"])
+	}
+	gotCode, ok := m["exit_code"].(float64)
+	if !ok {
+		t.Fatalf("exit_code missing or not a number: %v", m["exit_code"])
+	}
+	if int(gotCode) != exitCode {
+		t.Errorf("exit_code = %v, want %d", gotCode, exitCode)
+	}
+}
+
 func TestManager_Write_PhaseMapping(t *testing.T) {
 	cases := []struct {
 		phase     status.Phase

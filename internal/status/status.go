@@ -30,6 +30,7 @@ type Status struct {
 	Passed        int    `json:"passed,omitempty"`
 	Failed        int    `json:"failed,omitempty"`
 	CurrentTest   string `json:"current_test,omitempty"`
+	ExitCode      *int   `json:"exit_code,omitempty"`
 	UpdatedAt     string `json:"updated_at"`
 }
 
