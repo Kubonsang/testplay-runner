@@ -20,6 +20,7 @@ type Config struct {
 	ProjectPath   string   `json:"project_path"`
 	Timeout       Timeouts `json:"timeout"`
 	ResultDir     string   `json:"result_dir"`
+	TestPlatform  string   `json:"test_platform"` // "edit_mode" (default) | "play_mode"
 	configDir     string   // unexported: directory containing fastplay.json
 }
 
@@ -68,6 +69,16 @@ func (c *Config) Validate(requireUnity bool) error {
 	// Reject negative total timeout (checked after default so zero → default → positive is valid)
 	if c.Timeout.TotalMs < 0 {
 		return fmt.Errorf("%w: timeout values must be positive", ErrConfigInvalid)
+	}
+
+	// Validate and default test_platform
+	switch c.TestPlatform {
+	case "", "edit_mode":
+		c.TestPlatform = "edit_mode"
+	case "play_mode":
+		// valid
+	default:
+		return fmt.Errorf("%w: test_platform must be \"edit_mode\" or \"play_mode\"", ErrConfigInvalid)
 	}
 
 	return nil
