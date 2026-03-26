@@ -77,7 +77,7 @@ func TestExecute_NoXMLFile_Returns2(t *testing.T) {
 
 func TestExecute_ContextCancelled_Returns4(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancel immediately
+	cancel() // cancel immediately — simulates signal interruption
 
 	dir := t.TempDir()
 	fake := &fakeRunner{err: context.Canceled}
@@ -92,8 +92,9 @@ func TestExecute_ContextCancelled_Returns4(t *testing.T) {
 	if code != 4 {
 		t.Errorf("expected exit 4, got %d", code)
 	}
-	if result.TimeoutType != "total" {
-		t.Errorf("expected timeout_type 'total', got %q", result.TimeoutType)
+	// Signal cancellation: TimeoutType is empty (no timeout occurred).
+	if result.TimeoutType != "" {
+		t.Errorf("expected empty TimeoutType for signal cancel, got %q", result.TimeoutType)
 	}
 }
 
@@ -184,6 +185,69 @@ func TestExecute_PlayMode_PassesPlayModeToRunner(t *testing.T) {
 	}
 	if capturedArgs[idx+1] != "PlayMode" {
 		t.Errorf("expected PlayMode, got %q", capturedArgs[idx+1])
+	}
+}
+
+// TestExecute_SignalCancel_WritesInterruptedPhase verifies that context.Canceled
+// (signal interruption) writes PhaseInterrupted — not PhaseTimeoutTotal.
+func TestExecute_SignalCancel_WritesInterruptedPhase(t *testing.T) {
+	dir := t.TempDir()
+	spy := &spyWriter{}
+	fake := &fakeRunner{err: context.Canceled}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // simulate signal
+
+	result, code := unity.Execute(ctx, fake, unity.ExecuteOptions{
+		ProjectPath:  dir,
+		ResultsFile:  filepath.Join(dir, "results.xml"),
+		StatusWriter: spy,
+		TimeoutType:  "total",
+	})
+
+	if code != 4 {
+		t.Errorf("expected exit 4, got %d", code)
+	}
+	if result.TimeoutType != "" {
+		t.Errorf("signal cancellation should have empty TimeoutType, got %q", result.TimeoutType)
+	}
+	last := spy.phases[len(spy.phases)-1]
+	if last != status.PhaseInterrupted {
+		t.Errorf("expected final phase %q, got %q", status.PhaseInterrupted, last)
+	}
+}
+
+// TestExecute_DeadlineExceeded_WritesTimeoutTotalPhase verifies that
+// context.DeadlineExceeded writes PhaseTimeoutTotal and preserves TimeoutType.
+func TestExecute_DeadlineExceeded_WritesTimeoutTotalPhase(t *testing.T) {
+	dir := t.TempDir()
+	spy := &spyWriter{}
+	blockingRunner := &funcRunner{
+		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+			<-ctx.Done()
+			return nil, nil, -1, ctx.Err()
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	result, code := unity.Execute(ctx, blockingRunner, unity.ExecuteOptions{
+		ProjectPath:  dir,
+		ResultsFile:  filepath.Join(dir, "results.xml"),
+		StatusWriter: spy,
+		TimeoutType:  "total",
+	})
+
+	if code != 4 {
+		t.Errorf("expected exit 4, got %d", code)
+	}
+	if result.TimeoutType != "total" {
+		t.Errorf("expected TimeoutType 'total', got %q", result.TimeoutType)
+	}
+	last := spy.phases[len(spy.phases)-1]
+	if last != status.PhaseTimeoutTotal {
+		t.Errorf("expected final phase %q, got %q", status.PhaseTimeoutTotal, last)
 	}
 }
 

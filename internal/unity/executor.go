@@ -48,18 +48,31 @@ func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.
 	// Run Unity
 	_, stderr, _, err := runner.Run(ctx, args)
 
-	// Check for context cancellation (timeout / interrupt)
-	if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-		if opts.StatusWriter != nil {
-			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseTimeoutTotal})
+	// Check for context cancellation: distinguish deadline (timeout) from cancel (signal).
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			if opts.StatusWriter != nil {
+				_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseTimeoutTotal})
+			}
+			return &history.RunResult{
+				SchemaVersion: "1",
+				ExitCode:      4,
+				TimeoutType:   opts.TimeoutType,
+				Tests:         []parser.TestCase{},
+				Errors:        []history.CompileError{},
+			}, 4
 		}
-		return &history.RunResult{
-			SchemaVersion: "1",
-			ExitCode:      4,
-			TimeoutType:   opts.TimeoutType,
-			Tests:         []parser.TestCase{},
-			Errors:        []history.CompileError{},
-		}, 4
+		if errors.Is(err, context.Canceled) {
+			if opts.StatusWriter != nil {
+				_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseInterrupted})
+			}
+			return &history.RunResult{
+				SchemaVersion: "1",
+				ExitCode:      4,
+				Tests:         []parser.TestCase{},
+				Errors:        []history.CompileError{},
+			}, 4
+		}
 	}
 
 	// Phase: running (Unity finished compilation, now checking results)
