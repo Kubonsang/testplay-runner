@@ -19,7 +19,7 @@ Unity's raw CLI is broken for automation: exit code 0 even on compile failure, X
 | Ambiguous timeout | `timeout_type: compile / test / total` in JSON |
 | No regression tracking | `--compare-run` populates `new_failures` |
 | Platform path differences | Absolute + relative paths in every response |
-| No test discovery without running | `fastplay list` static-scans `[Test]` attributes |
+| No test discovery without running | `fastplay list` static-scans `[Test]` and `[UnityTest]` attributes |
 
 ## Installation
 
@@ -44,6 +44,7 @@ Create `fastplay.json` in your project root:
   "schema_version": "1",
   "unity_path": "/Applications/Unity/Hub/Editor/2022.3.0f1/Unity.app/Contents/MacOS/Unity",
   "project_path": "/path/to/your/UnityProject",
+  "test_platform": "edit_mode",
   "timeout": {
     "total_ms": 300000
   },
@@ -53,8 +54,9 @@ Create `fastplay.json` in your project root:
 
 `unity_path` falls back to the `UNITY_PATH` environment variable if omitted.
 `project_path` defaults to the directory containing `fastplay.json`.
+`test_platform` accepts `"edit_mode"` (default) or `"play_mode"`. This is passed as `-testPlatform EditMode|PlayMode` to Unity.
 
-> **Note:** `compile_ms` and `test_ms` are accepted in the config file but currently have no runtime effect (reserved for future phase-aware implementation).
+> **Note:** `compile_ms` and `test_ms` are accepted in the config file but currently have no runtime effect (reserved for future phase-aware implementation). PlayMode network harness and NGO orchestration are not yet supported.
 
 ## Commands
 
@@ -89,7 +91,7 @@ Exit 0 = ready. Exit 1 = dependency missing (fix per `hint`). Exit 5 = config in
 
 ### `fastplay list`
 
-Static scan of `*.cs` files for `[Test]` attributes. Returns candidate test names without running Unity.
+Static scan of `*.cs` files for `[Test]` and `[UnityTest]` attributes. Returns candidate test names without running Unity. The list may be incomplete (e.g. `[TestCase]`, `[Theory]` are not detected).
 
 ```bash
 fastplay list
@@ -106,7 +108,7 @@ fastplay list
 
 ### `fastplay run`
 
-Runs Unity tests (currently EditMode). Streams progress to `fastplay-status.json`.
+Runs Unity tests using the configured `test_platform` (`edit_mode` or `play_mode`). Streams progress to `fastplay-status.json`.
 
 ```bash
 fastplay run
@@ -198,11 +200,10 @@ fastplay result --last 3
 | 1 | Unity / project not found | Fix env, check `hint` field |
 | 2 | Compile failure | Fix source, see `errors[].absolute_path` + `line` |
 | 3 | Test failure | Fix test, see `tests[].absolute_path` + `line` |
-| 4 | Timeout (`total_ms` exceeded) | Check `timeout_type`: `total` (current); `compile`/`test` reserved for future |
+| 4 | Timeout or signal interruption | Check `timeout_type: "total"`; signal interruption (`fastplay-status.json` phase `interrupted`) also returns exit 4 |
 | 5 | Config error | Fix or create `fastplay.json` |
-| 6 | Build failure | Check Unity license / build target |
-| 7 | Permission error | Fix path permissions |
-| 8 | Interrupted by signal | Retry without code changes |
+| 6 | Build failure (not yet returned) | Check Unity license / build target |
+| 7 | Permission error (not yet returned) | Fix path permissions |
 
 ## Progress Monitoring
 
