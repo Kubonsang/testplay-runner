@@ -13,7 +13,6 @@ import (
 	"github.com/Kubonsang/testplay-runner/internal/artifacts"
 	"github.com/Kubonsang/testplay-runner/internal/config"
 	"github.com/Kubonsang/testplay-runner/internal/history"
-	"github.com/Kubonsang/testplay-runner/internal/parser"
 	"github.com/Kubonsang/testplay-runner/internal/runsvc"
 	"github.com/Kubonsang/testplay-runner/internal/status"
 	"github.com/Kubonsang/testplay-runner/internal/unity"
@@ -90,10 +89,10 @@ func runRun(w io.Writer, deps runDeps) int {
 		"schema_version": "1",
 		"run_id":         resp.RunID,
 		"exit_code":      resp.ExitCode,
-		"total":          len(result.Tests),
-		"passed":         countByResult(result.Tests, "Passed"),
-		"failed":         countByResult(result.Tests, "Failed"),
-		"skipped":        countByResult(result.Tests, "Skipped"),
+		"total":          result.Total,
+		"passed":         result.Passed,
+		"failed":         result.Failed,
+		"skipped":        result.Skipped,
 		"tests":          result.Tests,
 		"errors":         result.Errors,
 		"new_failures":   result.NewFailures,
@@ -108,16 +107,6 @@ func runRun(w io.Writer, deps runDeps) int {
 
 	writeJSON(w, output)
 	return resp.ExitCode
-}
-
-func countByResult(tests []parser.TestCase, result string) int {
-	n := 0
-	for _, tc := range tests {
-		if tc.Result == result {
-			n++
-		}
-	}
-	return n
 }
 
 // saveOverrideStore wraps history.Store but substitutes the Save method.
