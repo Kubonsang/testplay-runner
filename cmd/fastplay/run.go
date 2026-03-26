@@ -31,7 +31,6 @@ type runDeps struct {
 	runner      unity.Runner
 	statusPath  string
 	resultStore *history.Store
-	saveFunc    func(string, *history.RunResult) error // kept for test injection
 	opts        RunCmdOptions
 }
 
@@ -61,16 +60,12 @@ func runRun(w io.Writer, deps runDeps) int {
 		deps.resultStore = history.NewStore(cfg.ResultDir)
 	}
 
-	artifactRoot := filepath.Join(filepath.Dir(cfg.ResultDir), "runs")
+	artifactRoot := filepath.Join(cfg.ProjectPath, ".fastplay", "runs")
 	svc := &runsvc.Service{
 		Runner:       deps.runner,
 		Store:        deps.resultStore,
 		Artifacts:    artifacts.NewStore(artifactRoot),
 		StatusWriter: status.NewWriter(deps.statusPath),
-	}
-	// Allow test injection of saveFunc.
-	if deps.saveFunc != nil {
-		svc.Store = &saveOverrideStore{inner: deps.resultStore, save: deps.saveFunc}
 	}
 
 	resp, infraErr := svc.Run(ctx, runsvc.Request{
@@ -107,23 +102,6 @@ func runRun(w io.Writer, deps runDeps) int {
 
 	writeJSON(w, output)
 	return resp.ExitCode
-}
-
-// saveOverrideStore wraps history.Store but substitutes the Save method.
-// Used only in tests that inject a failing saveFunc.
-// Note: this adapter is only used in TestRunCmd_SaveFailure_IncludesWarning,
-// which does NOT set CompareRun, so Load() is never called in that test path.
-type saveOverrideStore struct {
-	inner *history.Store
-	save  func(string, *history.RunResult) error
-}
-
-func (s *saveOverrideStore) Save(runID string, r *history.RunResult) error {
-	return s.save(runID, r)
-}
-
-func (s *saveOverrideStore) Load(runID string) (*history.RunResult, error) {
-	return s.inner.Load(runID)
 }
 
 // runFilter, runCategory and runCompareRun are cobra flag values.

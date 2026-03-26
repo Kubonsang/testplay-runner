@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -221,18 +220,13 @@ func TestRunCmd_SaveFailure_IncludesWarning(t *testing.T) {
 		Timeout:       config.Timeouts{CompileMs: 120000, TestMs: 30000, TotalMs: 300000},
 	}
 
-	saveErr := errors.New("disk full")
-	failingSave := func(runID string, result *history.RunResult) error {
-		return saveErr
-	}
-
 	var buf bytes.Buffer
 	code := runRun(&buf, runDeps{
 		loadConfig:  func(string) (*config.Config, error) { return cfg, nil },
 		runner:      fake,
 		statusPath:  filepath.Join(dir, "status.json"),
-		resultStore: history.NewStore(filepath.Join(dir, "results")),
-		saveFunc:    failingSave,
+		// Point store at an impossible path to force a save error.
+		resultStore: history.NewStore("/dev/null/impossible"),
 		opts:        RunCmdOptions{},
 	})
 
@@ -325,7 +319,7 @@ func TestRunCmd_SummaryJSON_WrittenToArtifactDir(t *testing.T) {
 		t.Fatal("run_id not in output")
 	}
 
-	// artifactRoot = filepath.Dir(resultDir) + "/runs" = dir/.fastplay/runs
+	// artifactRoot = cfg.ProjectPath + "/.fastplay/runs"
 	artifactRoot := filepath.Join(dir, ".fastplay", "runs")
 	summaryPath := filepath.Join(artifactRoot, runID, "summary.json")
 	if _, err := os.Stat(summaryPath); err != nil {
