@@ -84,6 +84,38 @@ func TestService_AllPass_ExitCode0(t *testing.T) {
 	}
 }
 
+func TestService_StatusSnapshot_ContainsRunID(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+	statusPath := filepath.Join(dir, "status.json")
+
+	svc := &runsvc.Service{
+		Runner:       fake,
+		Store:        history.NewStore(cfg.ResultDir),
+		Artifacts:    artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		StatusWriter: status.NewWriter(statusPath),
+		Clock:        func() time.Time { return time.Date(2026, 3, 26, 12, 0, 0, 0, time.UTC) },
+	}
+
+	resp, err := svc.Run(context.Background(), runsvc.Request{Config: cfg})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(statusPath)
+	if err != nil {
+		t.Fatalf("status.json not written: %v", err)
+	}
+	var snap map[string]any
+	if err := json.Unmarshal(data, &snap); err != nil {
+		t.Fatalf("status.json invalid JSON: %v", err)
+	}
+	if snap["run_id"] != resp.RunID {
+		t.Errorf("status run_id = %v, want %q", snap["run_id"], resp.RunID)
+	}
+}
+
 func TestService_TestFailure_ExitCode3(t *testing.T) {
 	cfg, dir := baseConfig(t)
 	xmlData := mustReadFixture(t, "../../internal/parser/testdata/one_failure.xml")

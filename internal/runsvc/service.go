@@ -67,11 +67,17 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	}
 	resultsFile := s.Artifacts.ResultsFilePath(runID)
 
+	// Wrap the StatusWriter to stamp run_id into every status write.
+	var sw status.WriterInterface = s.StatusWriter
+	if sw != nil {
+		sw = &runIDWriter{inner: sw, runID: runID}
+	}
+
 	// Execute Unity.
 	execOpts := unity.ExecuteOptions{
 		ProjectPath:  req.Config.ProjectPath,
 		ResultsFile:  resultsFile,
-		StatusWriter: s.StatusWriter,
+		StatusWriter: sw,
 		TimeoutType:  "total",
 		Filter:       req.Filter,
 		Category:     req.Category,
@@ -129,6 +135,17 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		ExitCode: exitCode,
 		Warnings: warnings,
 	}, nil
+}
+
+// runIDWriter wraps a WriterInterface to stamp RunID into every status write.
+type runIDWriter struct {
+	inner status.WriterInterface
+	runID string
+}
+
+func (r *runIDWriter) Write(s status.Status) error {
+	s.RunID = r.runID
+	return r.inner.Write(s)
 }
 
 // buildSummary constructs the map written to summary.json.

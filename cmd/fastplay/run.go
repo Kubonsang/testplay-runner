@@ -47,7 +47,7 @@ func runRun(w io.Writer, deps runDeps) int {
 	}
 	if err := cfg.Validate(true); err != nil {
 		writeJSON(w, map[string]any{"schema_version": "1", "error": err.Error(), "new_failures": nil})
-		return 1
+		return 5
 	}
 
 	ctx, cancel := context.WithTimeout(baseCtx, time.Duration(cfg.Timeout.TotalMs)*time.Millisecond)
