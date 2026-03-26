@@ -32,6 +32,10 @@ jobs:
       - name: Run Go tests
         run: go test ./...
 
+      - name: Run smoke helper self-check
+        # Verifies json_str/json_num and failure-path control flow without Unity.
+        run: bash scripts/smoke_selfcheck.sh
+
       - name: Run smoke verification
         # UNITY_PATH must be set in the runner environment.
         run: |

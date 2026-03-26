@@ -42,6 +42,11 @@ if [[ ! -x "$UNITY_PATH" ]]; then
   exit 1
 fi
 
+# Verify shell helpers before doing any real work.
+echo "==> Running smoke helper self-check..."
+bash "$SCRIPT_DIR/smoke_selfcheck.sh"
+echo ""
+
 # Build fastplay if not provided.
 if [[ -z "$FASTPLAY" ]]; then
   echo "==> Building fastplay..."
