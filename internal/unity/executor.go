@@ -37,12 +37,19 @@ type ExecuteOptions struct {
 //	0 = all tests passed
 //	2 = compile failure (no results XML produced, or compile errors in stderr)
 //	3 = test failure (results XML exists but contains failures)
-//	4 = timeout / context cancelled
+//	4 = timeout (DeadlineExceeded) or signal interruption (Canceled)
 //
 // When CompileMs and TestMs are both > 0, two-phase execution is used:
 // phase 1 compiles with a CompileMs deadline (emits timeout_type "compile"),
 // phase 2 runs tests with a TestMs deadline (emits timeout_type "test").
 // Otherwise, single-phase execution runs compile+test in one Unity invocation.
+//
+// Current limitations:
+//   - The "running" phase is written before Unity starts the test invocation
+//     in two-phase mode, but after Unity exits in single-phase mode.
+//   - No intra-process log streaming: Unity stdout/stderr is buffered until exit.
+//   - Multi-process network harness (NGO server+client) is not supported; that
+//     would require a different orchestration layer above Execute.
 func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.RunResult, int) {
 	if opts.CompileMs > 0 && opts.TestMs > 0 {
 		return executeTwoPhase(ctx, runner, opts)

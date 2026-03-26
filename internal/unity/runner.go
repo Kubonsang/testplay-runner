@@ -7,6 +7,14 @@ import (
 )
 
 // Runner abstracts the Unity subprocess, allowing tests to inject a fake.
+//
+// Current scope: single Unity process per invocation. Each call to Run starts
+// one Unity batch-mode process and waits for it to exit. There is no inter-process
+// communication, log streaming, or multi-process orchestration.
+//
+// Future work: network harness / NGO orchestration will require running multiple
+// processes concurrently (e.g. server + client Unity instances). That will need a
+// different abstraction — Runner is intentionally kept minimal until then.
 type Runner interface {
 	// Run executes Unity with the given args.
 	Run(ctx context.Context, args []string) (stdout []byte, stderr []byte, exitCode int, err error)
