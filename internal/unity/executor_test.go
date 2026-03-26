@@ -251,6 +251,172 @@ func TestExecute_DeadlineExceeded_WritesTimeoutTotalPhase(t *testing.T) {
 	}
 }
 
+// ── Two-phase execution tests ────────────────────────────────────────────────
+
+func TestExecute_TwoPhase_CompileTimeout_EmitsTimeoutCompile(t *testing.T) {
+	dir := t.TempDir()
+	spy := &spyWriter{}
+	callCount := 0
+	blockingCompile := &funcRunner{
+		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+			callCount++
+			// Phase 1 (compile): block until context fires
+			<-ctx.Done()
+			return nil, nil, -1, ctx.Err()
+		},
+	}
+
+	result, code := unity.Execute(context.Background(), blockingCompile, unity.ExecuteOptions{
+		ProjectPath:  dir,
+		ResultsFile:  filepath.Join(dir, "results.xml"),
+		StatusWriter: spy,
+		CompileMs:    50,
+		TestMs:       5000,
+	})
+
+	if code != 4 {
+		t.Errorf("expected exit 4, got %d", code)
+	}
+	if result.TimeoutType != "compile" {
+		t.Errorf("expected TimeoutType 'compile', got %q", result.TimeoutType)
+	}
+	last := spy.phases[len(spy.phases)-1]
+	if last != status.PhaseTimeoutCompile {
+		t.Errorf("expected final phase %q, got %q", status.PhaseTimeoutCompile, last)
+	}
+	if callCount != 1 {
+		t.Errorf("expected runner called once (compile only), got %d", callCount)
+	}
+}
+
+func TestExecute_TwoPhase_TestTimeout_EmitsTimeoutTest(t *testing.T) {
+	dir := t.TempDir()
+	spy := &spyWriter{}
+	callCount := 0
+	runner := &funcRunner{
+		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+			callCount++
+			if callCount == 1 {
+				// Phase 1 (compile): succeed immediately
+				return nil, nil, 0, nil
+			}
+			// Phase 2 (test): block until context fires
+			<-ctx.Done()
+			return nil, nil, -1, ctx.Err()
+		},
+	}
+
+	result, code := unity.Execute(context.Background(), runner, unity.ExecuteOptions{
+		ProjectPath:  dir,
+		ResultsFile:  filepath.Join(dir, "results.xml"),
+		StatusWriter: spy,
+		CompileMs:    5000,
+		TestMs:       50,
+	})
+
+	if code != 4 {
+		t.Errorf("expected exit 4, got %d", code)
+	}
+	if result.TimeoutType != "test" {
+		t.Errorf("expected TimeoutType 'test', got %q", result.TimeoutType)
+	}
+	last := spy.phases[len(spy.phases)-1]
+	if last != status.PhaseTimeoutTest {
+		t.Errorf("expected final phase %q, got %q", status.PhaseTimeoutTest, last)
+	}
+	if callCount != 2 {
+		t.Errorf("expected runner called twice (compile + test), got %d", callCount)
+	}
+}
+
+func TestExecute_TwoPhase_BothSucceed_Returns0(t *testing.T) {
+	dir := t.TempDir()
+	xmlData := mustReadFixture(t, "../parser/testdata/passing.xml")
+	callCount := 0
+	runner := &funcRunner{
+		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+			callCount++
+			if callCount == 2 {
+				// Phase 2: write results XML
+				if err := os.WriteFile(filepath.Join(dir, "results.xml"), xmlData, 0644); err != nil {
+					return nil, nil, 1, err
+				}
+			}
+			return nil, nil, 0, nil
+		},
+	}
+
+	_, code := unity.Execute(context.Background(), runner, unity.ExecuteOptions{
+		ProjectPath:  dir,
+		ResultsFile:  filepath.Join(dir, "results.xml"),
+		CompileMs:    5000,
+		TestMs:       5000,
+	})
+
+	if code != 0 {
+		t.Errorf("expected exit 0, got %d", code)
+	}
+	if callCount != 2 {
+		t.Errorf("expected 2 runner calls (compile + test), got %d", callCount)
+	}
+}
+
+func TestExecute_TwoPhase_PhaseSequence(t *testing.T) {
+	// Verify phase progression: compiling → running → done in two-phase success path
+	dir := t.TempDir()
+	xmlData := mustReadFixture(t, "../parser/testdata/passing.xml")
+	spy := &spyWriter{}
+	callCount := 0
+	runner := &funcRunner{
+		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+			callCount++
+			if callCount == 2 {
+				_ = os.WriteFile(filepath.Join(dir, "results.xml"), xmlData, 0644)
+			}
+			return nil, nil, 0, nil
+		},
+	}
+
+	unity.Execute(context.Background(), runner, unity.ExecuteOptions{
+		ProjectPath:  dir,
+		ResultsFile:  filepath.Join(dir, "results.xml"),
+		StatusWriter: spy,
+		CompileMs:    5000,
+		TestMs:       5000,
+	})
+
+	expected := []status.Phase{status.PhaseCompiling, status.PhaseRunning, status.PhaseDone}
+	if !reflect.DeepEqual(spy.phases, expected) {
+		t.Errorf("expected phase sequence %v, got %v", expected, spy.phases)
+	}
+}
+
+func TestExecute_TwoPhase_CompileError_SkipsTestPhase(t *testing.T) {
+	dir := t.TempDir()
+	callCount := 0
+	runner := &funcRunner{
+		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+			callCount++
+			// Phase 1: return compile error in stderr
+			return nil, []byte(`Assets/Foo.cs(1,1): error CS0246: Type 'Bar' not found`), 1, nil
+		},
+	}
+
+	_, code := unity.Execute(context.Background(), runner, unity.ExecuteOptions{
+		ProjectPath: dir,
+		ResultsFile: filepath.Join(dir, "results.xml"),
+		CompileMs:   5000,
+		TestMs:      5000,
+	})
+
+	if code != 2 {
+		t.Errorf("expected exit 2 (compile error), got %d", code)
+	}
+	if callCount != 1 {
+		t.Errorf("expected runner called once (no test phase after compile error), got %d", callCount)
+	}
+}
+
 func TestExecute_CompileErrorsInStderr_Returns2(t *testing.T) {
 	dir := t.TempDir()
 	// fakeRunner writes an empty XML but also has compile errors in stderr

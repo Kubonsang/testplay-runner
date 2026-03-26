@@ -101,6 +101,31 @@ func TestBuildRunArgs_EditMode_UsesEditModeArg(t *testing.T) {
 	}
 }
 
+// TestBuildCompileArgs_NoRunTests verifies the compile-only arg set:
+// must include -batchmode, -nographics, -projectPath, -quit
+// and must NOT include -runTests or -testPlatform.
+func TestBuildCompileArgs_NoRunTests(t *testing.T) {
+	args := unity.BuildCompileArgs("/proj")
+	if contains(args, "-runTests") {
+		t.Error("-runTests must not appear in compile-only args")
+	}
+	if contains(args, "-testPlatform") {
+		t.Error("-testPlatform must not appear in compile-only args")
+	}
+	if !contains(args, "-batchmode") {
+		t.Error("expected -batchmode in compile args")
+	}
+	if !contains(args, "-nographics") {
+		t.Error("expected -nographics in compile args")
+	}
+	if !contains(args, "-quit") {
+		t.Error("expected -quit in compile args")
+	}
+	if !contains(args, "/proj") {
+		t.Error("expected project path in compile args")
+	}
+}
+
 func TestBuildRunArgs_EmptyTestPlatform_DefaultsToEditMode(t *testing.T) {
 	// Callers that don't set TestPlatform must still get EditMode (backward compat)
 	args := unity.BuildRunArgs("/proj", &unity.RunOptions{})

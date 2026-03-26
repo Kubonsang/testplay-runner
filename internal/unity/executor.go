@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/Kubonsang/testplay-runner/internal/history"
 	"github.com/Kubonsang/testplay-runner/internal/parser"
@@ -16,10 +17,17 @@ type ExecuteOptions struct {
 	ProjectPath  string
 	ResultsFile  string
 	StatusWriter status.WriterInterface
-	TimeoutType  string // "total" — propagated to RunResult.TimeoutType on context cancellation
+	TimeoutType  string // "total" — propagated to RunResult.TimeoutType on deadline exceeded
 	Filter       string
 	Category     string
 	TestPlatform string // "edit_mode" | "play_mode"; forwarded to BuildRunArgs
+
+	// CompileMs and TestMs enable two-phase execution when both are > 0.
+	// Phase 1 runs compile-only with CompileMs deadline (emits timeout_compile on expiry).
+	// Phase 2 runs tests with TestMs deadline (emits timeout_test on expiry).
+	// When either is zero, single-phase execution with the parent ctx is used.
+	CompileMs int64
+	TestMs    int64
 }
 
 // Execute runs Unity tests using the provided Runner and returns the result + exit code.
@@ -30,13 +38,25 @@ type ExecuteOptions struct {
 //	2 = compile failure (no results XML produced, or compile errors in stderr)
 //	3 = test failure (results XML exists but contains failures)
 //	4 = timeout / context cancelled
+//
+// When CompileMs and TestMs are both > 0, two-phase execution is used:
+// phase 1 compiles with a CompileMs deadline (emits timeout_type "compile"),
+// phase 2 runs tests with a TestMs deadline (emits timeout_type "test").
+// Otherwise, single-phase execution runs compile+test in one Unity invocation.
 func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.RunResult, int) {
+	if opts.CompileMs > 0 && opts.TestMs > 0 {
+		return executeTwoPhase(ctx, runner, opts)
+	}
+	return executeSinglePhase(ctx, runner, opts)
+}
+
+// executeSinglePhase runs compile + test in a single Unity invocation.
+func executeSinglePhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.RunResult, int) {
 	// Phase: compiling
 	if opts.StatusWriter != nil {
 		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseCompiling})
 	}
 
-	// Build args
 	runOpts := &RunOptions{
 		ResultsFilePath: opts.ResultsFile,
 		Filter:          opts.Filter,
@@ -45,19 +65,41 @@ func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.
 	}
 	args := BuildRunArgs(opts.ProjectPath, runOpts)
 
-	// Run Unity
 	_, stderr, _, err := runner.Run(ctx, args)
 
-	// Check for context cancellation: distinguish deadline (timeout) from cancel (signal).
+	if err != nil {
+		return handleContextErr(err, opts)
+	}
+
+	// Phase: running (Unity finished compilation, now checking results)
+	if opts.StatusWriter != nil {
+		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseRunning})
+	}
+
+	return parseResults(opts, stderr)
+}
+
+// executeTwoPhase runs compile and test as separate Unity invocations, each
+// with its own deadline (CompileMs and TestMs respectively).
+func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.RunResult, int) {
+	// ── Phase 1: compile only ──────────────────────────────────────────────
+	if opts.StatusWriter != nil {
+		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseCompiling})
+	}
+
+	compileCtx, compileCancel := context.WithTimeout(ctx, time.Duration(opts.CompileMs)*time.Millisecond)
+	defer compileCancel()
+
+	_, stderr, _, err := runner.Run(compileCtx, BuildCompileArgs(opts.ProjectPath))
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			if opts.StatusWriter != nil {
-				_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseTimeoutTotal})
+				_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseTimeoutCompile})
 			}
 			return &history.RunResult{
 				SchemaVersion: "1",
 				ExitCode:      4,
-				TimeoutType:   opts.TimeoutType,
+				TimeoutType:   "compile",
 				Tests:         []parser.TestCase{},
 				Errors:        []history.CompileError{},
 			}, 4
@@ -75,11 +117,91 @@ func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.
 		}
 	}
 
-	// Phase: running (Unity finished compilation, now checking results)
+	// Compile errors in stderr → fail without running tests
+	if compileErrors := ParseCompileErrorsWithProject(stderr, opts.ProjectPath); len(compileErrors) > 0 {
+		if opts.StatusWriter != nil {
+			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
+		}
+		return &history.RunResult{
+			SchemaVersion: "1",
+			ExitCode:      2,
+			Tests:         []parser.TestCase{},
+			Errors:        compileErrors,
+		}, 2
+	}
+
+	// ── Phase 2: run tests ─────────────────────────────────────────────────
 	if opts.StatusWriter != nil {
 		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseRunning})
 	}
 
+	testCtx, testCancel := context.WithTimeout(ctx, time.Duration(opts.TestMs)*time.Millisecond)
+	defer testCancel()
+
+	runOpts := &RunOptions{
+		ResultsFilePath: opts.ResultsFile,
+		Filter:          opts.Filter,
+		Category:        opts.Category,
+		TestPlatform:    opts.TestPlatform,
+	}
+	_, testStderr, _, testErr := runner.Run(testCtx, BuildRunArgs(opts.ProjectPath, runOpts))
+	if testErr != nil {
+		if errors.Is(testErr, context.DeadlineExceeded) {
+			if opts.StatusWriter != nil {
+				_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseTimeoutTest})
+			}
+			return &history.RunResult{
+				SchemaVersion: "1",
+				ExitCode:      4,
+				TimeoutType:   "test",
+				Tests:         []parser.TestCase{},
+				Errors:        []history.CompileError{},
+			}, 4
+		}
+		if errors.Is(testErr, context.Canceled) {
+			if opts.StatusWriter != nil {
+				_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseInterrupted})
+			}
+			return &history.RunResult{
+				SchemaVersion: "1",
+				ExitCode:      4,
+				Tests:         []parser.TestCase{},
+				Errors:        []history.CompileError{},
+			}, 4
+		}
+	}
+
+	return parseResults(opts, testStderr)
+}
+
+// handleContextErr maps context errors to the appropriate exit result.
+func handleContextErr(err error, opts ExecuteOptions) (*history.RunResult, int) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		if opts.StatusWriter != nil {
+			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseTimeoutTotal})
+		}
+		return &history.RunResult{
+			SchemaVersion: "1",
+			ExitCode:      4,
+			TimeoutType:   opts.TimeoutType,
+			Tests:         []parser.TestCase{},
+			Errors:        []history.CompileError{},
+		}, 4
+	}
+	if opts.StatusWriter != nil {
+		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseInterrupted})
+	}
+	return &history.RunResult{
+		SchemaVersion: "1",
+		ExitCode:      4,
+		Tests:         []parser.TestCase{},
+		Errors:        []history.CompileError{},
+	}, 4
+}
+
+// parseResults reads the XML results file and returns the run result.
+// It is shared between single-phase and two-phase executors.
+func parseResults(opts ExecuteOptions, stderr []byte) (*history.RunResult, int) {
 	// Check for results XML
 	xmlData, xmlErr := os.ReadFile(opts.ResultsFile)
 	if xmlErr != nil {

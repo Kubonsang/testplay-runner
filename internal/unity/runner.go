@@ -35,6 +35,18 @@ func (r *ProcessRunner) Run(ctx context.Context, args []string) ([]byte, []byte,
 	return stdout, stderr, 0, nil
 }
 
+// BuildCompileArgs constructs the Unity CLI arguments for a compile-only run
+// (no -runTests, exits after compilation via -quit). Used by the two-phase
+// executor to enforce a separate compile timeout.
+func BuildCompileArgs(projectPath string) []string {
+	return []string{
+		"-batchmode",
+		"-nographics",
+		"-projectPath", projectPath,
+		"-quit",
+	}
+}
+
 // RunOptions configures a Unity test run.
 type RunOptions struct {
 	Filter          string
