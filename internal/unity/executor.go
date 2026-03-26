@@ -74,7 +74,7 @@ func executeSinglePhase(ctx context.Context, runner Runner, opts ExecuteOptions)
 
 	_, stderr, _, err := runner.Run(ctx, args)
 
-	if err != nil {
+	if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 		return handleContextErr(err, opts)
 	}
 
@@ -122,6 +122,16 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 				Errors:        []history.CompileError{},
 			}, 4
 		}
+		// Non-context runner error (e.g. Unity binary missing) → compile failure.
+		if opts.StatusWriter != nil {
+			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
+		}
+		return &history.RunResult{
+			SchemaVersion: "1",
+			ExitCode:      2,
+			Tests:         []parser.TestCase{},
+			Errors:        []history.CompileError{},
+		}, 2
 	}
 
 	// Compile errors in stderr → fail without running tests
@@ -176,12 +186,23 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 				Errors:        []history.CompileError{},
 			}, 4
 		}
+		// Non-context runner error in test phase → no results available.
+		if opts.StatusWriter != nil {
+			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
+		}
+		return &history.RunResult{
+			SchemaVersion: "1",
+			ExitCode:      2,
+			Tests:         []parser.TestCase{},
+			Errors:        []history.CompileError{},
+		}, 2
 	}
 
 	return parseResults(opts, testStderr)
 }
 
 // handleContextErr maps context errors to the appropriate exit result.
+// Callers must guard with errors.Is(err, context.Canceled||DeadlineExceeded).
 func handleContextErr(err error, opts ExecuteOptions) (*history.RunResult, int) {
 	if errors.Is(err, context.DeadlineExceeded) {
 		if opts.StatusWriter != nil {
@@ -195,6 +216,18 @@ func handleContextErr(err error, opts ExecuteOptions) (*history.RunResult, int) 
 			Errors:        []history.CompileError{},
 		}, 4
 	}
+	if errors.Is(err, context.Canceled) {
+		if opts.StatusWriter != nil {
+			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseInterrupted})
+		}
+		return &history.RunResult{
+			SchemaVersion: "1",
+			ExitCode:      4,
+			Tests:         []parser.TestCase{},
+			Errors:        []history.CompileError{},
+		}, 4
+	}
+	// Should not be reached when the caller guards correctly.
 	if opts.StatusWriter != nil {
 		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseInterrupted})
 	}

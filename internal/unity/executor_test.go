@@ -2,6 +2,7 @@ package unity_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -414,6 +415,64 @@ func TestExecute_TwoPhase_CompileError_SkipsTestPhase(t *testing.T) {
 	}
 	if callCount != 1 {
 		t.Errorf("expected runner called once (no test phase after compile error), got %d", callCount)
+	}
+}
+
+func TestExecute_TwoPhase_Phase1RunnerError_ReturnsExit2_SkipsPhase2(t *testing.T) {
+	// A non-context runner error in compile phase should return exit 2 without
+	// starting the test phase.
+	dir := t.TempDir()
+	callCount := 0
+	someRunnerErr := fmt.Errorf("exec: unity: no such file")
+	runner := &funcRunner{
+		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+			callCount++
+			return nil, nil, -1, someRunnerErr
+		},
+	}
+
+	_, code := unity.Execute(context.Background(), runner, unity.ExecuteOptions{
+		ProjectPath: dir,
+		ResultsFile: filepath.Join(dir, "results.xml"),
+		CompileMs:   5000,
+		TestMs:      5000,
+	})
+
+	if code != 2 {
+		t.Errorf("expected exit 2 for non-context phase 1 error, got %d", code)
+	}
+	if callCount != 1 {
+		t.Errorf("expected runner called once (phase 2 must not start), got %d", callCount)
+	}
+}
+
+func TestExecute_TwoPhase_Phase2RunnerError_ReturnsExit2(t *testing.T) {
+	// A non-context runner error in test phase should return exit 2.
+	dir := t.TempDir()
+	someRunnerErr := fmt.Errorf("exec: unity: no such file")
+	callCount := 0
+	runner := &funcRunner{
+		run: func(ctx context.Context, args []string) ([]byte, []byte, int, error) {
+			callCount++
+			if callCount == 1 {
+				return nil, nil, 0, nil // compile phase succeeds
+			}
+			return nil, nil, -1, someRunnerErr
+		},
+	}
+
+	_, code := unity.Execute(context.Background(), runner, unity.ExecuteOptions{
+		ProjectPath: dir,
+		ResultsFile: filepath.Join(dir, "results.xml"),
+		CompileMs:   5000,
+		TestMs:      5000,
+	})
+
+	if code != 2 {
+		t.Errorf("expected exit 2 for non-context phase 2 error, got %d", code)
+	}
+	if callCount != 2 {
+		t.Errorf("expected 2 runner calls, got %d", callCount)
 	}
 }
 
