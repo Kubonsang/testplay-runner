@@ -1,0 +1,39 @@
+# smoke.yml — opt-in Unity smoke verification
+#
+# This workflow is NOT triggered automatically. Run it manually via:
+#   gh workflow run smoke.yml
+#
+# Requirements:
+#   - Self-hosted runner with Unity installed and UNITY_PATH set.
+#
+# This workflow is intentionally separate from CI required checks.
+# It validates that fastplay run works end-to-end with a real Unity
+# installation (EditMode + PlayMode).
+
+name: Unity Smoke Verification
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  smoke:
+    name: Unity Smoke
+    runs-on: [self-hosted, unity]
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run Go tests
+        run: go test ./...
+
+      - name: Run smoke verification
+        # UNITY_PATH must be set in the runner environment.
+        run: |
+          chmod +x scripts/smoke.sh
+          ./scripts/smoke.sh
