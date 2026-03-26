@@ -189,7 +189,9 @@ public class Mixed {
 	var out struct {
 		Tests []string `json:"tests"`
 	}
-	json.Unmarshal(buf.Bytes(), &out)
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v\noutput: %s", err, buf.String())
+	}
 	if len(out.Tests) != 2 {
 		t.Errorf("expected 2 tests ([Test] + [UnityTest]), got %d: %v", len(out.Tests), out.Tests)
 	}

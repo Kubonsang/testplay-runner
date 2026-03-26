@@ -133,7 +133,7 @@ func TestValidate_PlayMode_IsAccepted(t *testing.T) {
 		TestPlatform:  "play_mode",
 	}
 	if err := cfg.Validate(true); err != nil {
-		t.Errorf("expected no error for play_mode, got %v", err)
+		t.Fatalf("expected no error for play_mode, got %v", err)
 	}
 	if cfg.TestPlatform != "play_mode" {
 		t.Errorf("expected test_platform 'play_mode', got %q", cfg.TestPlatform)
