@@ -350,6 +350,11 @@ gh workflow run smoke.yml
 See `.github/workflows/smoke.yml`. Requires a self-hosted runner with Unity
 and `UNITY_PATH` set in the runner environment.
 
+For a reusable real-project pattern, see
+[`docs/playmode-smoke-example.md`](docs/playmode-smoke-example.md). It shows a
+scene-free PlayMode smoke test that creates its fixture in code and runs
+cleanly through `fastplay run`.
+
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE).
