@@ -4,6 +4,7 @@ package runsvc_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,14 +27,17 @@ type fakeRunner struct {
 	lastArgs   []string
 }
 
-func (f *fakeRunner) Run(_ context.Context, args []string) ([]byte, []byte, int, error) {
+func (f *fakeRunner) Run(_ context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 	f.lastArgs = args
 	for i, a := range args {
 		if a == "-testResults" && i+1 < len(args) && f.resultsXML != nil {
 			_ = os.WriteFile(args[i+1], f.resultsXML, 0644)
 		}
 	}
-	return nil, f.stderr, f.exitCode, f.err
+	if stderr != nil && len(f.stderr) > 0 {
+		_, _ = stderr.Write(f.stderr)
+	}
+	return f.exitCode, f.err
 }
 
 func mustReadFixture(t *testing.T, path string) []byte {

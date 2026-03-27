@@ -4,6 +4,7 @@ package runsvc
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 	"github.com/Kubonsang/testplay-runner/internal/status"
 	"github.com/Kubonsang/testplay-runner/internal/unity"
 )
+
+const heartbeatInterval = 5 * time.Second
 
 // ResultStore is the subset of history.Store used by Service.
 // Defining it here (consumer side) follows standard Go interface practice
@@ -72,16 +75,51 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	// Build status writer: combine snapshot writer with per-run event log,
 	// then stamp run_id into every write via runIDWriter.
 	var sw status.WriterInterface = s.StatusWriter
+	var mgr *status.Manager // kept for heartbeat access
 	if sw != nil {
 		eventsPath := filepath.Join(runDir, "events.ndjson")
-		sw = status.NewManager(sw, status.NewEventLog(eventsPath))
+		mgr = status.NewManager(sw, status.NewEventLog(eventsPath))
+		sw = mgr
 		sw = &runIDWriter{inner: sw, runID: runID}
 	}
 
-	// Wrap runner to capture raw stdout/stderr for artifact storage.
-	cap := &logCapture{inner: s.Runner}
+	// Open log files for streaming writes during execution.
+	stdoutLog, stderrLog, err := s.Artifacts.OpenRunLogs(runID)
+	if err != nil {
+		return Response{}, fmt.Errorf("runsvc: open run logs: %w", err)
+	}
 
 	startedAt := clock()
+
+	// Write initial status snapshot with run-scoped metadata so that
+	// heartbeats and phase updates can inherit StartedAt/PID/ArtifactRoot.
+	if sw != nil {
+		_ = sw.Write(status.Status{
+			Phase:        status.PhaseCompiling,
+			StartedAt:    startedAt.UTC().Format(time.RFC3339),
+			PID:          os.Getpid(),
+			ArtifactRoot: runDir,
+		})
+	}
+
+	// Heartbeat goroutine: ticks every heartbeatInterval while Unity runs,
+	// updating last_heartbeat_at so external pollers can detect stale runs.
+	hbCtx, hbCancel := context.WithCancel(ctx)
+	defer hbCancel()
+	if mgr != nil {
+		go func() {
+			ticker := time.NewTicker(heartbeatInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-hbCtx.Done():
+					return
+				case <-ticker.C:
+					_ = mgr.Heartbeat()
+				}
+			}
+		}()
+	}
 
 	// Execute Unity.
 	execOpts := unity.ExecuteOptions{
@@ -94,8 +132,13 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		TestPlatform: req.Config.TestPlatform,
 		CompileMs:    req.Config.Timeout.CompileMs,
 		TestMs:       req.Config.Timeout.TestMs,
+		StdoutWriter: stdoutLog,
+		StderrWriter: stderrLog,
 	}
-	result, exitCode := unity.Execute(ctx, cap, execOpts)
+	result, exitCode := unity.Execute(ctx, s.Runner, execOpts)
+
+	_ = stdoutLog.Close()
+	_ = stderrLog.Close()
 
 	finishedAt := clock()
 
@@ -142,11 +185,6 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		warnings = append(warnings, fmt.Sprintf("summary not written: %v", err))
 	}
 
-	// Write stdout.log and stderr.log.
-	if err := s.Artifacts.SaveRawLogs(runID, cap.stdout, cap.stderr); err != nil {
-		warnings = append(warnings, fmt.Sprintf("raw logs not written: %v", err))
-	}
-
 	// Write manifest.json.
 	manifest := artifacts.Manifest{
 		SchemaVersion: "1",
@@ -169,23 +207,6 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		ExitCode: exitCode,
 		Warnings: warnings,
 	}, nil
-}
-
-// logCapture wraps a Runner to accumulate stdout and stderr across all Run calls.
-// In two-phase execution both invocations are captured and concatenated.
-// Not goroutine-safe: Run calls must be sequential, which is guaranteed by
-// both executeSinglePhase and executeTwoPhase calling runner.Run sequentially.
-type logCapture struct {
-	inner  unity.Runner
-	stdout []byte
-	stderr []byte
-}
-
-func (l *logCapture) Run(ctx context.Context, args []string) ([]byte, []byte, int, error) {
-	stdout, stderr, code, err := l.inner.Run(ctx, args)
-	l.stdout = append(l.stdout, stdout...)
-	l.stderr = append(l.stderr, stderr...)
-	return stdout, stderr, code, err
 }
 
 // runIDWriter wraps a WriterInterface to stamp RunID into every status write.

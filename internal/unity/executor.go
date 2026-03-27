@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -11,6 +12,28 @@ import (
 	"github.com/Kubonsang/testplay-runner/internal/parser"
 	"github.com/Kubonsang/testplay-runner/internal/status"
 )
+
+// maxTailBytes is the maximum number of stderr bytes retained in a tailBuffer.
+const maxTailBytes = 64 * 1024
+
+// tailBuffer retains the last maxTailBytes of data written to it.
+// It is used to tee stderr for compile-error detection without holding the
+// full log in memory when an io.Writer artifact file is provided.
+type tailBuffer struct{ buf []byte }
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	if len(p) > maxTailBytes {
+		p = p[len(p)-maxTailBytes:]
+	}
+	t.buf = append(t.buf, p...)
+	if len(t.buf) > maxTailBytes {
+		t.buf = t.buf[len(t.buf)-maxTailBytes:]
+	}
+	return n, nil
+}
+
+func (t *tailBuffer) Bytes() []byte { return t.buf }
 
 // ExecuteOptions configures a Unity test execution.
 type ExecuteOptions struct {
@@ -28,6 +51,12 @@ type ExecuteOptions struct {
 	// When either is zero, single-phase execution with the parent ctx is used.
 	CompileMs int64
 	TestMs    int64
+
+	// StdoutWriter and StderrWriter receive Unity process output as it is produced.
+	// If nil, the corresponding output is discarded (compile-error detection uses
+	// an internal tail buffer regardless).
+	StdoutWriter io.Writer
+	StderrWriter io.Writer
 }
 
 // Execute runs Unity tests using the provided Runner and returns the result + exit code.
@@ -72,7 +101,8 @@ func executeSinglePhase(ctx context.Context, runner Runner, opts ExecuteOptions)
 	}
 	args := BuildRunArgs(opts.ProjectPath, runOpts)
 
-	_, stderr, _, err := runner.Run(ctx, args)
+	stdoutW, stderrW, tail := makeRunWriters(opts)
+	_, err := runner.Run(ctx, args, stdoutW, stderrW)
 
 	if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
 		return handleContextErr(err, opts)
@@ -83,7 +113,7 @@ func executeSinglePhase(ctx context.Context, runner Runner, opts ExecuteOptions)
 		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseRunning})
 	}
 
-	return parseResults(opts, stderr)
+	return parseResults(opts, tail.Bytes())
 }
 
 // executeTwoPhase runs compile and test as separate Unity invocations, each
@@ -97,7 +127,8 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 	compileCtx, compileCancel := context.WithTimeout(ctx, time.Duration(opts.CompileMs)*time.Millisecond)
 	defer compileCancel()
 
-	_, stderr, exitCode, err := runner.Run(compileCtx, BuildCompileArgs(opts.ProjectPath))
+	stdoutW, stderrW1, compileTail := makeRunWriters(opts)
+	exitCode, err := runner.Run(compileCtx, BuildCompileArgs(opts.ProjectPath), stdoutW, stderrW1)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			return classifyPhaseContextErr(ctx, opts, status.PhaseTimeoutCompile, "compile")
@@ -115,7 +146,7 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 	}
 
 	// Compile errors in stderr → fail without running tests.
-	if compileErrors := ParseCompileErrorsWithProject(stderr, opts.ProjectPath); len(compileErrors) > 0 {
+	if compileErrors := ParseCompileErrorsWithProject(compileTail.Bytes(), opts.ProjectPath); len(compileErrors) > 0 {
 		if opts.StatusWriter != nil {
 			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
 		}
@@ -156,7 +187,8 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 		Category:        opts.Category,
 		TestPlatform:    opts.TestPlatform,
 	}
-	_, testStderr, _, testErr := runner.Run(testCtx, BuildRunArgs(opts.ProjectPath, runOpts))
+	_, stderrW2, testTail := makeRunWriters(opts)
+	_, testErr := runner.Run(testCtx, BuildRunArgs(opts.ProjectPath, runOpts), stdoutW, stderrW2)
 	if testErr != nil {
 		if errors.Is(testErr, context.DeadlineExceeded) || errors.Is(testErr, context.Canceled) {
 			return classifyPhaseContextErr(ctx, opts, status.PhaseTimeoutTest, "test")
@@ -173,7 +205,7 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 		}, 2
 	}
 
-	return parseResults(opts, testStderr)
+	return parseResults(opts, testTail.Bytes())
 }
 
 // classifyPhaseContextErr determines the correct exit result when a phase context
@@ -256,9 +288,27 @@ func handleContextErr(err error, opts ExecuteOptions) (*history.RunResult, int) 
 	}, 4
 }
 
+// makeRunWriters returns the stdout writer, a tee'd stderr writer, and the
+// underlying tail buffer. The tail buffer captures the last maxTailBytes of
+// stderr for compile-error detection regardless of whether StderrWriter is set.
+func makeRunWriters(opts ExecuteOptions) (stdoutW io.Writer, stderrW io.Writer, tail *tailBuffer) {
+	tail = &tailBuffer{}
+	if opts.StdoutWriter != nil {
+		stdoutW = opts.StdoutWriter
+	} else {
+		stdoutW = io.Discard
+	}
+	if opts.StderrWriter != nil {
+		stderrW = io.MultiWriter(opts.StderrWriter, tail)
+	} else {
+		stderrW = tail
+	}
+	return
+}
+
 // parseResults reads the XML results file and returns the run result.
 // It is shared between single-phase and two-phase executors.
-func parseResults(opts ExecuteOptions, stderr []byte) (*history.RunResult, int) {
+func parseResults(opts ExecuteOptions, stderrTail []byte) (*history.RunResult, int) {
 	// Check for results XML
 	xmlData, xmlErr := os.ReadFile(opts.ResultsFile)
 	if xmlErr != nil {
@@ -266,7 +316,7 @@ func parseResults(opts ExecuteOptions, stderr []byte) (*history.RunResult, int) 
 		if opts.StatusWriter != nil {
 			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
 		}
-		compileErrors := ParseCompileErrorsWithProject(stderr, opts.ProjectPath)
+		compileErrors := ParseCompileErrorsWithProject(stderrTail, opts.ProjectPath)
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      2,
@@ -277,7 +327,7 @@ func parseResults(opts ExecuteOptions, stderr []byte) (*history.RunResult, int) 
 
 	// Even if XML was produced, check stderr for compile errors
 	// (Unity can emit compile errors and produce a partial/empty XML)
-	compileErrors := ParseCompileErrorsWithProject(stderr, opts.ProjectPath)
+	compileErrors := ParseCompileErrorsWithProject(stderrTail, opts.ProjectPath)
 	if len(compileErrors) > 0 {
 		if opts.StatusWriter != nil {
 			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})

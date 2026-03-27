@@ -75,6 +75,23 @@ func (s *Store) StderrFilePath(runID string) string {
 	return filepath.Join(s.root, runID, "stderr.log")
 }
 
+// OpenRunLogs opens stdout.log and stderr.log in the run artifact directory
+// for streaming writes during execution. The caller must close both writers
+// when Unity exits. Call PrepareRunDir before calling OpenRunLogs.
+func (s *Store) OpenRunLogs(runID string) (stdout, stderr *os.File, err error) {
+	stdoutFile, err := os.Create(s.StdoutFilePath(runID))
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating stdout.log for run %s: %w", runID, err)
+	}
+	stderrFile, err := os.Create(s.StderrFilePath(runID))
+	if err != nil {
+		_ = stdoutFile.Close()
+		return nil, nil, fmt.Errorf("creating stderr.log for run %s: %w", runID, err)
+	}
+	return stdoutFile, stderrFile, nil
+}
+
+// Deprecated: use OpenRunLogs to stream logs directly to files during execution.
 // SaveRawLogs writes stdout and stderr bytes to their respective log files.
 // Each write is atomic (temp-file + rename). An empty slice produces an empty file.
 func (s *Store) SaveRawLogs(runID string, stdout, stderr []byte) error {
