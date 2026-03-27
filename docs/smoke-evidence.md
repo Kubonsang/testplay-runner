@@ -15,15 +15,15 @@ beta release. This file captures the actual local smoke evidence used for the
 | fastplay version | `v0.1.0-beta` |
 | Unity version | `6000.3.8f1` |
 | OS | `macOS 26.3 arm64` |
-| Command | `env UNITY_PATH=/Applications/Unity/Hub/Editor/6000.3.8f1/Unity.app/Contents/MacOS/Unity SMOKE_DIR=/tmp/fastplay-smoke-escalated.CPtNzV ./scripts/smoke.sh` |
-| Smoke project | `/tmp/fastplay-smoke-escalated.CPtNzV` (copy of `fixtures/smoke-project`) |
+| Command | `env UNITY_PATH=/Applications/Unity/Hub/Editor/6000.3.8f1/Unity.app/Contents/MacOS/Unity SMOKE_DIR=/tmp/fastplay-smoke-editfix.3OR4vV ./scripts/smoke.sh` |
+| Smoke project | `/tmp/fastplay-smoke-editfix.3OR4vV` (copy of `fixtures/smoke-project`) |
 
 ## Run Records
 
 | Platform | Run ID | Filter | Exit Code | Total | Passed | Failed |
 |---|---|---|---:|---:|---:|---:|
-| `edit_mode` | `20260327-130016` | _(none)_ | 0 | 0 | 0 | 0 |
-| `play_mode` | `20260327-130034` | _(none)_ | 0 | 2 | 2 | 0 |
+| `edit_mode` | `20260327-132107` | _(none)_ | 0 | 1 | 1 | 0 |
+| `play_mode` | `20260327-132119` | _(none)_ | 0 | 1 | 1 | 0 |
 
 ## Artifacts Produced
 
@@ -51,9 +51,9 @@ Final status snapshot after the PlayMode run:
 {
   "schema_version": "1",
   "phase": "done",
-  "run_id": "20260327-130034",
-  "total": 2,
-  "passed": 2,
+  "run_id": "20260327-132119",
+  "total": 1,
+  "passed": 1,
   "exit_code": 0
 }
 ```
@@ -62,6 +62,9 @@ Final status snapshot after the PlayMode run:
 
 - The smoke run was executed against a `/tmp` copy of `fixtures/smoke-project`
   to avoid mutating the tracked fixture while validating Unity `6000.3.8f1`.
+- `fixtures/smoke-project/Assets/Tests/EditMode/FastPlaySmoke.EditMode.asmdef`
+  was updated to include `"Editor"` in `includePlatforms`, which restored proper
+  EditMode-only discovery under Unity `6000.3.8f1`.
 - A sandboxed attempt failed with Licensing Client and Package Manager IPC
   restrictions. The successful evidence above was captured with an unsandboxed
   local run on the maintainer machine.
