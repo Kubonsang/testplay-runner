@@ -88,7 +88,7 @@ func Parse(data []byte) (*Result, error) {
 		return nil, fmt.Errorf("parsing NUnit XML: %w", err)
 	}
 
-	dur, _ := strconv.ParseFloat(run.Duration, 64)
+	dur, _ := parseDuration(run.Duration)
 	result := &Result{
 		Total:    run.Total,
 		Passed:   run.Passed,
@@ -111,7 +111,7 @@ func collectCases(out *[]TestCase, suite xmlTestSuite) {
 			Name:   xc.FullName,
 			Result: xc.Result,
 		}
-		if d, err := strconv.ParseFloat(xc.Duration, 64); err == nil {
+		if d, err := parseDuration(xc.Duration); err == nil {
 			tc.Duration = d
 		}
 		if xc.Failure != nil {
@@ -140,6 +140,13 @@ func MakeRelative(projectPath, absPath string) string {
 		return absPath
 	}
 	return rel
+}
+
+// parseDuration parses an NUnit duration string to float64.
+// It normalises comma decimal separators (e.g. "1,5" → "1.5") produced by
+// Unity on Windows systems with a non-English locale.
+func parseDuration(s string) (float64, error) {
+	return strconv.ParseFloat(strings.ReplaceAll(s, ",", "."), 64)
 }
 
 // extractFileAndLine extracts file path and line number from a Unity stack trace.
