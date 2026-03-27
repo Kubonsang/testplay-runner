@@ -1,7 +1,8 @@
 # Beta Smoke Evidence
 
-> **Note:** This file must be filled in by a team member with access to a Unity installation
-> before the beta tag is created. AI agents cannot perform this step.
+> **Status: ⏳ PENDING — not yet filled in.**
+> A team member with a Unity installation must complete this before the beta tag is created.
+> AI agents cannot perform this step.
 
 ## Purpose
 
@@ -14,9 +15,10 @@ before the beta release. Provides a traceable reference for users who ask "was t
 
 1. Install fastplay: `go build -o fastplay ./cmd/fastplay`
 2. `cd` to a Unity project directory containing `fastplay.json`
-3. Run `fastplay check` — confirm `ready: true`
-4. Run `fastplay run` — wait for completion
-5. Fill in the table below, then commit this file
+3. Run `fastplay version` — record the output in the table below
+4. Run `fastplay check` — confirm `ready: true`
+5. Run `fastplay run` — wait for completion
+6. Fill in the table below, then commit this file
 
 ---
 
@@ -45,6 +47,13 @@ List the files present under `.fastplay/runs/<run_id>/` after the run:
   manifest.json    — ✅ / ❌
   stdout.log       — ✅ / ❌
   stderr.log       — ✅ / ❌
+  events.ndjson    — ✅ / ❌
+```
+
+Also verify in the working directory:
+
+```
+fastplay-status.json   — ✅ / ❌  (phase: done)
 ```
 
 ## Notes

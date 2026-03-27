@@ -25,3 +25,5 @@ CLAUDE.md
 # Git worktrees
 .worktrees/
 
+# Internal planning / review docs
+.internal-docs/
