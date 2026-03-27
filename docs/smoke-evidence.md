@@ -1,7 +1,8 @@
 # Beta Smoke Evidence
 
-> **Note:** This file must be filled in by a team member with access to a Unity installation
-> before the beta tag is created. AI agents cannot perform this step.
+> **Status: ⏳ PENDING — not yet filled in.**
+> A team member with a Unity installation must complete this before the beta tag is created.
+> AI agents cannot perform this step.
 
 ## Purpose
 
