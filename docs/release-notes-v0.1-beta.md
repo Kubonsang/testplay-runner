@@ -11,7 +11,7 @@ It makes Unity tests usable from AI agents by solving eight concrete problems:
 unreliable exit codes, XML-only results, ambiguous compile vs. test failures,
 no progress visibility, no pre-validation, and platform path differences.
 
-Agents interact through four commands: `check`, `list`, `run`, `result`.
+Agents interact through five commands: `version`, `check`, `list`, `run`, `result`.
 All stdout is JSON. All human-readable output goes to stderr.
 
 ---
@@ -19,7 +19,7 @@ All stdout is JSON. All human-readable output goes to stderr.
 ## What Is Supported in This Release
 
 - **EditMode and PlayMode test execution** — single-process Unity invocation
-- **Structured JSON output** for all four commands (`check`, `list`, `run`, `result`)
+- **Structured JSON output** for all five commands (`version`, `check`, `list`, `run`, `result`)
 - **Compile vs. test failure disambiguation** — exit code 2 (compile) vs. exit code 3 (test)
 - **Phase-aware timeouts** — separate `compile_ms` / `test_ms` deadlines in two-phase mode; emits `timeout_compile`, `timeout_test`, `timeout_total`
 - **Artifact persistence** — per-run `results.xml`, `stdout.log`, `stderr.log`, `summary.json`, `manifest.json`, `events.ndjson` under `.fastplay/runs/<run_id>/`

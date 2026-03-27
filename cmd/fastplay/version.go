@@ -2,7 +2,6 @@ package main
 
 import (
 	"io"
-	"os"
 
 	"github.com/spf13/cobra"
 )
@@ -24,7 +23,7 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print fastplay version as JSON",
 	Args:  cobra.NoArgs,
-	Run:   func(cmd *cobra.Command, args []string) { runVersion(os.Stdout) },
+	Run:   func(cmd *cobra.Command, args []string) { runVersion(cmd.OutOrStdout()) },
 }
 
 func runVersion(w io.Writer) {
