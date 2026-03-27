@@ -22,6 +22,9 @@ const maxTailBytes = 64 * 1024
 type tailBuffer struct{ buf []byte }
 
 func (t *tailBuffer) Write(p []byte) (int, error) {
+	if len(p) > maxTailBytes {
+		p = p[len(p)-maxTailBytes:]
+	}
 	t.buf = append(t.buf, p...)
 	if len(t.buf) > maxTailBytes {
 		t.buf = t.buf[len(t.buf)-maxTailBytes:]

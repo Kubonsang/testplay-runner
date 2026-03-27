@@ -137,7 +137,7 @@ func TestParse_EditorStyleStackTrace(t *testing.T) {
 	}
 }
 
-func TestParse_NoMatchDegraces(t *testing.T) {
+func TestParse_NoMatchDegrades(t *testing.T) {
 	// A failure with a stack trace that matches no known format should degrade
 	// gracefully: AbsolutePath and Line are zero-valued, not an error.
 	raw := []byte(`<?xml version="1.0" encoding="utf-8"?>

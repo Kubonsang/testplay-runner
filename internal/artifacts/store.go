@@ -91,6 +91,7 @@ func (s *Store) OpenRunLogs(runID string) (stdout, stderr *os.File, err error) {
 	return stdoutFile, stderrFile, nil
 }
 
+// Deprecated: use OpenRunLogs to stream logs directly to files during execution.
 // SaveRawLogs writes stdout and stderr bytes to their respective log files.
 // Each write is atomic (temp-file + rename). An empty slice produces an empty file.
 func (s *Store) SaveRawLogs(runID string, stdout, stderr []byte) error {
