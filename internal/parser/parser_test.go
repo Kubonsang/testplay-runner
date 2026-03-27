@@ -177,3 +177,23 @@ func TestMakeRelative_OutsideProjectPath(t *testing.T) {
 		t.Errorf("got %q, want absolute path unchanged", rel)
 	}
 }
+
+func TestParse_CommaDurationLocale(t *testing.T) {
+	// Unity on Windows with a non-English locale writes "1,5" instead of "1.5".
+	raw := []byte(`<?xml version="1.0" encoding="utf-8"?>
+<test-run id="1" result="Passed" total="1" passed="1" failed="0" skipped="0" duration="1,5">
+  <test-suite type="Assembly" name="Foo.dll" result="Passed">
+    <test-case id="1" name="A.B" fullname="A.B" result="Passed" duration="0,123"/>
+  </test-suite>
+</test-run>`)
+	result, err := parser.Parse(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Duration != 1.5 {
+		t.Errorf("run duration: got %v, want 1.5", result.Duration)
+	}
+	if result.Tests[0].Duration != 0.123 {
+		t.Errorf("test duration: got %v, want 0.123", result.Tests[0].Duration)
+	}
+}
