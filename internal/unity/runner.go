@@ -32,6 +32,7 @@ func (r *ProcessRunner) Run(ctx context.Context, args []string, stdout, stderr i
 	cmd := exec.CommandContext(ctx, r.UnityPath, args...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	setSysProcAttr(cmd)
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return exitErr.ExitCode(), nil
