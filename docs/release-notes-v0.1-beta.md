@@ -22,7 +22,7 @@ All stdout is JSON. All human-readable output goes to stderr.
 - **Structured JSON output** for all four commands (`check`, `list`, `run`, `result`)
 - **Compile vs. test failure disambiguation** — exit code 2 (compile) vs. exit code 3 (test)
 - **Phase-aware timeouts** — separate `compile_ms` / `test_ms` deadlines in two-phase mode; emits `timeout_compile`, `timeout_test`, `timeout_total`
-- **Artifact persistence** — per-run `results.xml`, `stdout.log`, `stderr.log`, `summary.json`, `manifest.json` under `.fastplay/runs/<run_id>/`
+- **Artifact persistence** — per-run `results.xml`, `stdout.log`, `stderr.log`, `summary.json`, `manifest.json`, `events.ndjson` under `.fastplay/runs/<run_id>/`
 - **Run status streaming** — atomic writes to `fastplay-status.json` during `run`; includes `started_at`, `last_heartbeat_at`, `artifact_root`
 - **Regression detection** — `--compare-run` flag on `fastplay run` populates `new_failures`
 - **Orphan process prevention** — Unity child processes killed as a group on timeout/signal (Linux/macOS)
@@ -79,6 +79,7 @@ fastplay version
 ## Quick Start
 
 ```bash
+fastplay version       # print version
 fastplay check         # validate environment
 fastplay list          # scan for test names
 fastplay run           # run tests
