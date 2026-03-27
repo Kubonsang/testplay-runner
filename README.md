@@ -6,7 +6,7 @@
 
 ---
 
-Unity's raw CLI is broken for automation: exit code 0 even on compile failure, XML-only output, no progress visibility, ambiguous error types. `fastplay` fixes all of that with a four-command interface designed for AI agents and CI pipelines.
+Unity's raw CLI is broken for automation: exit code 0 even on compile failure, XML-only output, no progress visibility, ambiguous error types. `fastplay` fixes all of that with a five-command interface designed for AI agents and CI pipelines.
 
 ## Problems Solved
 
@@ -57,15 +57,36 @@ Create `fastplay.json` in your project root:
 `unity_path` falls back to the `UNITY_PATH` environment variable if omitted.
 `project_path` defaults to the directory containing `fastplay.json`.
 `test_platform` accepts `"edit_mode"` (default) or `"play_mode"`. This is passed as `-testPlatform EditMode|PlayMode` to Unity.
+`result_dir` controls the persisted history JSON used by `fastplay result`.
+Per-run artifacts (`results.xml`, `summary.json`, `manifest.json`, `stdout.log`,
+`stderr.log`, `events.ndjson`) are always written under
+`<project_path>/.fastplay/runs/<run_id>/`.
 
 **Timeout configuration:**
 - `total_ms` (default 300000): outer safety-net deadline for the entire run.
-- `compile_ms` + `test_ms`: **both must be set together** to enable two-phase execution — Unity runs compile-only first (`compile_ms` deadline), then runs tests (`test_ms` deadline). Timeouts emit `timeout_type: "compile"` or `"test"` instead of `"total"`. Setting only one of the two is a config validation error.
+- `compile_ms` + `test_ms`: **both must be set together** to enable two-phase execution — Unity runs compile-only first (`compile_ms` deadline), then runs tests (`test_ms` deadline). Phase-specific timeouts emit `timeout_type: "compile"` or `"test"`, while the outer `total_ms` may still emit `"total"`. Setting only one of the two is a config validation error.
 - When neither `compile_ms` nor `test_ms` is set, single-phase execution is used (compile + test in one Unity invocation, governed by `total_ms`).
 
 > **Note:** PlayMode network harness and NGO orchestration are not yet supported.
 
 ## Commands
+
+### `fastplay version`
+
+Prints the current fastplay version as JSON.
+
+```bash
+fastplay version
+```
+
+```json
+{
+  "schema_version": "1",
+  "version": "v0.1.0-beta"
+}
+```
+
+---
 
 ### `fastplay check`
 
@@ -130,11 +151,23 @@ fastplay run --compare-run 20250301-102200
 {
   "schema_version": "1",
   "run_id": "20250325-143000",
-  "total": 10,
-  "passed": 10,
+  "exit_code": 0,
+  "total": 2,
+  "passed": 2,
   "failed": 0,
   "skipped": 0,
-  "tests": [],
+  "tests": [
+    {
+      "name": "MyTests.PlayerTests.TestJump",
+      "result": "Passed",
+      "duration_s": 0.006
+    },
+    {
+      "name": "MyTests.PlayerTests.TestRun",
+      "result": "Passed",
+      "duration_s": 0.004
+    }
+  ],
   "new_failures": null
 }
 ```
@@ -169,6 +202,12 @@ fastplay run --compare-run 20250301-102200
 {
   "schema_version": "1",
   "run_id": "20250325-143000",
+  "exit_code": 2,
+  "total": 0,
+  "passed": 0,
+  "failed": 0,
+  "skipped": 0,
+  "tests": [],
   "errors": [
     {
       "file": "Assets/Scripts/Player.cs",
@@ -176,7 +215,8 @@ fastplay run --compare-run 20250301-102200
       "line": 17,
       "message": "CS0103: The name 'speed' does not exist in the current context"
     }
-  ]
+  ],
+  "new_failures": null
 }
 ```
 
@@ -255,7 +295,7 @@ During `fastplay run`, poll `fastplay-status.json` to track progress:
 }
 ```
 
-Phase progression: `waiting → compiling → running → done`
+Phase progression: `compiling → running → done`
 Failure phases: `timeout_compile`, `timeout_test`, `timeout_total`, `interrupted`
 
 ## Recommended Agent Flow

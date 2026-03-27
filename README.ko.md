@@ -6,7 +6,7 @@
 
 ---
 
-Unity의 원시 CLI는 자동화에 적합하지 않습니다. 컴파일 실패에도 종료코드 0을 반환하고, 결과는 XML로만 출력되며, 진행 상황을 알 수 없고, 오류 유형이 모호합니다. `fastplay`는 AI 에이전트와 CI 파이프라인을 위해 설계된 4개의 명령으로 이 모든 문제를 해결합니다.
+Unity의 원시 CLI는 자동화에 적합하지 않습니다. 컴파일 실패에도 종료코드 0을 반환하고, 결과는 XML로만 출력되며, 진행 상황을 알 수 없고, 오류 유형이 모호합니다. `fastplay`는 AI 에이전트와 CI 파이프라인을 위해 설계된 5개의 명령으로 이 모든 문제를 해결합니다.
 
 ## 해결하는 문제
 
@@ -57,15 +57,36 @@ GOOS=windows GOARCH=amd64 go build -o fastplay.exe ./cmd/fastplay
 `unity_path`를 생략하면 `UNITY_PATH` 환경변수로 폴백합니다.
 `project_path`를 생략하면 `fastplay.json`이 위치한 디렉터리가 기본값이 됩니다.
 `test_platform`은 `"edit_mode"` (기본값) 또는 `"play_mode"`를 허용합니다. Unity CLI에 `-testPlatform EditMode|PlayMode`로 전달됩니다.
+`result_dir`는 `fastplay result`가 읽는 실행 이력 JSON 저장 위치를 제어합니다.
+반면 run별 아티팩트(`results.xml`, `summary.json`, `manifest.json`, `stdout.log`,
+`stderr.log`, `events.ndjson`)는 항상
+`<project_path>/.fastplay/runs/<run_id>/` 아래에 저장됩니다.
 
 **타임아웃 설정:**
 - `total_ms` (기본값 300000): 전체 실행의 외부 안전망 데드라인.
-- `compile_ms` + `test_ms`: **반드시 둘 다 함께 설정해야** two-phase 실행이 활성화됨 — Unity가 컴파일만 먼저 실행(`compile_ms` 데드라인), 이후 테스트 실행(`test_ms` 데드라인). 타임아웃 시 `timeout_type: "compile"` 또는 `"test"`를 emit. 하나만 설정하면 validation error.
+- `compile_ms` + `test_ms`: **반드시 둘 다 함께 설정해야** two-phase 실행이 활성화됨 — Unity가 컴파일만 먼저 실행(`compile_ms` 데드라인), 이후 테스트 실행(`test_ms` 데드라인). 단계별 타임아웃이면 `timeout_type: "compile"` 또는 `"test"`가 나오고, 바깥 `total_ms`가 먼저 만료되면 `"total"`이 나올 수 있습니다. 하나만 설정하면 validation error.
 - 둘 다 설정하지 않으면 single-phase 실행 (컴파일+테스트를 Unity 한 번 호출로 처리, `total_ms` 기준).
 
 > **참고:** PlayMode 네트워크 하네스와 NGO 오케스트레이션은 아직 미지원입니다.
 
 ## 명령어
+
+### `fastplay version`
+
+현재 fastplay 버전을 JSON으로 출력합니다.
+
+```bash
+fastplay version
+```
+
+```json
+{
+  "schema_version": "1",
+  "version": "v0.1.0-beta"
+}
+```
+
+---
 
 ### `fastplay check`
 
@@ -130,11 +151,23 @@ fastplay run --compare-run 20250301-102200
 {
   "schema_version": "1",
   "run_id": "20250325-143000",
-  "total": 10,
-  "passed": 10,
+  "exit_code": 0,
+  "total": 2,
+  "passed": 2,
   "failed": 0,
   "skipped": 0,
-  "tests": [],
+  "tests": [
+    {
+      "name": "MyTests.PlayerTests.TestJump",
+      "result": "Passed",
+      "duration_s": 0.006
+    },
+    {
+      "name": "MyTests.PlayerTests.TestRun",
+      "result": "Passed",
+      "duration_s": 0.004
+    }
+  ],
   "new_failures": null
 }
 ```
@@ -169,6 +202,12 @@ fastplay run --compare-run 20250301-102200
 {
   "schema_version": "1",
   "run_id": "20250325-143000",
+  "exit_code": 2,
+  "total": 0,
+  "passed": 0,
+  "failed": 0,
+  "skipped": 0,
+  "tests": [],
   "errors": [
     {
       "file": "Assets/Scripts/Player.cs",
@@ -176,7 +215,8 @@ fastplay run --compare-run 20250301-102200
       "line": 17,
       "message": "CS0103: The name 'speed' does not exist in the current context"
     }
-  ]
+  ],
+  "new_failures": null
 }
 ```
 
@@ -255,7 +295,7 @@ fastplay result --last 3
 }
 ```
 
-페이즈 진행: `waiting → compiling → running → done`
+페이즈 진행: `compiling → running → done`
 실패 페이즈: `timeout_compile`, `timeout_test`, `timeout_total`, `interrupted`
 
 ## 권장 에이전트 흐름
