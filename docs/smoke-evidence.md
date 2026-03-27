@@ -1,65 +1,67 @@
 # Beta Smoke Evidence
 
-> **Status: ⏳ PENDING — not yet filled in.**
-> A team member with a Unity installation must complete this before the beta tag is created.
-> AI agents cannot perform this step.
+> Status: DONE
 
-## Purpose
+Records that `fastplay run` was executed against a real Unity project before the
+beta release. This file captures the actual local smoke evidence used for the
+`v0.1.0-beta` release gate.
 
-Records that `fastplay run` was executed against a real Unity project at least once
-before the beta release. Provides a traceable reference for users who ask "was this actually tested?"
-
----
-
-## How to Fill This In
-
-1. Install fastplay: `go build -o fastplay ./cmd/fastplay`
-2. `cd` to a Unity project directory containing `fastplay.json`
-3. Run `fastplay version` — record the output in the table below
-4. Run `fastplay check` — confirm `ready: true`
-5. Run `fastplay run` — wait for completion
-6. Fill in the table below, then commit this file
-
----
-
-## Run Record
+## Environment
 
 | Field | Value |
 |---|---|
-| Date | _(e.g. 2026-03-27)_ |
-| Tester | _(name or handle)_ |
-| fastplay version | _(output of `fastplay version`)_ |
-| Unity version | _(e.g. 2022.3.14f1)_ |
-| OS | _(e.g. macOS 14.4 arm64)_ |
-| Test platform | _(edit\_mode / play\_mode)_ |
-| Filter used | _(empty if none)_ |
-| Exit code | _(0 / 2 / 3)_ |
-| Total / Passed / Failed | _(e.g. 42 / 42 / 0)_ |
+| Date | 2026-03-27 |
+| Tester | gubonsang (Codex-assisted) |
+| fastplay version | `v0.1.0-beta` |
+| Unity version | `6000.3.8f1` |
+| OS | `macOS 26.3 arm64` |
+| Command | `env UNITY_PATH=/Applications/Unity/Hub/Editor/6000.3.8f1/Unity.app/Contents/MacOS/Unity SMOKE_DIR=/tmp/fastplay-smoke-escalated.CPtNzV ./scripts/smoke.sh` |
+| Smoke project | `/tmp/fastplay-smoke-escalated.CPtNzV` (copy of `fixtures/smoke-project`) |
+
+## Run Records
+
+| Platform | Run ID | Filter | Exit Code | Total | Passed | Failed |
+|---|---|---|---:|---:|---:|---:|
+| `edit_mode` | `20260327-130016` | _(none)_ | 0 | 0 | 0 | 0 |
+| `play_mode` | `20260327-130034` | _(none)_ | 0 | 2 | 2 | 0 |
 
 ## Artifacts Produced
 
-List the files present under `.fastplay/runs/<run_id>/` after the run:
+Verified under `.fastplay/runs/<run_id>/` for both runs:
 
 ```
 <run_id>/
-  results.xml      — ✅ / ❌
-  summary.json     — ✅ / ❌
-  manifest.json    — ✅ / ❌
-  stdout.log       — ✅ / ❌
-  stderr.log       — ✅ / ❌
-  events.ndjson    — ✅ / ❌
+  results.xml      - present
+  summary.json     - present
+  manifest.json    - present
+  stdout.log       - present
+  stderr.log       - present
+  events.ndjson    - present
 ```
 
-Also verify in the working directory:
+Verified in the smoke project root:
 
 ```
-fastplay-status.json   — ✅ / ❌  (phase: done)
+fastplay-status.json - present (phase: done)
+```
+
+Final status snapshot after the PlayMode run:
+
+```json
+{
+  "schema_version": "1",
+  "phase": "done",
+  "run_id": "20260327-130034",
+  "total": 2,
+  "passed": 2,
+  "exit_code": 0
+}
 ```
 
 ## Notes
 
-_(Any unexpected behaviour, environment quirks, or deviations from the documented flow.)_
-
----
-
-*Template created 2026-03-27. Fill in before tagging v0.1.0-beta.*
+- The smoke run was executed against a `/tmp` copy of `fixtures/smoke-project`
+  to avoid mutating the tracked fixture while validating Unity `6000.3.8f1`.
+- A sandboxed attempt failed with Licensing Client and Package Manager IPC
+  restrictions. The successful evidence above was captured with an unsandboxed
+  local run on the maintainer machine.
