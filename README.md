@@ -244,11 +244,14 @@ During `fastplay run`, poll `fastplay-status.json` to track progress:
   "schema_version": "1",
   "phase": "running",
   "run_id": "20250325-143000",
-  "current_test": "MyTests.PlayerTests.TestJump",
   "total": 10,
   "passed": 3,
   "failed": 0,
-  "updated_at": "2025-03-25T14:30:05Z"
+  "updated_at": "2025-03-25T14:30:05Z",
+  "started_at": "2025-03-25T14:29:58Z",
+  "last_heartbeat_at": "2025-03-25T14:30:03Z",
+  "artifact_root": "/Users/user/MyProject/.fastplay/runs/20250325-143000",
+  "pid": 12345
 }
 ```
 
