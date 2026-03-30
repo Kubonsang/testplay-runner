@@ -32,7 +32,7 @@ func EnsureIgnored(projectPath, entry string) error {
 		return err
 	}
 	defer out.Close()
-	if len(data) > 0 {
+	if len(data) > 0 && !strings.HasSuffix(string(data), "\n") {
 		_, err = fmt.Fprintf(out, "\n%s\n", trimmed)
 	} else {
 		_, err = fmt.Fprintf(out, "%s\n", trimmed)
