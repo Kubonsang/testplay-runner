@@ -3,7 +3,6 @@ package shadow_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -324,14 +323,12 @@ func TestCopyDir_CopiesFileContents(t *testing.T) {
 
 func TestPrepare_RespectsContextCancellation(t *testing.T) {
 	src := makeProject(t)
-	// Fill Assets with enough files to make WalkDir non-trivial.
-	for i := 0; i < 20; i++ {
-		name := filepath.Join(src, "Assets", "Scripts", fmt.Sprintf("File%d.cs", i))
-		_ = os.WriteFile(name, []byte("// file"), 0644)
-	}
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // already cancelled
+	cancel() // already cancelled before Prepare is called
 
+	// copyDir checks ctx.Err() on every WalkDir entry, including the root
+	// directory itself, so an already-cancelled context is detected on the
+	// very first iteration regardless of how many files are present.
 	_, err := shadow.Prepare(ctx, src)
 	if err == nil {
 		t.Fatal("expected error from cancelled context, got nil")
