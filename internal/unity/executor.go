@@ -57,6 +57,11 @@ type ExecuteOptions struct {
 	// an internal tail buffer regardless).
 	StdoutWriter io.Writer
 	StderrWriter io.Writer
+
+	// ExtraArgs are appended verbatim to the Unity CLI arguments for every
+	// invocation (compile and test phases). Used by Shadow Workspace mode to
+	// inject -disable-assembly-updater.
+	ExtraArgs []string
 }
 
 // Execute runs Unity tests using the provided Runner and returns the result + exit code.
@@ -100,6 +105,7 @@ func executeSinglePhase(ctx context.Context, runner Runner, opts ExecuteOptions)
 		TestPlatform:    opts.TestPlatform,
 	}
 	args := BuildRunArgs(opts.ProjectPath, runOpts)
+	args = append(args, opts.ExtraArgs...)
 
 	stdoutW, stderrW, tail := makeRunWriters(opts)
 	_, err := runner.Run(ctx, args, stdoutW, stderrW)
@@ -128,7 +134,9 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 	defer compileCancel()
 
 	stdoutW, stderrW1, compileTail := makeRunWriters(opts)
-	exitCode, err := runner.Run(compileCtx, BuildCompileArgs(opts.ProjectPath), stdoutW, stderrW1)
+	compileArgs := BuildCompileArgs(opts.ProjectPath)
+	compileArgs = append(compileArgs, opts.ExtraArgs...)
+	exitCode, err := runner.Run(compileCtx, compileArgs, stdoutW, stderrW1)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			return classifyPhaseContextErr(ctx, opts, status.PhaseTimeoutCompile, "compile")
@@ -188,7 +196,9 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 		TestPlatform:    opts.TestPlatform,
 	}
 	_, stderrW2, testTail := makeRunWriters(opts)
-	_, testErr := runner.Run(testCtx, BuildRunArgs(opts.ProjectPath, runOpts), stdoutW, stderrW2)
+	testArgs := BuildRunArgs(opts.ProjectPath, runOpts)
+	testArgs = append(testArgs, opts.ExtraArgs...)
+	_, testErr := runner.Run(testCtx, testArgs, stdoutW, stderrW2)
 	if testErr != nil {
 		if errors.Is(testErr, context.DeadlineExceeded) || errors.Is(testErr, context.Canceled) {
 			return classifyPhaseContextErr(ctx, opts, status.PhaseTimeoutTest, "test")

@@ -403,6 +403,38 @@ func TestService_CompareRun_PopulatesNewFailures(t *testing.T) {
 	}
 }
 
+func TestService_CompareRun_NewFailuresHaveRelativePath(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	store := history.NewStore(cfg.ResultDir)
+
+	// Seed a prev run where TestSub passed.
+	prevID := "20250301-090000"
+	_ = store.Save(prevID, &history.RunResult{
+		RunID: prevID, SchemaVersion: "1",
+		Tests: []parser.TestCase{{Name: "MyTests.TestSub", Result: "Passed"}},
+	})
+
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/one_failure.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+
+	svc := &runsvc.Service{
+		Runner:    fake,
+		Store:     store,
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Clock:     func() time.Time { return time.Now() },
+	}
+
+	resp, _ := svc.Run(context.Background(), runsvc.Request{Config: cfg, CompareRun: prevID})
+	if resp.Result.NewFailures == nil {
+		t.Fatal("expected NewFailures to be populated")
+	}
+	for _, nf := range resp.Result.NewFailures {
+		if nf.AbsolutePath != "" && nf.File == "" {
+			t.Errorf("NewFailures[%s]: AbsolutePath=%q but File is empty — relative path normalisation missing", nf.Name, nf.AbsolutePath)
+		}
+	}
+}
+
 func TestService_NoCompareRun_NewFailuresIsNil(t *testing.T) {
 	cfg, dir := baseConfig(t)
 	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
@@ -418,6 +450,154 @@ func TestService_NoCompareRun_NewFailuresIsNil(t *testing.T) {
 	resp, _ := svc.Run(context.Background(), runsvc.Request{Config: cfg})
 	if resp.Result.NewFailures != nil {
 		t.Error("expected NewFailures nil when no CompareRun")
+	}
+}
+
+// runnerFunc is a function-based unity.Runner for tests that need custom logic.
+type runnerFunc func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error)
+
+func (f runnerFunc) Run(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
+	return f(ctx, args, stdout, stderr)
+}
+
+func TestService_UsesShadowProjectPath_WhenLocked(t *testing.T) {
+	// Build a minimal project directory with the lockfile present.
+	projectDir := t.TempDir()
+	for _, d := range []string{"Assets", "ProjectSettings", "Packages", "Temp"} {
+		_ = os.MkdirAll(filepath.Join(projectDir, d), 0755)
+	}
+	_ = os.WriteFile(filepath.Join(projectDir, "Temp", "UnityLockfile"), []byte{}, 0644)
+
+	var usedProjectPath string
+	runner := runnerFunc(func(_ context.Context, args []string, _, _ io.Writer) (int, error) {
+		for i, a := range args {
+			if a == "-projectPath" && i+1 < len(args) {
+				usedProjectPath = args[i+1]
+			}
+		}
+		return 0, nil
+	})
+
+	resultDir := filepath.Join(projectDir, ".fastplay", "results")
+	svc := &runsvc.Service{
+		Runner:    runner,
+		Store:     history.NewStore(resultDir),
+		Artifacts: artifacts.NewStore(filepath.Join(projectDir, ".fastplay", "runs")),
+	}
+
+	cfg := &config.Config{
+		UnityPath:    "/fake/unity",
+		ProjectPath:  projectDir,
+		TestPlatform: "edit_mode",
+		Timeout:      config.Timeouts{TotalMs: 5000},
+	}
+	_, _ = svc.Run(context.Background(), runsvc.Request{Config: cfg})
+
+	shadowPath := filepath.Join(projectDir, ".fastplay-shadow")
+	if usedProjectPath != shadowPath {
+		t.Errorf("expected shadow projectPath %q, got %q", shadowPath, usedProjectPath)
+	}
+}
+
+func TestService_ResetShadow_RebuildsShadow(t *testing.T) {
+	projectDir := t.TempDir()
+	for _, d := range []string{"Assets", "ProjectSettings", "Packages"} {
+		_ = os.MkdirAll(filepath.Join(projectDir, d), 0755)
+	}
+
+	var usedProjectPath string
+	runner := runnerFunc(func(_ context.Context, args []string, _, _ io.Writer) (int, error) {
+		for i, a := range args {
+			if a == "-projectPath" && i+1 < len(args) {
+				usedProjectPath = args[i+1]
+			}
+		}
+		return 0, nil
+	})
+
+	resultDir := filepath.Join(projectDir, ".fastplay", "results")
+	svc := &runsvc.Service{
+		Runner:    runner,
+		Store:     history.NewStore(resultDir),
+		Artifacts: artifacts.NewStore(filepath.Join(projectDir, ".fastplay", "runs")),
+	}
+
+	cfg := &config.Config{
+		UnityPath:    "/fake/unity",
+		ProjectPath:  projectDir,
+		TestPlatform: "edit_mode",
+		Timeout:      config.Timeouts{TotalMs: 5000},
+	}
+
+	_, _ = svc.Run(context.Background(), runsvc.Request{Config: cfg, ResetShadow: true})
+
+	shadowPath := filepath.Join(projectDir, ".fastplay-shadow")
+	if usedProjectPath != shadowPath {
+		t.Errorf("expected shadow projectPath %q, got %q", shadowPath, usedProjectPath)
+	}
+}
+
+func TestService_UsesSourceProjectPath_WhenNotLocked(t *testing.T) {
+	projectDir := t.TempDir()
+
+	var usedProjectPath string
+	runner := runnerFunc(func(_ context.Context, args []string, _, _ io.Writer) (int, error) {
+		for i, a := range args {
+			if a == "-projectPath" && i+1 < len(args) {
+				usedProjectPath = args[i+1]
+			}
+		}
+		return 0, nil
+	})
+
+	resultDir := filepath.Join(projectDir, ".fastplay", "results")
+	svc := &runsvc.Service{
+		Runner:    runner,
+		Store:     history.NewStore(resultDir),
+		Artifacts: artifacts.NewStore(filepath.Join(projectDir, ".fastplay", "runs")),
+	}
+
+	cfg := &config.Config{
+		UnityPath:    "/fake/unity",
+		ProjectPath:  projectDir,
+		TestPlatform: "edit_mode",
+		Timeout:      config.Timeouts{TotalMs: 5000},
+	}
+	_, _ = svc.Run(context.Background(), runsvc.Request{Config: cfg})
+
+	if usedProjectPath != projectDir {
+		t.Errorf("expected original projectPath %q, got %q", projectDir, usedProjectPath)
+	}
+}
+
+func TestService_ShadowPrepareFailure_ReturnsError(t *testing.T) {
+	// Trigger shadow mode via UnityLockfile, then poison the shadow path by
+	// placing a regular file where .fastplay-shadow/ would be created.
+	// shadow.Prepare calls os.MkdirAll on that path, which fails when a
+	// non-directory already exists there.
+	projectDir := t.TempDir()
+	for _, d := range []string{"Assets", "ProjectSettings", "Packages", "Temp"} {
+		_ = os.MkdirAll(filepath.Join(projectDir, d), 0755)
+	}
+	_ = os.WriteFile(filepath.Join(projectDir, "Temp", "UnityLockfile"), []byte{}, 0644)
+	// Block shadow creation: put a regular file where the shadow dir would go.
+	_ = os.WriteFile(filepath.Join(projectDir, ".fastplay-shadow"), []byte("poison"), 0644)
+
+	svc := &runsvc.Service{
+		Runner:    runnerFunc(func(_ context.Context, _ []string, _, _ io.Writer) (int, error) { return 0, nil }),
+		Store:     history.NewStore(filepath.Join(projectDir, ".fastplay", "results")),
+		Artifacts: artifacts.NewStore(filepath.Join(projectDir, ".fastplay", "runs")),
+	}
+
+	cfg := &config.Config{
+		UnityPath:    "/fake/unity",
+		ProjectPath:  projectDir,
+		TestPlatform: "edit_mode",
+		Timeout:      config.Timeouts{TotalMs: 5000},
+	}
+	_, err := svc.Run(context.Background(), runsvc.Request{Config: cfg})
+	if err == nil {
+		t.Error("expected infrastructure error when shadow workspace cannot be created")
 	}
 }
 

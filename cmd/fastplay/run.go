@@ -20,9 +20,10 @@ import (
 
 // RunCmdOptions holds the flag values for `fastplay run`.
 type RunCmdOptions struct {
-	Filter     string
-	Category   string
-	CompareRun string
+	Filter      string
+	Category    string
+	CompareRun  string
+	ResetShadow bool
 }
 
 type runDeps struct {
@@ -69,10 +70,11 @@ func runRun(w io.Writer, deps runDeps) int {
 	}
 
 	resp, infraErr := svc.Run(ctx, runsvc.Request{
-		Config:     cfg,
-		Filter:     deps.opts.Filter,
-		Category:   deps.opts.Category,
-		CompareRun: deps.opts.CompareRun,
+		Config:      cfg,
+		Filter:      deps.opts.Filter,
+		Category:    deps.opts.Category,
+		CompareRun:  deps.opts.CompareRun,
+		ResetShadow: deps.opts.ResetShadow,
 	})
 	if infraErr != nil {
 		writeJSON(w, map[string]any{"schema_version": "1", "error": infraErr.Error(), "new_failures": nil})
@@ -106,8 +108,9 @@ func runRun(w io.Writer, deps runDeps) int {
 	return resp.ExitCode
 }
 
-// runFilter, runCategory and runCompareRun are cobra flag values.
+// runFilter, runCategory, runCompareRun and resetShadow are cobra flag values.
 var runFilter, runCategory, runCompareRun string
+var resetShadow bool
 
 var runCmd = &cobra.Command{
 	Use:   "run",
@@ -130,9 +133,10 @@ var runCmd = &cobra.Command{
 			// from config after loading, avoiding a double config-load.
 			statusPath: statusPath,
 			opts: RunCmdOptions{
-				Filter:     runFilter,
-				Category:   runCategory,
-				CompareRun: runCompareRun,
+				Filter:      runFilter,
+				Category:    runCategory,
+				CompareRun:  runCompareRun,
+				ResetShadow: resetShadow,
 			},
 		}
 		code := runRun(cmd.OutOrStdout(), deps)
@@ -146,4 +150,5 @@ func init() {
 	runCmd.Flags().StringVar(&runFilter, "filter", "", "Test name filter")
 	runCmd.Flags().StringVar(&runCategory, "category", "", "Test category filter")
 	runCmd.Flags().StringVar(&runCompareRun, "compare-run", "", "Run ID to compare against for regression detection")
+	runCmd.Flags().BoolVar(&resetShadow, "reset-shadow", false, "Delete and rebuild shadow workspace before running")
 }
