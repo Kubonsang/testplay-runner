@@ -422,18 +422,29 @@ func TestRunRun_ConfigError_NoNewFailuresField(t *testing.T) {
 
 func TestRunRun_InfraError_NoNewFailuresField(t *testing.T) {
 	var buf bytes.Buffer
-	// Use a path that doesn't exist to trigger artifact creation failure
-	badPath := "/nonexistent/project/that/does/not/exist"
+	projectDir := t.TempDir()
+
+	// Block artifact directory creation by placing a regular file where
+	// the artifact root directory would be. os.MkdirAll will fail with
+	// ENOTDIR, causing Service.Run to return an infra error → exit 1.
+	artifactRoot := filepath.Join(projectDir, ".fastplay", "runs")
+	_ = os.MkdirAll(filepath.Dir(artifactRoot), 0755)
+	_ = os.WriteFile(artifactRoot, []byte("poison"), 0644)
+
 	deps := runDeps{
 		loadConfig: func(string) (*config.Config, error) {
 			return &config.Config{
-				SchemaVersion: "1",
-				UnityPath:     "/fake/unity",
-				ProjectPath:   badPath,
-				ResultDir:     filepath.Join(badPath, ".fastplay", "results"),
-				Timeout:       config.Timeouts{TotalMs: 5000},
+				UnityPath:   "/fake/unity",
+				ProjectPath: projectDir,
+				Timeout:     config.Timeouts{TotalMs: 5000},
 			}, nil
 		},
+		// Runner is provided explicitly; it must not be called because the
+		// infra error occurs before Unity is invoked.
+		runner: runnerFunc(func(_ context.Context, _ []string, _, _ io.Writer) (int, error) {
+			t.Error("runner must not be called when artifact dir creation fails")
+			return 0, nil
+		}),
 	}
 	code := runRun(&buf, deps)
 	if code != 1 {
