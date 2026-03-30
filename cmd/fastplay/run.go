@@ -43,11 +43,11 @@ func runRun(w io.Writer, deps runDeps) int {
 
 	cfg, err := deps.loadConfig("fastplay.json")
 	if err != nil {
-		writeJSON(w, map[string]any{"schema_version": "1", "error": err.Error(), "new_failures": nil})
+		writeJSON(w, map[string]any{"schema_version": "1", "error": err.Error()})
 		return 5
 	}
 	if err := cfg.Validate(true); err != nil {
-		writeJSON(w, map[string]any{"schema_version": "1", "error": err.Error(), "new_failures": nil})
+		writeJSON(w, map[string]any{"schema_version": "1", "error": err.Error()})
 		return 5
 	}
 
@@ -77,7 +77,7 @@ func runRun(w io.Writer, deps runDeps) int {
 		ResetShadow: deps.opts.ResetShadow,
 	})
 	if infraErr != nil {
-		writeJSON(w, map[string]any{"schema_version": "1", "error": infraErr.Error(), "new_failures": nil})
+		writeJSON(w, map[string]any{"schema_version": "1", "error": infraErr.Error()})
 		return 1
 	}
 

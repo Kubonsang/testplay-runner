@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -396,5 +397,53 @@ func TestRunCmd_WithCompareRun_PopulatesNewFailures(t *testing.T) {
 	nf := raw["new_failures"]
 	if string(nf) == "null" {
 		t.Error("new_failures should be an array when --compare-run specified")
+	}
+}
+
+func TestRunRun_ConfigError_NoNewFailuresField(t *testing.T) {
+	var buf bytes.Buffer
+	deps := runDeps{
+		loadConfig: func(string) (*config.Config, error) {
+			return nil, fmt.Errorf("config not found")
+		},
+	}
+	code := runRun(&buf, deps)
+	if code != 5 {
+		t.Fatalf("expected exit 5, got %d", code)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if _, ok := out["new_failures"]; ok {
+		t.Error("new_failures must not appear in exit 5 error response")
+	}
+}
+
+func TestRunRun_InfraError_NoNewFailuresField(t *testing.T) {
+	var buf bytes.Buffer
+	// Use a path that doesn't exist to trigger artifact creation failure
+	badPath := "/nonexistent/project/that/does/not/exist"
+	deps := runDeps{
+		loadConfig: func(string) (*config.Config, error) {
+			return &config.Config{
+				SchemaVersion: "1",
+				UnityPath:     "/fake/unity",
+				ProjectPath:   badPath,
+				ResultDir:     filepath.Join(badPath, ".fastplay", "results"),
+				Timeout:       config.Timeouts{TotalMs: 5000},
+			}, nil
+		},
+	}
+	code := runRun(&buf, deps)
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d", code)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if _, ok := out["new_failures"]; ok {
+		t.Error("new_failures must not appear in exit 1 error response")
 	}
 }

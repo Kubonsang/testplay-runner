@@ -25,3 +25,10 @@ func (f *fakeCmdRunner) Run(_ context.Context, args []string, stdout, stderr io.
 	}
 	return f.exitCode, nil
 }
+
+// runnerFunc is a functional wrapper for unity.Runner for test convenience
+type runnerFunc func(context.Context, []string, io.Writer, io.Writer) (int, error)
+
+func (rf runnerFunc) Run(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
+	return rf(ctx, args, stdout, stderr)
+}
