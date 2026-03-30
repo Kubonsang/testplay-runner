@@ -86,19 +86,44 @@ func Reset(sourcePath string) (*Workspace, error) {
 // RemapPaths replaces shadow workspace path prefixes with the original source
 // path in all AbsolutePath fields of the result. This makes the JSON output
 // transparent — consumers see source paths, not shadow paths.
+//
+// On Windows, Unity logs may use forward slashes and lowercase drive letters
+// while filepath.Abs returns backslashes with an uppercase drive letter.
+// remapAbsPath normalises both sides to forward slashes and compares
+// case-insensitively to handle all combinations.
 func (w *Workspace) RemapPaths(result *history.RunResult) {
 	for i := range result.Tests {
-		result.Tests[i].AbsolutePath = strings.ReplaceAll(
+		result.Tests[i].AbsolutePath = remapAbsPath(
 			result.Tests[i].AbsolutePath, w.ShadowPath, w.SourcePath)
 	}
 	for i := range result.Errors {
-		result.Errors[i].AbsolutePath = strings.ReplaceAll(
+		result.Errors[i].AbsolutePath = remapAbsPath(
 			result.Errors[i].AbsolutePath, w.ShadowPath, w.SourcePath)
 	}
 	for i := range result.NewFailures {
-		result.NewFailures[i].AbsolutePath = strings.ReplaceAll(
+		result.NewFailures[i].AbsolutePath = remapAbsPath(
 			result.NewFailures[i].AbsolutePath, w.ShadowPath, w.SourcePath)
 	}
+}
+
+// remapAbsPath swaps a shadowPath prefix with sourcePath in absPath.
+// Normalises all three paths to forward slashes before comparison so that
+// Windows backslash/forward-slash mixing and case differences in drive letters
+// (e.g. "C:/Proj" vs "c:/proj") do not cause silent mismatches.
+// The returned path uses forward slashes throughout.
+//
+// strings.ReplaceAll is used instead of filepath.ToSlash because ToSlash only
+// converts os.PathSeparator; on macOS/Linux it leaves '\' unchanged, so test
+// fixtures that use Windows-style paths would not be normalised correctly.
+func remapAbsPath(absPath, shadowPath, sourcePath string) string {
+	norm := strings.ReplaceAll(absPath, `\`, "/")
+	shadowSlash := strings.ReplaceAll(shadowPath, `\`, "/")
+	sourceSlash := strings.ReplaceAll(sourcePath, `\`, "/")
+
+	if strings.HasPrefix(strings.ToLower(norm), strings.ToLower(shadowSlash)) {
+		return sourceSlash + norm[len(shadowSlash):]
+	}
+	return absPath
 }
 
 // copyDir removes dst and recursively copies all files from src to dst.

@@ -162,3 +162,28 @@ func TestRemapPaths_NewFailurePaths(t *testing.T) {
 		t.Errorf("new_failures path: got %q, want %q", result.NewFailures[0].AbsolutePath, want)
 	}
 }
+
+// TestRemapPaths_ForwardSlashMixedCase simulates the Windows scenario where
+// Unity logs emit forward slashes and a lowercase drive letter while
+// Workspace.ShadowPath uses backslashes and an uppercase drive letter.
+// remapAbsPath must match case-insensitively after ToSlash normalisation.
+func TestRemapPaths_ForwardSlashMixedCase(t *testing.T) {
+	ws := &shadow.Workspace{
+		// Simulate filepath.Abs output on Windows: backslashes, uppercase drive.
+		SourcePath: `C:\MyProject`,
+		ShadowPath: `C:\MyProject\.fastplay-shadow`,
+	}
+	// Unity log path: forward slashes, lowercase drive letter.
+	unityPath := `c:/myproject/.fastplay-shadow/Assets/Tests/Foo.cs`
+	result := &history.RunResult{
+		Tests: []parser.TestCase{{AbsolutePath: unityPath}},
+	}
+	ws.RemapPaths(result)
+	got := result.Tests[0].AbsolutePath
+	// After remap the shadow prefix must be replaced with the source prefix.
+	// The result uses forward slashes (ToSlash of SourcePath).
+	want := `C:/MyProject/Assets/Tests/Foo.cs`
+	if got != want {
+		t.Errorf("RemapPaths mixed-case forward-slash: got %q, want %q", got, want)
+	}
+}
