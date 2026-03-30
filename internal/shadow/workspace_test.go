@@ -258,6 +258,24 @@ func TestRemapPaths_MessageNoShadowPath_Unchanged(t *testing.T) {
 	}
 }
 
+func TestRemapString_MixedCaseDriveLetter(t *testing.T) {
+	// Simulates Windows: Unity logs lowercase drive, filepath.Abs returns uppercase.
+	ws := &shadow.Workspace{
+		SourcePath: `C:\MyProject`,
+		ShadowPath: `C:\MyProject\.fastplay-shadow`,
+	}
+	// Message contains forward slashes and lowercase drive (as Unity emits on Windows).
+	msg := `error in file c:/myproject/.fastplay-shadow/Assets/Scripts/Foo.cs at line 5`
+	result := &history.RunResult{
+		Errors: []history.CompileError{{Message: msg}},
+	}
+	ws.RemapPaths(result)
+	want := `error in file C:/MyProject/Assets/Scripts/Foo.cs at line 5`
+	if result.Errors[0].Message != want {
+		t.Errorf("mixed-case message remap: got %q, want %q", result.Errors[0].Message, want)
+	}
+}
+
 func TestCopyDir_PreservesExecutableBit(t *testing.T) {
 	projectDir := makeProject(t)
 	// Write a file with the executable bit set.
