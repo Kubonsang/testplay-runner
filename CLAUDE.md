@@ -154,6 +154,9 @@ Run `fastplay result` to review the `run_id` list and decide the `--compare-run`
 | Timeout sub-types | `compile_ms`/`test_ms` enforced in two-phase mode; single-phase uses only `total_ms` | — resolved |
 | Config path | Always loads `fastplay.json` from cwd; no `--config` flag — agents must `cd` to project root | Low |
 | Unimplemented exit codes | Exit 6 (build failure), exit 7 (permission) are documented but never returned | Low |
+| Shadow — concurrent run safety | Two simultaneous `fastplay run` invocations against the same project share a single `.fastplay-shadow/` directory. `Prepare` re-copies `Assets/` and `ProjectSettings/` and deletes `Temp/` on every call; a second run starting while the first is executing will overwrite those directories mid-flight. Running `fastplay run` in parallel against the same project path is **not currently safe** in shadow mode. | Medium |
+| Shadow — `Packages/` not fully isolated | `Packages/` is linked (symlink on macOS/Linux, junction on Windows) rather than copied. If Unity or a package tool writes to the `Packages/` tree during batch execution (e.g. modifying `packages-lock.json` or an embedded package), those changes propagate back to the original project. This is best-effort isolation; projects using embedded or local-path packages should be aware of this constraint. | Low |
+| Shadow — editor-open detection is best-effort | Shadow mode is activated when `Temp/UnityLockfile` exists. If Unity exits uncleanly the lockfile may be left behind, causing unnecessary shadow overhead on the next run. Conversely, in rare timing windows a lockfile may not yet exist even though the editor is starting up. The lockfile check is a heuristic, not a guaranteed signal. | Low |
 
 ## P1 Requirements — PlayMode + Network Testing
 
