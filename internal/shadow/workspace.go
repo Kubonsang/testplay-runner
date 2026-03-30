@@ -95,6 +95,10 @@ func (w *Workspace) RemapPaths(result *history.RunResult) {
 		result.Errors[i].AbsolutePath = strings.ReplaceAll(
 			result.Errors[i].AbsolutePath, w.ShadowPath, w.SourcePath)
 	}
+	for i := range result.NewFailures {
+		result.NewFailures[i].AbsolutePath = strings.ReplaceAll(
+			result.NewFailures[i].AbsolutePath, w.ShadowPath, w.SourcePath)
+	}
 }
 
 // copyDir removes dst and recursively copies all files from src to dst.

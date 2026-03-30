@@ -54,11 +54,21 @@ func TestPrepare_ShadowPathUnderSource(t *testing.T) {
 
 func TestPrepare_IsIdempotent(t *testing.T) {
 	src := makeProject(t)
-	if _, err := shadow.Prepare(src); err != nil {
+	ws, err := shadow.Prepare(src)
+	if err != nil {
 		t.Fatalf("first Prepare failed: %v", err)
 	}
+	// Write a sentinel to Library/ to verify it is preserved
+	sentinel := filepath.Join(ws.ShadowPath, "Library", "sentinel.txt")
+	if err := os.WriteFile(sentinel, []byte("preserved"), 0644); err != nil {
+		t.Fatalf("could not write sentinel: %v", err)
+	}
+	// Second prepare should succeed and preserve Library/
 	if _, err := shadow.Prepare(src); err != nil {
 		t.Fatalf("second Prepare failed: %v", err)
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Error("Library/ sentinel was deleted by second Prepare — Library cache must be preserved")
 	}
 }
 
@@ -132,5 +142,23 @@ func TestRemapPaths_NoopWhenNoShadowPaths(t *testing.T) {
 	ws.RemapPaths(result)
 	if result.Tests[0].AbsolutePath != filepath.Join(src, "Assets", "Tests", "Player.cs") {
 		t.Error("path was unexpectedly modified")
+	}
+}
+
+func TestRemapPaths_NewFailurePaths(t *testing.T) {
+	src := t.TempDir()
+	ws := &shadow.Workspace{
+		SourcePath: src,
+		ShadowPath: filepath.Join(src, ".fastplay-shadow"),
+	}
+	result := &history.RunResult{
+		NewFailures: []parser.TestCase{
+			{AbsolutePath: filepath.Join(ws.ShadowPath, "Assets", "Tests", "NewTest.cs")},
+		},
+	}
+	ws.RemapPaths(result)
+	want := filepath.Join(src, "Assets", "Tests", "NewTest.cs")
+	if result.NewFailures[0].AbsolutePath != want {
+		t.Errorf("new_failures path: got %q, want %q", result.NewFailures[0].AbsolutePath, want)
 	}
 }
