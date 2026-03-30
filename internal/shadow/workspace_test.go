@@ -255,6 +255,31 @@ func TestRemapPaths_MessageNoShadowPath_Unchanged(t *testing.T) {
 	}
 }
 
+func TestCopyDir_PreservesExecutableBit(t *testing.T) {
+	projectDir := makeProject(t)
+	// Write a file with the executable bit set.
+	exePath := filepath.Join(projectDir, "Assets", "Plugins", "native.so")
+	if err := os.MkdirAll(filepath.Dir(exePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(exePath, []byte("ELF"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	w, err := shadow.Prepare(projectDir)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	info, err := os.Stat(filepath.Join(w.ShadowPath, "Assets", "Plugins", "native.so"))
+	if err != nil {
+		t.Fatalf("shadow file missing: %v", err)
+	}
+	if info.Mode()&0111 == 0 {
+		t.Errorf("executable bit lost in shadow copy: mode %v", info.Mode())
+	}
+}
+
 func TestCopyDir_CopiesFileContents(t *testing.T) {
 	// Validates that copyDir (which calls copyFile internally) produces
 	// shadow files with identical content to the source.
