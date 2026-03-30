@@ -19,7 +19,9 @@ func EnsureIgnored(projectPath, entry string) error {
 		return err
 	}
 	scanner := bufio.NewScanner(f)
+	hasContent := false
 	for scanner.Scan() {
+		hasContent = true
 		if strings.TrimSpace(scanner.Text()) == strings.TrimSpace(entry) {
 			_ = f.Close()
 			return nil
@@ -35,6 +37,10 @@ func EnsureIgnored(projectPath, entry string) error {
 		return err
 	}
 	defer out.Close()
-	_, err = fmt.Fprintf(out, "\n%s\n", strings.TrimSpace(entry))
+	if hasContent {
+		_, err = fmt.Fprintf(out, "\n%s\n", strings.TrimSpace(entry))
+	} else {
+		_, err = fmt.Fprintf(out, "%s\n", strings.TrimSpace(entry))
+	}
 	return err
 }

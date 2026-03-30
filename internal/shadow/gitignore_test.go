@@ -18,6 +18,9 @@ func TestEnsureIgnored_CreatesFileAndAppendsEntry(t *testing.T) {
 	if !strings.Contains(string(data), ".fastplay-shadow/") {
 		t.Error(".fastplay-shadow/ not found in created .gitignore")
 	}
+	if strings.HasPrefix(string(data), "\n") {
+		t.Error("file starts with unexpected blank line")
+	}
 }
 
 func TestEnsureIgnored_AppendsToExistingFile(t *testing.T) {
