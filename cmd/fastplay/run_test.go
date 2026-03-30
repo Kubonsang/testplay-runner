@@ -347,6 +347,16 @@ func TestRunCmd_SummaryJSON_WrittenToArtifactDir(t *testing.T) {
 	}
 }
 
+func TestRunCmd_ResetShadowFlagExists(t *testing.T) {
+	f := runCmd.Flags().Lookup("reset-shadow")
+	if f == nil {
+		t.Fatal("--reset-shadow flag not registered")
+	}
+	if f.DefValue != "false" {
+		t.Errorf("default should be false, got %q", f.DefValue)
+	}
+}
+
 func TestRunCmd_WithCompareRun_PopulatesNewFailures(t *testing.T) {
 	dir := t.TempDir()
 	resultsDir := filepath.Join(dir, "results")
