@@ -98,14 +98,20 @@ func (w *Workspace) RemapPaths(result *history.RunResult) {
 	for i := range result.Tests {
 		result.Tests[i].AbsolutePath = remapAbsPath(
 			result.Tests[i].AbsolutePath, w.ShadowPath, w.SourcePath)
+		result.Tests[i].Message = remapString(
+			result.Tests[i].Message, w.ShadowPath, w.SourcePath)
 	}
 	for i := range result.Errors {
 		result.Errors[i].AbsolutePath = remapAbsPath(
 			result.Errors[i].AbsolutePath, w.ShadowPath, w.SourcePath)
+		result.Errors[i].Message = remapString(
+			result.Errors[i].Message, w.ShadowPath, w.SourcePath)
 	}
 	for i := range result.NewFailures {
 		result.NewFailures[i].AbsolutePath = remapAbsPath(
 			result.NewFailures[i].AbsolutePath, w.ShadowPath, w.SourcePath)
+		result.NewFailures[i].Message = remapString(
+			result.NewFailures[i].Message, w.ShadowPath, w.SourcePath)
 	}
 }
 
@@ -134,6 +140,19 @@ func remapAbsPath(absPath, shadowPath, sourcePath string) string {
 	}
 	// Return the forward-slash normalised form for consistency even on no-match.
 	return norm
+}
+
+// remapString replaces all occurrences of shadowPath inside s with sourcePath.
+// Both paths are normalised to forward slashes before replacement so that
+// Windows backslash/forward-slash mixing is handled consistently with remapAbsPath.
+func remapString(s, shadowPath, sourcePath string) string {
+	shadowSlash := strings.TrimRight(strings.ReplaceAll(shadowPath, `\`, "/"), "/")
+	sourceSlash := strings.TrimRight(strings.ReplaceAll(sourcePath, `\`, "/"), "/")
+	if shadowSlash == "" {
+		return s
+	}
+	norm := strings.ReplaceAll(s, `\`, "/")
+	return strings.ReplaceAll(norm, shadowSlash, sourceSlash)
 }
 
 // copyDir removes dst and recursively copies all files from src to dst.

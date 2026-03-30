@@ -210,6 +210,51 @@ func TestRemapPaths_SiblingDirNotRemapped(t *testing.T) {
 	}
 }
 
+func TestRemapPaths_MessageFieldReplaced(t *testing.T) {
+	src := t.TempDir()
+	ws := &shadow.Workspace{
+		SourcePath: src,
+		ShadowPath: filepath.Join(src, ".fastplay-shadow"),
+	}
+	shadowMsg := "error in file " + filepath.Join(ws.ShadowPath, "Assets", "Scripts", "Foo.cs") + " at line 5"
+	result := &history.RunResult{
+		Tests: []parser.TestCase{
+			{
+				AbsolutePath: filepath.Join(ws.ShadowPath, "Assets", "Tests", "Bar.cs"),
+				Message:      shadowMsg,
+			},
+		},
+		Errors: []history.CompileError{
+			{
+				AbsolutePath: filepath.Join(ws.ShadowPath, "Assets", "Scripts", "Foo.cs"),
+				Message:      shadowMsg,
+			},
+		},
+	}
+	ws.RemapPaths(result)
+
+	wantMsg := "error in file " + filepath.Join(src, "Assets", "Scripts", "Foo.cs") + " at line 5"
+	if result.Tests[0].Message != wantMsg {
+		t.Errorf("test Message: got %q, want %q", result.Tests[0].Message, wantMsg)
+	}
+	if result.Errors[0].Message != wantMsg {
+		t.Errorf("error Message: got %q, want %q", result.Errors[0].Message, wantMsg)
+	}
+}
+
+func TestRemapPaths_MessageNoShadowPath_Unchanged(t *testing.T) {
+	src := t.TempDir()
+	ws := &shadow.Workspace{SourcePath: src, ShadowPath: filepath.Join(src, ".fastplay-shadow")}
+	original := "CS0246: The type or namespace name 'Foo' could not be found"
+	result := &history.RunResult{
+		Errors: []history.CompileError{{Message: original}},
+	}
+	ws.RemapPaths(result)
+	if result.Errors[0].Message != original {
+		t.Errorf("message unexpectedly modified: got %q", result.Errors[0].Message)
+	}
+}
+
 func TestCopyDir_CopiesFileContents(t *testing.T) {
 	// Validates that copyDir (which calls copyFile internally) produces
 	// shadow files with identical content to the source.
