@@ -1,7 +1,6 @@
 package shadow
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,34 +12,30 @@ import (
 // caller — the shadow workspace will still function without .gitignore coverage.
 func EnsureIgnored(projectPath, entry string) error {
 	path := filepath.Join(projectPath, ".gitignore")
+	trimmed := strings.TrimSpace(entry)
 
-	f, err := os.OpenFile(path, os.O_RDONLY|os.O_CREATE, 0644)
-	if err != nil {
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	scanner := bufio.NewScanner(f)
-	hasContent := false
-	for scanner.Scan() {
-		hasContent = true
-		if strings.TrimSpace(scanner.Text()) == strings.TrimSpace(entry) {
-			_ = f.Close()
+
+	// Check if entry already present.
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == trimmed {
 			return nil
 		}
 	}
-	_ = f.Close()
-	if err := scanner.Err(); err != nil {
-		return err
-	}
 
+	// Append entry.
 	out, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
-	if hasContent {
-		_, err = fmt.Fprintf(out, "\n%s\n", strings.TrimSpace(entry))
+	if len(data) > 0 {
+		_, err = fmt.Fprintf(out, "\n%s\n", trimmed)
 	} else {
-		_, err = fmt.Fprintf(out, "%s\n", strings.TrimSpace(entry))
+		_, err = fmt.Fprintf(out, "%s\n", trimmed)
 	}
 	return err
 }

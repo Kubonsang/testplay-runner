@@ -403,6 +403,38 @@ func TestService_CompareRun_PopulatesNewFailures(t *testing.T) {
 	}
 }
 
+func TestService_CompareRun_NewFailuresHaveRelativePath(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	store := history.NewStore(cfg.ResultDir)
+
+	// Seed a prev run where TestSub passed.
+	prevID := "20250301-090000"
+	_ = store.Save(prevID, &history.RunResult{
+		RunID: prevID, SchemaVersion: "1",
+		Tests: []parser.TestCase{{Name: "MyTests.TestSub", Result: "Passed"}},
+	})
+
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/one_failure.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+
+	svc := &runsvc.Service{
+		Runner:    fake,
+		Store:     store,
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Clock:     func() time.Time { return time.Now() },
+	}
+
+	resp, _ := svc.Run(context.Background(), runsvc.Request{Config: cfg, CompareRun: prevID})
+	if resp.Result.NewFailures == nil {
+		t.Fatal("expected NewFailures to be populated")
+	}
+	for _, nf := range resp.Result.NewFailures {
+		if nf.AbsolutePath != "" && nf.File == "" {
+			t.Errorf("NewFailures[%s]: AbsolutePath=%q but File is empty — relative path normalisation missing", nf.Name, nf.AbsolutePath)
+		}
+	}
+}
+
 func TestService_NoCompareRun_NewFailuresIsNil(t *testing.T) {
 	cfg, dir := baseConfig(t)
 	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
@@ -428,12 +460,6 @@ func (f runnerFunc) Run(ctx context.Context, args []string, stdout, stderr io.Wr
 	return f(ctx, args, stdout, stderr)
 }
 
-// fakeStore is a no-op ResultStore for tests that don't need history persistence.
-type fakeStore struct{}
-
-func (f *fakeStore) Save(_ string, _ *history.RunResult) error       { return nil }
-func (f *fakeStore) Load(_ string) (*history.RunResult, error)        { return nil, nil }
-
 func TestService_UsesShadowProjectPath_WhenLocked(t *testing.T) {
 	// Build a minimal project directory with the lockfile present.
 	projectDir := t.TempDir()
@@ -449,14 +475,13 @@ func TestService_UsesShadowProjectPath_WhenLocked(t *testing.T) {
 				usedProjectPath = args[i+1]
 			}
 		}
-		// Return 0; no results XML will be found, but we only care about the path arg.
 		return 0, nil
 	})
 
-	store := &fakeStore{}
+	resultDir := filepath.Join(projectDir, ".fastplay", "results")
 	svc := &runsvc.Service{
 		Runner:    runner,
-		Store:     store,
+		Store:     history.NewStore(resultDir),
 		Artifacts: artifacts.NewStore(filepath.Join(projectDir, ".fastplay", "runs")),
 	}
 
@@ -490,10 +515,10 @@ func TestService_ResetShadow_RebuildsShadow(t *testing.T) {
 		return 0, nil
 	})
 
-	store := &fakeStore{}
+	resultDir := filepath.Join(projectDir, ".fastplay", "results")
 	svc := &runsvc.Service{
 		Runner:    runner,
-		Store:     store,
+		Store:     history.NewStore(resultDir),
 		Artifacts: artifacts.NewStore(filepath.Join(projectDir, ".fastplay", "runs")),
 	}
 
@@ -504,7 +529,6 @@ func TestService_ResetShadow_RebuildsShadow(t *testing.T) {
 		Timeout:      config.Timeouts{TotalMs: 5000},
 	}
 
-	// First: create a shadow by running normally (no lock needed — ResetShadow forces shadow mode)
 	_, _ = svc.Run(context.Background(), runsvc.Request{Config: cfg, ResetShadow: true})
 
 	shadowPath := filepath.Join(projectDir, ".fastplay-shadow")
@@ -515,7 +539,6 @@ func TestService_ResetShadow_RebuildsShadow(t *testing.T) {
 
 func TestService_UsesSourceProjectPath_WhenNotLocked(t *testing.T) {
 	projectDir := t.TempDir()
-	// No lockfile — direct mode
 
 	var usedProjectPath string
 	runner := runnerFunc(func(_ context.Context, args []string, _, _ io.Writer) (int, error) {
@@ -527,10 +550,10 @@ func TestService_UsesSourceProjectPath_WhenNotLocked(t *testing.T) {
 		return 0, nil
 	})
 
-	store := &fakeStore{}
+	resultDir := filepath.Join(projectDir, ".fastplay", "results")
 	svc := &runsvc.Service{
 		Runner:    runner,
-		Store:     store,
+		Store:     history.NewStore(resultDir),
 		Artifacts: artifacts.NewStore(filepath.Join(projectDir, ".fastplay", "runs")),
 	}
 

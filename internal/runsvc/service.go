@@ -203,6 +203,11 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 			result.Errors[i].File = parser.MakeRelative(req.Config.ProjectPath, result.Errors[i].AbsolutePath)
 		}
 	}
+	for i := range result.NewFailures {
+		if result.NewFailures[i].AbsolutePath != "" {
+			result.NewFailures[i].File = parser.MakeRelative(req.Config.ProjectPath, result.NewFailures[i].AbsolutePath)
+		}
+	}
 
 	// Persist to history store.
 	if err := s.Store.Save(runID, result); err != nil {
