@@ -115,15 +115,22 @@ func (w *Workspace) RemapPaths(result *history.RunResult) {
 // strings.ReplaceAll is used instead of filepath.ToSlash because ToSlash only
 // converts os.PathSeparator; on macOS/Linux it leaves '\' unchanged, so test
 // fixtures that use Windows-style paths would not be normalised correctly.
+//
+// shadowPath is anchored with a trailing "/" before comparison to prevent
+// accidental prefix matches against sibling directories whose names start with
+// ".fastplay-shadow" (e.g. ".fastplay-shadowX").
 func remapAbsPath(absPath, shadowPath, sourcePath string) string {
 	norm := strings.ReplaceAll(absPath, `\`, "/")
-	shadowSlash := strings.ReplaceAll(shadowPath, `\`, "/")
-	sourceSlash := strings.ReplaceAll(sourcePath, `\`, "/")
+	// Anchor with trailing "/" so prefix matching is directory-exact.
+	shadowSlash := strings.TrimRight(strings.ReplaceAll(shadowPath, `\`, "/"), "/") + "/"
+	sourceSlash := strings.TrimRight(strings.ReplaceAll(sourcePath, `\`, "/"), "/")
 
 	if strings.HasPrefix(strings.ToLower(norm), strings.ToLower(shadowSlash)) {
-		return sourceSlash + norm[len(shadowSlash):]
+		// norm[len(shadowSlash):] starts after the trailing "/", so join with "/".
+		return sourceSlash + "/" + norm[len(shadowSlash):]
 	}
-	return absPath
+	// Return the forward-slash normalised form for consistency even on no-match.
+	return norm
 }
 
 // copyDir removes dst and recursively copies all files from src to dst.
