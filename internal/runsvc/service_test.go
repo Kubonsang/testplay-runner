@@ -570,6 +570,37 @@ func TestService_UsesSourceProjectPath_WhenNotLocked(t *testing.T) {
 	}
 }
 
+func TestService_ShadowPrepareFailure_ReturnsError(t *testing.T) {
+	// Trigger shadow mode via UnityLockfile, then poison the shadow path by
+	// placing a regular file where .fastplay-shadow/ would be created.
+	// shadow.Prepare calls os.MkdirAll on that path, which fails when a
+	// non-directory already exists there.
+	projectDir := t.TempDir()
+	for _, d := range []string{"Assets", "ProjectSettings", "Packages", "Temp"} {
+		_ = os.MkdirAll(filepath.Join(projectDir, d), 0755)
+	}
+	_ = os.WriteFile(filepath.Join(projectDir, "Temp", "UnityLockfile"), []byte{}, 0644)
+	// Block shadow creation: put a regular file where the shadow dir would go.
+	_ = os.WriteFile(filepath.Join(projectDir, ".fastplay-shadow"), []byte("poison"), 0644)
+
+	svc := &runsvc.Service{
+		Runner:    runnerFunc(func(_ context.Context, _ []string, _, _ io.Writer) (int, error) { return 0, nil }),
+		Store:     history.NewStore(filepath.Join(projectDir, ".fastplay", "results")),
+		Artifacts: artifacts.NewStore(filepath.Join(projectDir, ".fastplay", "runs")),
+	}
+
+	cfg := &config.Config{
+		UnityPath:    "/fake/unity",
+		ProjectPath:  projectDir,
+		TestPlatform: "edit_mode",
+		Timeout:      config.Timeouts{TotalMs: 5000},
+	}
+	_, err := svc.Run(context.Background(), runsvc.Request{Config: cfg})
+	if err == nil {
+		t.Error("expected infrastructure error when shadow workspace cannot be created")
+	}
+}
+
 func TestService_SaveFailure_ReturnsWarning(t *testing.T) {
 	cfg, dir := baseConfig(t)
 	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")

@@ -90,6 +90,8 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	if err != nil {
 		return Response{}, fmt.Errorf("runsvc: open run logs: %w", err)
 	}
+	defer stdoutLog.Close()
+	defer stderrLog.Close()
 
 	startedAt := clock()
 
@@ -160,9 +162,6 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		ExtraArgs:    extraArgs,
 	}
 	result, exitCode := unity.Execute(ctx, s.Runner, execOpts)
-
-	_ = stdoutLog.Close()
-	_ = stderrLog.Close()
 
 	finishedAt := clock()
 
