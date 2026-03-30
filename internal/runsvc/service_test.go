@@ -474,6 +474,45 @@ func TestService_UsesShadowProjectPath_WhenLocked(t *testing.T) {
 	}
 }
 
+func TestService_ResetShadow_RebuildsShadow(t *testing.T) {
+	projectDir := t.TempDir()
+	for _, d := range []string{"Assets", "ProjectSettings", "Packages"} {
+		_ = os.MkdirAll(filepath.Join(projectDir, d), 0755)
+	}
+
+	var usedProjectPath string
+	runner := runnerFunc(func(_ context.Context, args []string, _, _ io.Writer) (int, error) {
+		for i, a := range args {
+			if a == "-projectPath" && i+1 < len(args) {
+				usedProjectPath = args[i+1]
+			}
+		}
+		return 0, nil
+	})
+
+	store := &fakeStore{}
+	svc := &runsvc.Service{
+		Runner:    runner,
+		Store:     store,
+		Artifacts: artifacts.NewStore(filepath.Join(projectDir, ".fastplay", "runs")),
+	}
+
+	cfg := &config.Config{
+		UnityPath:    "/fake/unity",
+		ProjectPath:  projectDir,
+		TestPlatform: "edit_mode",
+		Timeout:      config.Timeouts{TotalMs: 5000},
+	}
+
+	// First: create a shadow by running normally (no lock needed — ResetShadow forces shadow mode)
+	_, _ = svc.Run(context.Background(), runsvc.Request{Config: cfg, ResetShadow: true})
+
+	shadowPath := filepath.Join(projectDir, ".fastplay-shadow")
+	if usedProjectPath != shadowPath {
+		t.Errorf("expected shadow projectPath %q, got %q", shadowPath, usedProjectPath)
+	}
+}
+
 func TestService_UsesSourceProjectPath_WhenNotLocked(t *testing.T) {
 	projectDir := t.TempDir()
 	// No lockfile — direct mode

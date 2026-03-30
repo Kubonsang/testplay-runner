@@ -170,23 +170,6 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	result.SchemaVersion = "1"
 	result.ExitCode = exitCode
 
-	// Remap shadow workspace paths to source project paths.
-	if ws != nil {
-		ws.RemapPaths(result)
-	}
-
-	// Normalise paths: make file fields relative to project.
-	for i := range result.Tests {
-		if result.Tests[i].AbsolutePath != "" {
-			result.Tests[i].File = parser.MakeRelative(req.Config.ProjectPath, result.Tests[i].AbsolutePath)
-		}
-	}
-	for i := range result.Errors {
-		if result.Errors[i].AbsolutePath != "" {
-			result.Errors[i].File = parser.MakeRelative(req.Config.ProjectPath, result.Errors[i].AbsolutePath)
-		}
-	}
-
 	var warnings []string
 
 	// Regression comparison.
@@ -200,6 +183,24 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		} else {
 			result.NewFailures = make([]parser.TestCase, 0)
 			warnings = append(warnings, fmt.Sprintf("compare-run %q not found: %v", req.CompareRun, loadErr))
+		}
+	}
+
+	// Remap shadow workspace paths to source project paths.
+	// Must run after NewFailures is populated so shadow paths in NewFailures are also remapped.
+	if ws != nil {
+		ws.RemapPaths(result)
+	}
+
+	// Normalise paths: make file fields relative to project.
+	for i := range result.Tests {
+		if result.Tests[i].AbsolutePath != "" {
+			result.Tests[i].File = parser.MakeRelative(req.Config.ProjectPath, result.Tests[i].AbsolutePath)
+		}
+	}
+	for i := range result.Errors {
+		if result.Errors[i].AbsolutePath != "" {
+			result.Errors[i].File = parser.MakeRelative(req.Config.ProjectPath, result.Errors[i].AbsolutePath)
 		}
 	}
 
