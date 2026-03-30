@@ -162,3 +162,50 @@ func TestRemapPaths_NewFailurePaths(t *testing.T) {
 		t.Errorf("new_failures path: got %q, want %q", result.NewFailures[0].AbsolutePath, want)
 	}
 }
+
+// TestRemapPaths_ForwardSlashMixedCase simulates the Windows scenario where
+// Unity logs emit forward slashes and a lowercase drive letter while
+// Workspace.ShadowPath uses backslashes and an uppercase drive letter.
+// remapAbsPath must match case-insensitively after slash normalisation.
+func TestRemapPaths_ForwardSlashMixedCase(t *testing.T) {
+	ws := &shadow.Workspace{
+		// Simulate filepath.Abs output on Windows: backslashes, uppercase drive.
+		SourcePath: `C:\MyProject`,
+		ShadowPath: `C:\MyProject\.fastplay-shadow`,
+	}
+	// Unity log path: forward slashes, lowercase drive letter.
+	unityPath := `c:/myproject/.fastplay-shadow/Assets/Tests/Foo.cs`
+	result := &history.RunResult{
+		Tests: []parser.TestCase{{AbsolutePath: unityPath}},
+	}
+	ws.RemapPaths(result)
+	got := result.Tests[0].AbsolutePath
+	// After remap the shadow prefix must be replaced with the source prefix.
+	// The result uses forward slashes.
+	want := `C:/MyProject/Assets/Tests/Foo.cs`
+	if got != want {
+		t.Errorf("RemapPaths mixed-case forward-slash: got %q, want %q", got, want)
+	}
+}
+
+// TestRemapPaths_SiblingDirNotRemapped verifies that a path whose directory
+// name merely starts with ".fastplay-shadow" (e.g. ".fastplay-shadowX") is not
+// incorrectly treated as a shadow path due to a loose prefix match.
+func TestRemapPaths_SiblingDirNotRemapped(t *testing.T) {
+	ws := &shadow.Workspace{
+		SourcePath: `C:\MyProject`,
+		ShadowPath: `C:\MyProject\.fastplay-shadow`,
+	}
+	// Path under a sibling directory ".fastplay-shadowX" — must not be remapped.
+	siblingPath := `C:/MyProject/.fastplay-shadowX/Assets/Tests/Foo.cs`
+	result := &history.RunResult{
+		Tests: []parser.TestCase{{AbsolutePath: siblingPath}},
+	}
+	ws.RemapPaths(result)
+	got := result.Tests[0].AbsolutePath
+	// Normalised to forward slashes but prefix must not be swapped.
+	want := `C:/MyProject/.fastplay-shadowX/Assets/Tests/Foo.cs`
+	if got != want {
+		t.Errorf("RemapPaths sibling dir: got %q, want %q", got, want)
+	}
+}
