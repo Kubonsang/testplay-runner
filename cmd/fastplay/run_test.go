@@ -420,6 +420,54 @@ func TestRunRun_ConfigError_NoNewFailuresField(t *testing.T) {
 	}
 }
 
+func TestRunRun_ForceShadowActivatesShadow(t *testing.T) {
+	// Build a minimal project directory (no Temp/UnityLockfile).
+	projectDir := t.TempDir()
+	for _, d := range []string{"Assets/Scripts", "ProjectSettings", "Packages"} {
+		_ = os.MkdirAll(filepath.Join(projectDir, d), 0755)
+	}
+	_ = os.WriteFile(
+		filepath.Join(projectDir, "ProjectSettings", "ProjectVersion.txt"),
+		[]byte("m_EditorVersion: 6000.3.8f1"), 0644)
+	_ = os.WriteFile(
+		filepath.Join(projectDir, "Assets", "Scripts", "Player.cs"),
+		[]byte("// test"), 0644)
+
+	var capturedArgs []string
+	runner := runnerFunc(func(_ context.Context, args []string, _, _ io.Writer) (int, error) {
+		capturedArgs = args
+		return 0, nil
+	})
+
+	cfg := &config.Config{
+		UnityPath:   "/fake/Unity",
+		ProjectPath: projectDir,
+		ResultDir:   t.TempDir(),
+		Timeout:     config.Timeouts{TotalMs: 30000},
+	}
+
+	deps := runDeps{
+		ctx:         context.Background(),
+		loadConfig:  func(string) (*config.Config, error) { return cfg, nil },
+		runner:      runner,
+		resultStore: history.NewStore(t.TempDir()),
+		opts: RunCmdOptions{
+			ForceShadow: true,
+		},
+	}
+
+	var buf bytes.Buffer
+	runRun(&buf, deps)
+
+	shadowPath := filepath.Join(projectDir, ".fastplay-shadow")
+	for _, a := range capturedArgs {
+		if a == shadowPath {
+			return // shadow path was passed to Unity — test passes
+		}
+	}
+	t.Errorf("shadow path %q not found in Unity args %v", shadowPath, capturedArgs)
+}
+
 func TestRunRun_InfraError_NoNewFailuresField(t *testing.T) {
 	var buf bytes.Buffer
 	projectDir := t.TempDir()
