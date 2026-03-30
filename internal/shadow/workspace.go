@@ -17,6 +17,9 @@ type Workspace struct {
 }
 
 // ShadowDir returns the canonical shadow workspace path for a project.
+// sourcePath must be an absolute path; callers should use filepath.Abs
+// before calling this function. Prepare and Reset both enforce this
+// internally; external callers are responsible for their own resolution.
 func ShadowDir(sourcePath string) string {
 	return filepath.Join(sourcePath, ".fastplay-shadow")
 }
@@ -164,7 +167,9 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
+	if _, err = io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }

@@ -468,6 +468,10 @@ func TestService_UsesShadowProjectPath_WhenLocked(t *testing.T) {
 	}
 	_ = os.WriteFile(filepath.Join(projectDir, "Temp", "UnityLockfile"), []byte{}, 0644)
 
+	// Add actual source files so copyDir has something to copy.
+	_ = os.WriteFile(filepath.Join(projectDir, "Assets", "Player.cs"), []byte("// Player"), 0644)
+	_ = os.WriteFile(filepath.Join(projectDir, "ProjectSettings", "ProjectVersion.txt"), []byte("m_EditorVersion: 6000.3.8f1"), 0644)
+
 	var usedProjectPath string
 	runner := runnerFunc(func(_ context.Context, args []string, _, _ io.Writer) (int, error) {
 		for i, a := range args {
@@ -496,6 +500,17 @@ func TestService_UsesShadowProjectPath_WhenLocked(t *testing.T) {
 	shadowPath := filepath.Join(projectDir, ".fastplay-shadow")
 	if usedProjectPath != shadowPath {
 		t.Errorf("expected shadow projectPath %q, got %q", shadowPath, usedProjectPath)
+	}
+
+	// Verify that copyDir actually copied the source files into the shadow.
+	for _, rel := range []string{
+		filepath.Join("Assets", "Player.cs"),
+		filepath.Join("ProjectSettings", "ProjectVersion.txt"),
+	} {
+		shadowFile := filepath.Join(shadowPath, rel)
+		if _, err := os.Stat(shadowFile); err != nil {
+			t.Errorf("expected shadow copy of %q to exist: %v", rel, err)
+		}
 	}
 }
 

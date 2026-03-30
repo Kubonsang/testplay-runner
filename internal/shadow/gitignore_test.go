@@ -45,3 +45,25 @@ func TestEnsureIgnored_NoopWhenAlreadyPresent(t *testing.T) {
 		t.Error("entry was duplicated")
 	}
 }
+
+func TestEnsureIgnored_NoDoubleBlankLineWhenFileEndsWithNewline(t *testing.T) {
+	dir := t.TempDir()
+	// File already ends with \n — the appended entry must not be preceded by a blank line.
+	_ = os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("*.log\n"), 0644)
+	_ = shadow.EnsureIgnored(dir, ".fastplay-shadow/")
+	data, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if strings.Contains(string(data), "\n\n") {
+		t.Errorf("double blank line found in .gitignore: %q", string(data))
+	}
+}
+
+func TestEnsureIgnored_AddsNewlineWhenFileHasNoTrailingNewline(t *testing.T) {
+	dir := t.TempDir()
+	// File has no trailing \n — must separate existing content from new entry.
+	_ = os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("*.log"), 0644)
+	_ = shadow.EnsureIgnored(dir, ".fastplay-shadow/")
+	data, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if !strings.Contains(string(data), "*.log\n.fastplay-shadow/\n") {
+		t.Errorf("expected separator newline, got: %q", string(data))
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -396,5 +397,64 @@ func TestRunCmd_WithCompareRun_PopulatesNewFailures(t *testing.T) {
 	nf := raw["new_failures"]
 	if string(nf) == "null" {
 		t.Error("new_failures should be an array when --compare-run specified")
+	}
+}
+
+func TestRunRun_ConfigError_NoNewFailuresField(t *testing.T) {
+	var buf bytes.Buffer
+	deps := runDeps{
+		loadConfig: func(string) (*config.Config, error) {
+			return nil, fmt.Errorf("config not found")
+		},
+	}
+	code := runRun(&buf, deps)
+	if code != 5 {
+		t.Fatalf("expected exit 5, got %d", code)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if _, ok := out["new_failures"]; ok {
+		t.Error("new_failures must not appear in exit 5 error response")
+	}
+}
+
+func TestRunRun_InfraError_NoNewFailuresField(t *testing.T) {
+	var buf bytes.Buffer
+	projectDir := t.TempDir()
+
+	// Block artifact directory creation by placing a regular file where
+	// the artifact root directory would be. os.MkdirAll will fail with
+	// ENOTDIR, causing Service.Run to return an infra error → exit 1.
+	artifactRoot := filepath.Join(projectDir, ".fastplay", "runs")
+	_ = os.MkdirAll(filepath.Dir(artifactRoot), 0755)
+	_ = os.WriteFile(artifactRoot, []byte("poison"), 0644)
+
+	deps := runDeps{
+		loadConfig: func(string) (*config.Config, error) {
+			return &config.Config{
+				UnityPath:   "/fake/unity",
+				ProjectPath: projectDir,
+				Timeout:     config.Timeouts{TotalMs: 5000},
+			}, nil
+		},
+		// Runner is provided explicitly; it must not be called because the
+		// infra error occurs before Unity is invoked.
+		runner: runnerFunc(func(_ context.Context, _ []string, _, _ io.Writer) (int, error) {
+			t.Error("runner must not be called when artifact dir creation fails")
+			return 0, nil
+		}),
+	}
+	code := runRun(&buf, deps)
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d", code)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if _, ok := out["new_failures"]; ok {
+		t.Error("new_failures must not appear in exit 1 error response")
 	}
 }

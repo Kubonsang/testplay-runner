@@ -209,3 +209,24 @@ func TestRemapPaths_SiblingDirNotRemapped(t *testing.T) {
 		t.Errorf("RemapPaths sibling dir: got %q, want %q", got, want)
 	}
 }
+
+func TestCopyDir_CopiesFileContents(t *testing.T) {
+	// Validates that copyDir (which calls copyFile internally) produces
+	// shadow files with identical content to the source.
+	projectDir := makeProject(t)
+	content := []byte("// source content")
+	_ = os.WriteFile(filepath.Join(projectDir, "Assets", "Script.cs"), content, 0644)
+
+	w, err := shadow.Prepare(projectDir)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(w.ShadowPath, "Assets", "Script.cs"))
+	if err != nil {
+		t.Fatalf("shadow file missing: %v", err)
+	}
+	if string(got) != string(content) {
+		t.Errorf("content mismatch: got %q, want %q", got, content)
+	}
+}

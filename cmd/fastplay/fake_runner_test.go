@@ -25,3 +25,12 @@ func (f *fakeCmdRunner) Run(_ context.Context, args []string, stdout, stderr io.
 	}
 	return f.exitCode, nil
 }
+
+// runnerFunc adapts a plain function to the unity.Runner interface.
+// Use when a test needs custom argument inspection or must assert the runner
+// is (or is not) called — cases where fakeCmdRunner's struct fields are not needed.
+type runnerFunc func(context.Context, []string, io.Writer, io.Writer) (int, error)
+
+func (rf runnerFunc) Run(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
+	return rf(ctx, args, stdout, stderr)
+}
