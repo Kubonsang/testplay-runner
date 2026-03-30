@@ -45,6 +45,7 @@ type Request struct {
 	Category    string
 	CompareRun  string
 	ResetShadow bool // when true, delete and rebuild .fastplay-shadow/ before running
+	ForceShadow bool // activate shadow workspace without resetting Library cache
 }
 
 // Response carries all outputs of a single fastplay run.
@@ -127,12 +128,12 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 
 	// Determine execution backend: shadow if editor has the project open.
 	var ws *shadow.Workspace
-	if req.ResetShadow || shadow.IsLocked(req.Config.ProjectPath) {
+	if req.ForceShadow || req.ResetShadow || shadow.IsLocked(req.Config.ProjectPath) {
 		var wsErr error
 		if req.ResetShadow {
-			ws, wsErr = shadow.Reset(req.Config.ProjectPath)
+			ws, wsErr = shadow.Reset(ctx, req.Config.ProjectPath)
 		} else {
-			ws, wsErr = shadow.Prepare(req.Config.ProjectPath)
+			ws, wsErr = shadow.Prepare(ctx, req.Config.ProjectPath)
 		}
 		if wsErr != nil {
 			return Response{}, fmt.Errorf("runsvc: prepare shadow workspace: %w", wsErr)

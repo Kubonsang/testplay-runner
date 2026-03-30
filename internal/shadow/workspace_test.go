@@ -1,6 +1,8 @@
 package shadow_test
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -23,7 +25,7 @@ func makeProject(t *testing.T) string {
 
 func TestPrepare_CreatesShadowStructure(t *testing.T) {
 	src := makeProject(t)
-	ws, err := shadow.Prepare(src)
+	ws, err := shadow.Prepare(context.Background(), src)
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
@@ -42,7 +44,7 @@ func TestPrepare_CreatesShadowStructure(t *testing.T) {
 
 func TestPrepare_ShadowPathUnderSource(t *testing.T) {
 	src := makeProject(t)
-	ws, err := shadow.Prepare(src)
+	ws, err := shadow.Prepare(context.Background(), src)
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
@@ -54,7 +56,7 @@ func TestPrepare_ShadowPathUnderSource(t *testing.T) {
 
 func TestPrepare_IsIdempotent(t *testing.T) {
 	src := makeProject(t)
-	ws, err := shadow.Prepare(src)
+	ws, err := shadow.Prepare(context.Background(), src)
 	if err != nil {
 		t.Fatalf("first Prepare failed: %v", err)
 	}
@@ -64,7 +66,7 @@ func TestPrepare_IsIdempotent(t *testing.T) {
 		t.Fatalf("could not write sentinel: %v", err)
 	}
 	// Second prepare should succeed and preserve Library/
-	if _, err := shadow.Prepare(src); err != nil {
+	if _, err := shadow.Prepare(context.Background(), src); err != nil {
 		t.Fatalf("second Prepare failed: %v", err)
 	}
 	if _, err := os.Stat(sentinel); err != nil {
@@ -74,11 +76,11 @@ func TestPrepare_IsIdempotent(t *testing.T) {
 
 func TestPrepare_ReflectsChangedSources(t *testing.T) {
 	src := makeProject(t)
-	if _, err := shadow.Prepare(src); err != nil {
+	if _, err := shadow.Prepare(context.Background(), src); err != nil {
 		t.Fatalf("first Prepare failed: %v", err)
 	}
 	_ = os.WriteFile(filepath.Join(src, "Assets", "Scripts", "Player.cs"), []byte("// updated"), 0644)
-	ws, err := shadow.Prepare(src)
+	ws, err := shadow.Prepare(context.Background(), src)
 	if err != nil {
 		t.Fatalf("second Prepare failed: %v", err)
 	}
@@ -90,14 +92,14 @@ func TestPrepare_ReflectsChangedSources(t *testing.T) {
 
 func TestReset_DeletesLibraryCache(t *testing.T) {
 	src := makeProject(t)
-	ws, err := shadow.Prepare(src)
+	ws, err := shadow.Prepare(context.Background(), src)
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
 	libFile := filepath.Join(ws.ShadowPath, "Library", "cached.data")
 	_ = os.WriteFile(libFile, []byte("stale"), 0644)
 
-	if _, err := shadow.Reset(src); err != nil {
+	if _, err := shadow.Reset(context.Background(), src); err != nil {
 		t.Fatalf("Reset failed: %v", err)
 	}
 	if _, err := os.Stat(libFile); err == nil {
@@ -210,6 +212,94 @@ func TestRemapPaths_SiblingDirNotRemapped(t *testing.T) {
 	}
 }
 
+func TestRemapPaths_MessageFieldReplaced(t *testing.T) {
+	src := t.TempDir()
+	ws := &shadow.Workspace{
+		SourcePath: src,
+		ShadowPath: filepath.Join(src, ".fastplay-shadow"),
+	}
+	shadowMsg := "error in file " + filepath.Join(ws.ShadowPath, "Assets", "Scripts", "Foo.cs") + " at line 5"
+	result := &history.RunResult{
+		Tests: []parser.TestCase{
+			{
+				AbsolutePath: filepath.Join(ws.ShadowPath, "Assets", "Tests", "Bar.cs"),
+				Message:      shadowMsg,
+			},
+		},
+		Errors: []history.CompileError{
+			{
+				AbsolutePath: filepath.Join(ws.ShadowPath, "Assets", "Scripts", "Foo.cs"),
+				Message:      shadowMsg,
+			},
+		},
+	}
+	ws.RemapPaths(result)
+
+	wantMsg := "error in file " + filepath.Join(src, "Assets", "Scripts", "Foo.cs") + " at line 5"
+	if result.Tests[0].Message != wantMsg {
+		t.Errorf("test Message: got %q, want %q", result.Tests[0].Message, wantMsg)
+	}
+	if result.Errors[0].Message != wantMsg {
+		t.Errorf("error Message: got %q, want %q", result.Errors[0].Message, wantMsg)
+	}
+}
+
+func TestRemapPaths_MessageNoShadowPath_Unchanged(t *testing.T) {
+	src := t.TempDir()
+	ws := &shadow.Workspace{SourcePath: src, ShadowPath: filepath.Join(src, ".fastplay-shadow")}
+	original := "CS0246: The type or namespace name 'Foo' could not be found"
+	result := &history.RunResult{
+		Errors: []history.CompileError{{Message: original}},
+	}
+	ws.RemapPaths(result)
+	if result.Errors[0].Message != original {
+		t.Errorf("message unexpectedly modified: got %q", result.Errors[0].Message)
+	}
+}
+
+func TestRemapString_MixedCaseDriveLetter(t *testing.T) {
+	// Simulates Windows: Unity logs lowercase drive, filepath.Abs returns uppercase.
+	ws := &shadow.Workspace{
+		SourcePath: `C:\MyProject`,
+		ShadowPath: `C:\MyProject\.fastplay-shadow`,
+	}
+	// Message contains forward slashes and lowercase drive (as Unity emits on Windows).
+	msg := `error in file c:/myproject/.fastplay-shadow/Assets/Scripts/Foo.cs at line 5`
+	result := &history.RunResult{
+		Errors: []history.CompileError{{Message: msg}},
+	}
+	ws.RemapPaths(result)
+	want := `error in file C:/MyProject/Assets/Scripts/Foo.cs at line 5`
+	if result.Errors[0].Message != want {
+		t.Errorf("mixed-case message remap: got %q, want %q", result.Errors[0].Message, want)
+	}
+}
+
+func TestCopyDir_PreservesExecutableBit(t *testing.T) {
+	projectDir := makeProject(t)
+	// Write a file with the executable bit set.
+	exePath := filepath.Join(projectDir, "Assets", "Plugins", "native.so")
+	if err := os.MkdirAll(filepath.Dir(exePath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(exePath, []byte("ELF"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	w, err := shadow.Prepare(context.Background(), projectDir)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	info, err := os.Stat(filepath.Join(w.ShadowPath, "Assets", "Plugins", "native.so"))
+	if err != nil {
+		t.Fatalf("shadow file missing: %v", err)
+	}
+	if info.Mode()&0111 == 0 {
+		t.Errorf("executable bit lost in shadow copy: mode %v", info.Mode())
+	}
+}
+
 func TestCopyDir_CopiesFileContents(t *testing.T) {
 	// Validates that copyDir (which calls copyFile internally) produces
 	// shadow files with identical content to the source.
@@ -217,7 +307,7 @@ func TestCopyDir_CopiesFileContents(t *testing.T) {
 	content := []byte("// source content")
 	_ = os.WriteFile(filepath.Join(projectDir, "Assets", "Script.cs"), content, 0644)
 
-	w, err := shadow.Prepare(projectDir)
+	w, err := shadow.Prepare(context.Background(), projectDir)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
@@ -228,5 +318,22 @@ func TestCopyDir_CopiesFileContents(t *testing.T) {
 	}
 	if string(got) != string(content) {
 		t.Errorf("content mismatch: got %q, want %q", got, content)
+	}
+}
+
+func TestPrepare_RespectsContextCancellation(t *testing.T) {
+	src := makeProject(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled before Prepare is called
+
+	// copyDir checks ctx.Err() on every WalkDir entry, including the root
+	// directory itself, so an already-cancelled context is detected on the
+	// very first iteration regardless of how many files are present.
+	_, err := shadow.Prepare(ctx, src)
+	if err == nil {
+		t.Fatal("expected error from cancelled context, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got: %v", err)
 	}
 }

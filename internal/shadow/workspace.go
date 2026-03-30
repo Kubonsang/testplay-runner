@@ -1,6 +1,7 @@
 package shadow
 
 import (
+	"context"
 	"io"
 	"io/fs"
 	"os"
@@ -30,7 +31,7 @@ func ShadowDir(sourcePath string) string {
 //   - Library/ is created empty on first call; preserved on subsequent calls so Unity reuses its import cache.
 //   - Temp/ is deleted before each run and recreated empty by Unity.
 //   - .gitignore is patched to exclude .fastplay-shadow/ (non-fatal on failure).
-func Prepare(sourcePath string) (*Workspace, error) {
+func Prepare(ctx context.Context, sourcePath string) (*Workspace, error) {
 	abs, err := filepath.Abs(sourcePath)
 	if err != nil {
 		return nil, err
@@ -46,7 +47,7 @@ func Prepare(sourcePath string) (*Workspace, error) {
 	for _, dir := range []string{"Assets", "ProjectSettings"} {
 		src := filepath.Join(abs, dir)
 		dst := filepath.Join(shadowPath, dir)
-		if err := copyDir(src, dst); err != nil {
+		if err := copyDir(ctx, src, dst); err != nil {
 			return nil, err
 		}
 	}
@@ -75,7 +76,7 @@ func Prepare(sourcePath string) (*Workspace, error) {
 
 // Reset destroys the shadow workspace and rebuilds it from scratch.
 // Use when the Library cache is stale (e.g. after a Unity version upgrade).
-func Reset(sourcePath string) (*Workspace, error) {
+func Reset(ctx context.Context, sourcePath string) (*Workspace, error) {
 	abs, err := filepath.Abs(sourcePath)
 	if err != nil {
 		return nil, err
@@ -83,7 +84,7 @@ func Reset(sourcePath string) (*Workspace, error) {
 	if err := os.RemoveAll(ShadowDir(abs)); err != nil {
 		return nil, err
 	}
-	return Prepare(abs)
+	return Prepare(ctx, abs)
 }
 
 // RemapPaths replaces shadow workspace path prefixes with the original source
@@ -98,14 +99,20 @@ func (w *Workspace) RemapPaths(result *history.RunResult) {
 	for i := range result.Tests {
 		result.Tests[i].AbsolutePath = remapAbsPath(
 			result.Tests[i].AbsolutePath, w.ShadowPath, w.SourcePath)
+		result.Tests[i].Message = remapString(
+			result.Tests[i].Message, w.ShadowPath, w.SourcePath)
 	}
 	for i := range result.Errors {
 		result.Errors[i].AbsolutePath = remapAbsPath(
 			result.Errors[i].AbsolutePath, w.ShadowPath, w.SourcePath)
+		result.Errors[i].Message = remapString(
+			result.Errors[i].Message, w.ShadowPath, w.SourcePath)
 	}
 	for i := range result.NewFailures {
 		result.NewFailures[i].AbsolutePath = remapAbsPath(
 			result.NewFailures[i].AbsolutePath, w.ShadowPath, w.SourcePath)
+		result.NewFailures[i].Message = remapString(
+			result.NewFailures[i].Message, w.ShadowPath, w.SourcePath)
 	}
 }
 
@@ -136,14 +143,47 @@ func remapAbsPath(absPath, shadowPath, sourcePath string) string {
 	return norm
 }
 
+// remapString replaces all occurrences of shadowPath inside s with sourcePath.
+// Both paths are normalised to forward slashes before replacement so that
+// Windows backslash/forward-slash mixing is handled consistently with remapAbsPath.
+// Comparison is case-insensitive to handle mixed drive-letter casing on Windows
+// (e.g. Unity logs "c:/project/..." while filepath.Abs returns "C:/Project/...").
+func remapString(s, shadowPath, sourcePath string) string {
+	shadowSlash := strings.TrimRight(strings.ReplaceAll(shadowPath, `\`, "/"), "/")
+	sourceSlash := strings.TrimRight(strings.ReplaceAll(sourcePath, `\`, "/"), "/")
+	if shadowSlash == "" {
+		return s
+	}
+	norm := strings.ReplaceAll(s, `\`, "/")
+	shadowLower := strings.ToLower(shadowSlash)
+	normLower := strings.ToLower(norm)
+	var result strings.Builder
+	pos := 0
+	for {
+		idx := strings.Index(normLower[pos:], shadowLower)
+		if idx == -1 {
+			result.WriteString(norm[pos:])
+			break
+		}
+		result.WriteString(norm[pos : pos+idx])
+		result.WriteString(sourceSlash)
+		pos += idx + len(shadowSlash)
+	}
+	return result.String()
+}
+
 // copyDir removes dst and recursively copies all files from src to dst.
-func copyDir(src, dst string) error {
+// It checks ctx.Err() at every WalkDir iteration so cancellation returns immediately.
+func copyDir(ctx context.Context, src, dst string) error {
 	if err := os.RemoveAll(dst); err != nil {
 		return err
 	}
 	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 		rel, _ := filepath.Rel(src, path)
 		target := filepath.Join(dst, rel)
@@ -158,12 +198,16 @@ func copyFile(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return err
 	}
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	out, err := os.Create(dst)
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
 	if err != nil {
 		return err
 	}

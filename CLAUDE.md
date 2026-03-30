@@ -57,7 +57,7 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 | `fastplay version` | Print current version as JSON |
 | `fastplay check` | Validate Unity path, project path, and fastplay.json before running |
 | `fastplay list` | Static source scan returning candidate test names (not guaranteed complete) |
-| `fastplay run [--filter <name>] [--category <cat>] [--compare-run <run_id>] [--reset-shadow]` | Execute tests; streams progress to `fastplay-status.json` |
+| `fastplay run [--filter <name>] [--category <cat>] [--compare-run <run_id>] [--shadow] [--reset-shadow]` | Execute tests; streams progress to `fastplay-status.json` |
 | `fastplay result [--last N]` | Re-read stored results; returns run_id history |
 
 **`--reset-shadow`**: Delete and rebuild `.fastplay-shadow/` before running. Use after a Unity version upgrade or when the shadow Library cache appears stale.
