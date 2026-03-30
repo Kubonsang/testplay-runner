@@ -601,6 +601,38 @@ func TestExecute_TwoPhase_CompilePhase_NonZeroExit_NoCompileErrors_ReturnsExit2(
 	}
 }
 
+func TestExecuteSinglePhase_ExtraArgs_ReachRunner(t *testing.T) {
+	var capturedArgs []string
+	fr := &funcRunner{
+		run: func(_ context.Context, args []string, _, _ io.Writer) (int, error) {
+			capturedArgs = append(capturedArgs, args...)
+			return 0, nil
+		},
+	}
+	tmpDir := t.TempDir()
+	resultsFile := filepath.Join(tmpDir, "results.xml")
+	_ = os.WriteFile(resultsFile, []byte(
+		`<test-run result="Passed" total="0" passed="0" failed="0" skipped="0" duration="0.1"/>`,
+	), 0644)
+
+	_, _ = unity.Execute(context.Background(), fr, unity.ExecuteOptions{
+		ProjectPath: tmpDir,
+		ResultsFile: resultsFile,
+		ExtraArgs:   []string{"-disable-assembly-updater"},
+	})
+
+	found := false
+	for _, a := range capturedArgs {
+		if a == "-disable-assembly-updater" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("ExtraArgs not passed to runner; got args: %v", capturedArgs)
+	}
+}
+
 func TestExecute_CompileErrorsInStderr_Returns2(t *testing.T) {
 	dir := t.TempDir()
 	// fakeRunner writes an empty XML but also has compile errors in stderr
