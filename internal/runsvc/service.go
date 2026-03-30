@@ -12,6 +12,7 @@ import (
 	"github.com/Kubonsang/testplay-runner/internal/config"
 	"github.com/Kubonsang/testplay-runner/internal/history"
 	"github.com/Kubonsang/testplay-runner/internal/parser"
+	"github.com/Kubonsang/testplay-runner/internal/shadow"
 	"github.com/Kubonsang/testplay-runner/internal/status"
 	"github.com/Kubonsang/testplay-runner/internal/unity"
 )
@@ -39,10 +40,11 @@ type Service struct {
 
 // Request carries all inputs for a single fastplay run.
 type Request struct {
-	Config     *config.Config
-	Filter     string
-	Category   string
-	CompareRun string
+	Config      *config.Config
+	Filter      string
+	Category    string
+	CompareRun  string
+	ResetShadow bool // when true, delete and rebuild .fastplay-shadow/ before running
 }
 
 // Response carries all outputs of a single fastplay run.
@@ -121,9 +123,30 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		}()
 	}
 
+	// Determine execution backend: shadow if editor has the project open.
+	var ws *shadow.Workspace
+	if req.ResetShadow || shadow.IsLocked(req.Config.ProjectPath) {
+		var wsErr error
+		if req.ResetShadow {
+			ws, wsErr = shadow.Reset(req.Config.ProjectPath)
+		} else {
+			ws, wsErr = shadow.Prepare(req.Config.ProjectPath)
+		}
+		if wsErr != nil {
+			return Response{}, fmt.Errorf("runsvc: prepare shadow workspace: %w", wsErr)
+		}
+	}
+
+	execProjectPath := req.Config.ProjectPath
+	var extraArgs []string
+	if ws != nil {
+		execProjectPath = ws.ShadowPath
+		extraArgs = []string{"-disable-assembly-updater"}
+	}
+
 	// Execute Unity.
 	execOpts := unity.ExecuteOptions{
-		ProjectPath:  req.Config.ProjectPath,
+		ProjectPath:  execProjectPath,
 		ResultsFile:  resultsFile,
 		StatusWriter: sw,
 		TimeoutType:  "total",
@@ -134,6 +157,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		TestMs:       req.Config.Timeout.TestMs,
 		StdoutWriter: stdoutLog,
 		StderrWriter: stderrLog,
+		ExtraArgs:    extraArgs,
 	}
 	result, exitCode := unity.Execute(ctx, s.Runner, execOpts)
 
@@ -145,6 +169,11 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	result.RunID = runID
 	result.SchemaVersion = "1"
 	result.ExitCode = exitCode
+
+	// Remap shadow workspace paths to source project paths.
+	if ws != nil {
+		ws.RemapPaths(result)
+	}
 
 	// Normalise paths: make file fields relative to project.
 	for i := range result.Tests {

@@ -421,6 +421,93 @@ func TestService_NoCompareRun_NewFailuresIsNil(t *testing.T) {
 	}
 }
 
+// runnerFunc is a function-based unity.Runner for tests that need custom logic.
+type runnerFunc func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error)
+
+func (f runnerFunc) Run(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
+	return f(ctx, args, stdout, stderr)
+}
+
+// fakeStore is a no-op ResultStore for tests that don't need history persistence.
+type fakeStore struct{}
+
+func (f *fakeStore) Save(_ string, _ *history.RunResult) error       { return nil }
+func (f *fakeStore) Load(_ string) (*history.RunResult, error)        { return nil, nil }
+
+func TestService_UsesShadowProjectPath_WhenLocked(t *testing.T) {
+	// Build a minimal project directory with the lockfile present.
+	projectDir := t.TempDir()
+	for _, d := range []string{"Assets", "ProjectSettings", "Packages", "Temp"} {
+		_ = os.MkdirAll(filepath.Join(projectDir, d), 0755)
+	}
+	_ = os.WriteFile(filepath.Join(projectDir, "Temp", "UnityLockfile"), []byte{}, 0644)
+
+	var usedProjectPath string
+	runner := runnerFunc(func(_ context.Context, args []string, _, _ io.Writer) (int, error) {
+		for i, a := range args {
+			if a == "-projectPath" && i+1 < len(args) {
+				usedProjectPath = args[i+1]
+			}
+		}
+		// Return 0; no results XML will be found, but we only care about the path arg.
+		return 0, nil
+	})
+
+	store := &fakeStore{}
+	svc := &runsvc.Service{
+		Runner:    runner,
+		Store:     store,
+		Artifacts: artifacts.NewStore(filepath.Join(projectDir, ".fastplay", "runs")),
+	}
+
+	cfg := &config.Config{
+		UnityPath:    "/fake/unity",
+		ProjectPath:  projectDir,
+		TestPlatform: "edit_mode",
+		Timeout:      config.Timeouts{TotalMs: 5000},
+	}
+	_, _ = svc.Run(context.Background(), runsvc.Request{Config: cfg})
+
+	shadowPath := filepath.Join(projectDir, ".fastplay-shadow")
+	if usedProjectPath != shadowPath {
+		t.Errorf("expected shadow projectPath %q, got %q", shadowPath, usedProjectPath)
+	}
+}
+
+func TestService_UsesSourceProjectPath_WhenNotLocked(t *testing.T) {
+	projectDir := t.TempDir()
+	// No lockfile — direct mode
+
+	var usedProjectPath string
+	runner := runnerFunc(func(_ context.Context, args []string, _, _ io.Writer) (int, error) {
+		for i, a := range args {
+			if a == "-projectPath" && i+1 < len(args) {
+				usedProjectPath = args[i+1]
+			}
+		}
+		return 0, nil
+	})
+
+	store := &fakeStore{}
+	svc := &runsvc.Service{
+		Runner:    runner,
+		Store:     store,
+		Artifacts: artifacts.NewStore(filepath.Join(projectDir, ".fastplay", "runs")),
+	}
+
+	cfg := &config.Config{
+		UnityPath:    "/fake/unity",
+		ProjectPath:  projectDir,
+		TestPlatform: "edit_mode",
+		Timeout:      config.Timeouts{TotalMs: 5000},
+	}
+	_, _ = svc.Run(context.Background(), runsvc.Request{Config: cfg})
+
+	if usedProjectPath != projectDir {
+		t.Errorf("expected original projectPath %q, got %q", projectDir, usedProjectPath)
+	}
+}
+
 func TestService_SaveFailure_ReturnsWarning(t *testing.T) {
 	cfg, dir := baseConfig(t)
 	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
