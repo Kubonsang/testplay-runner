@@ -633,6 +633,25 @@ func TestExecuteSinglePhase_ExtraArgs_ReachRunner(t *testing.T) {
 	}
 }
 
+func TestExecute_NilStatusWriterDoesNotPanic(t *testing.T) {
+	runner := &funcRunner{
+		run: func(_ context.Context, _ []string, _, _ io.Writer) (int, error) {
+			return 0, nil
+		},
+	}
+	opts := unity.ExecuteOptions{
+		ProjectPath:  t.TempDir(),
+		ResultsFile:  filepath.Join(t.TempDir(), "results.xml"),
+		StatusWriter: nil, // explicit nil
+		TimeoutType:  "total",
+	}
+	// Should not panic.
+	result, _ := unity.Execute(context.Background(), runner, opts)
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+}
+
 func TestExecute_CompileErrorsInStderr_Returns2(t *testing.T) {
 	dir := t.TempDir()
 	// fakeRunner writes an empty XML but also has compile errors in stderr
