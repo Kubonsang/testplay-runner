@@ -20,6 +20,7 @@ Unity's raw CLI is broken for automation: exit code 0 even on compile failure, X
 | No regression tracking | `--compare-run` populates `new_failures` |
 | Platform path differences | Absolute + relative paths in every response |
 | No test discovery without running | `fastplay list` static-scans `[Test]` and `[UnityTest]` attributes |
+| Unity Editor holds project lock | Shadow Workspace runs tests in `.fastplay-shadow/` while editor stays open |
 
 ## Installation
 
@@ -82,7 +83,7 @@ fastplay version
 ```json
 {
   "schema_version": "1",
-  "version": "v0.1.0-beta"
+  "version": "v0.2.0-beta"
 }
 ```
 
@@ -143,6 +144,8 @@ fastplay run
 fastplay run --filter TestJump
 fastplay run --category Smoke
 fastplay run --compare-run 20250301-102200
+fastplay run --shadow              # force shadow workspace even without editor lock
+fastplay run --reset-shadow        # destroy and rebuild shadow Library cache, then run
 ```
 
 **All tests pass (exit 0):**
@@ -240,6 +243,28 @@ fastplay result --last 3
   ]
 }
 ```
+
+## Shadow Workspace
+
+When the Unity Editor has the project open, `Temp/UnityLockfile` exists and Unity's batch mode cannot run against the same project directory. `fastplay run` detects this automatically and creates a shadow workspace at `.fastplay-shadow/` inside your project root:
+
+| Directory | Strategy |
+|---|---|
+| `Assets/` | Copied fresh on every run |
+| `ProjectSettings/` | Copied fresh on every run |
+| `Packages/` | Symlinked (junction on Windows) — linked once, never re-linked |
+| `Library/` | Created empty on first run; preserved across runs for Unity import cache reuse |
+| `Temp/` | Deleted before each run; Unity recreates it |
+
+**Shadow mode is transparent to agents.** All `absolute_path` fields in the JSON output are remapped to source project paths — agents never see `.fastplay-shadow/` paths.
+
+**Flags:**
+- `--shadow` — force shadow workspace even when the editor is not open (useful for testing shadow behaviour)
+- `--reset-shadow` — destroy `.fastplay-shadow/` and rebuild from scratch before running (use after a Unity version upgrade or when the Library cache is stale)
+
+**`.gitignore` is patched automatically** to exclude `.fastplay-shadow/` on first use.
+
+**When to use `--reset-shadow`:** If Unity version was upgraded, or if tests fail with import errors that don't appear in the source project, the Library cache may be stale. Delete and rebuild it with `fastplay run --reset-shadow`.
 
 ## Exit Codes
 
@@ -340,6 +365,7 @@ The script:
 3. Verifies all 6 run artifacts are present in `.fastplay/runs/<run_id>/`:
    `results.xml`, `summary.json`, `manifest.json`, `stdout.log`, `stderr.log`, `events.ndjson`
 4. Verifies `fastplay-status.json` exists in the project root (status snapshot, outside the run artifact directory)
+5. Runs a shadow-mode smoke stage using `--shadow` and verifies `.fastplay-shadow/` workspace is created with expected subdirectories
 
 **CI (opt-in):**
 

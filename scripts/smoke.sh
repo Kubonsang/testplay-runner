@@ -170,12 +170,77 @@ run_smoke() {
   echo ""
 }
 
-# ── Run both smoke stages ─────────────────────────────────────────────────────
+# ── Shadow smoke runner ───────────────────────────────────────────────────────
+# Usage: run_smoke_shadow <stage_label> <platform>
+# Runs fastplay run --shadow and verifies:
+#   1. Exit 0 and standard run artifacts.
+#   2. .fastplay-shadow/ was created with expected subdirectories.
+run_smoke_shadow() {
+  local stage="$1" platform="$2"
+
+  echo "==> $stage ($platform --shadow)"
+  write_config "$platform"
+
+  # Clean any pre-existing shadow workspace so the test is deterministic.
+  rm -rf "$SMOKE_DIR/.fastplay-shadow"
+
+  echo "  fastplay check..."
+  "$FASTPLAY" check
+
+  echo "  fastplay run --shadow ($platform)..."
+  local output cmd_status=0
+  output=$("$FASTPLAY" run --shadow) || cmd_status=$?
+
+  local run_id exit_code
+  run_id=$(json_str "$output" "run_id")
+  exit_code=$(json_num "$output" "exit_code")
+
+  if [[ "$cmd_status" -ne 0 ]]; then
+    echo "  ERROR [$stage]: fastplay run --shadow exited with status $cmd_status" >&2
+    echo "  run_id:    ${run_id:-(unparsed)}" >&2
+    echo "  exit_code: ${exit_code:-(unparsed)}" >&2
+    echo "  Raw fastplay output:" >&2
+    printf '%s\n' "$output" | sed 's/^/    /' >&2
+    exit 1
+  fi
+
+  assert_field "$stage" "run_id"    "$run_id"    "$output"
+  assert_field "$stage" "exit_code" "$exit_code" "$output"
+
+  echo "  run_id:    $run_id"
+  echo "  exit_code: $exit_code"
+
+  echo "  Checking run artifacts..."
+  check_artifacts "$stage" "$run_id"
+
+  echo "  Checking shadow workspace structure..."
+  local shadow_dir="$SMOKE_DIR/.fastplay-shadow"
+  if [[ ! -d "$shadow_dir" ]]; then
+    echo "  ERROR [$stage]: shadow workspace not created: $shadow_dir" >&2
+    exit 1
+  fi
+  local shadow_missing=false
+  for d in Assets ProjectSettings Library; do
+    if [[ ! -d "$shadow_dir/$d" ]]; then
+      echo "  MISSING [$stage]: $shadow_dir/$d" >&2
+      shadow_missing=true
+    fi
+  done
+  if [[ "$shadow_missing" == "true" ]]; then
+    exit 1
+  fi
+
+  echo "  OK"
+  echo ""
+}
+
+# ── Run all smoke stages ──────────────────────────────────────────────────────
 
 cd "$SMOKE_DIR"
 
 run_smoke "Smoke 1: EditMode" "edit_mode"
 run_smoke "Smoke 2: PlayMode" "play_mode"
+run_smoke_shadow "Smoke 3: Shadow (EditMode)" "edit_mode"
 
 # ── Done ─────────────────────────────────────────────────────────────────────
 

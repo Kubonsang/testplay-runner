@@ -1,6 +1,6 @@
 # 📈 fastplay Release Plan & Version History
 
-**현재 버전:** `v0.1.0-beta`  
+**현재 버전:** `v0.2.0-beta`
 **목표:** 단순한 로컬 테스트 래퍼를 넘어, AI 에이전트에 최적화된 시나리오 기반 멀티 인스턴스 러너로 단계적으로 확장
 
 > 이 문서는 확정 약속이 아니라, 베타 진행 상황에 따라 조정될 수 있는 릴리즈 계획을 정리한 것입니다.  
@@ -8,7 +8,7 @@
 
 ---
 
-## 🟢 v0.1.0-beta (Current: Foundation)
+## ✅ v0.1.0-beta (Foundation)
 **테마:** AI와 CI를 위한 결정론적 단일 러너의 뼈대
 
 - **목표:** 단일 유니티 프로세스 실행에 대한 기초적인 상태 추적과 결과 계약 확보
@@ -18,15 +18,17 @@
   - Shell self-check 및 opt-in Unity smoke 테스트 경로 확보
 - **릴리즈 게이트:** 단일 테스트 실행 시 JSON 출력과 주요 artifact가 일관되게 생성되고, 실패 시에도 계약이 깨지지 않을 것
 
-## 🟡 v0.2.0-beta (Next: The Editor Unlock)
+## 🟢 v0.2.0-beta (Current: The Editor Unlock)
 **테마:** 에디터 락(Lock) 우회 및 섀도우 워크스페이스 구축
 
 - **목표:** 개발자의 작업 흐름을 끊지 않는 백그라운드 격리 실행 환경 확보
 - **포함 기능:**
-  - OS별 링크/Junction 처리를 통한 `.fastplay-shadow` 워크스페이스 구축
-  - `Library` 영구 캐시 및 `-nographics` 등 최적화 플래그 도입
-  - 결과 JSON의 경로 세탁(Path Remapping) 처리
-- **릴리즈 게이트:** 윈도우 환경에서 에디터가 켜진 상태로 `fastplay run`을 실행해도 원본 워크스페이스를 오염시키지 않고, 결과 JSON과 artifact가 원본 기준 경로로 매핑될 것
+  - `Temp/UnityLockfile` 감지 시 `.fastplay-shadow/` 워크스페이스 자동 생성
+  - OS별 심링크/Junction 처리를 통한 `Packages/` 연결, `Library/` 영구 캐시 보존
+  - 심링크·컨텍스트 취소·FileMode 보존·롤백 안전성을 갖춘 프로덕션 수준 강화
+  - 결과 JSON의 경로 재매핑(Path Remapping) — 에이전트는 원본 경로만 확인
+  - `--shadow` (강제 활성화) / `--reset-shadow` (캐시 재구축) 플래그 도입
+- **릴리즈 게이트:** 에디터가 켜진 상태로 `fastplay run`을 실행해도 원본 워크스페이스를 오염시키지 않고, 결과 JSON과 artifact가 원본 기준 경로로 매핑될 것
 
 ## 🔵 v0.3.0-beta (The Multi-Instance Core)
 **테마:** 시나리오 기반 다중 실행의 뼈대
