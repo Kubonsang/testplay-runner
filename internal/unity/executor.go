@@ -16,24 +16,63 @@ import (
 // maxTailBytes is the maximum number of stderr bytes retained in a tailBuffer.
 const maxTailBytes = 64 * 1024
 
-// tailBuffer retains the last maxTailBytes of data written to it.
-// It is used to tee stderr for compile-error detection without holding the
-// full log in memory when an io.Writer artifact file is provided.
-type tailBuffer struct{ buf []byte }
+// tailBuffer retains the last maxTailBytes of data written to it using a
+// fixed-size ring buffer. After the initial fill, Write never allocates.
+type tailBuffer struct {
+	buf  [maxTailBytes]byte
+	size int // number of valid bytes in buf (0..maxTailBytes)
+	head int // index where the next byte will be written
+}
 
 func (t *tailBuffer) Write(p []byte) (int, error) {
 	n := len(p)
 	if len(p) > maxTailBytes {
+		// Only the last maxTailBytes of p are relevant.
 		p = p[len(p)-maxTailBytes:]
+		// Writing exactly maxTailBytes resets the ring to a linear state.
+		copy(t.buf[:], p)
+		t.head = 0
+		t.size = maxTailBytes
+		return n, nil
 	}
-	t.buf = append(t.buf, p...)
-	if len(t.buf) > maxTailBytes {
-		t.buf = t.buf[len(t.buf)-maxTailBytes:]
+	// Write p into the ring, wrapping around as needed.
+	space := maxTailBytes - t.head
+	if len(p) <= space {
+		copy(t.buf[t.head:], p)
+		t.head += len(p)
+		if t.head == maxTailBytes {
+			t.head = 0
+		}
+	} else {
+		copy(t.buf[t.head:], p[:space])
+		copy(t.buf[:], p[space:])
+		t.head = len(p) - space
+	}
+	if t.size < maxTailBytes {
+		t.size += len(p)
+		if t.size > maxTailBytes {
+			t.size = maxTailBytes
+		}
 	}
 	return n, nil
 }
 
-func (t *tailBuffer) Bytes() []byte { return t.buf }
+// Bytes returns the retained bytes in order (oldest first).
+func (t *tailBuffer) Bytes() []byte {
+	if t.size == 0 {
+		return nil
+	}
+	out := make([]byte, t.size)
+	if t.size < maxTailBytes {
+		// Buffer not yet full: data is linear from index 0.
+		copy(out, t.buf[:t.size])
+		return out
+	}
+	// Buffer full: oldest byte is at t.head.
+	n := copy(out, t.buf[t.head:])
+	copy(out[n:], t.buf[:t.head])
+	return out
+}
 
 // ExecuteOptions configures a Unity test execution.
 type ExecuteOptions struct {
