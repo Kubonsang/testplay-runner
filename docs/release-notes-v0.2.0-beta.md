@@ -2,6 +2,7 @@
 
 Target Release: v0.2.0-beta
 Blueprint: [Core v0.2.2 Architecture Blueprint](blueprint-v0.2.2.md)
+Validation Evidence: [GNF_ Shadow PlayMode Smoke Validation](v0.2.0-beta-gnf-shadow-validation.md)
 
 ---
 
