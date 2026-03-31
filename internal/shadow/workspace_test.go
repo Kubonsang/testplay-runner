@@ -321,6 +321,37 @@ func TestCopyDir_CopiesFileContents(t *testing.T) {
 	}
 }
 
+func TestCopyDir_PreservesSymlink(t *testing.T) {
+	projectDir := makeProject(t)
+	// Create a symlink inside Assets/ pointing to the existing Player.cs.
+	linkPath := filepath.Join(projectDir, "Assets", "Scripts", "PlayerAlias.cs")
+	target := "Player.cs" // relative symlink target
+	if err := os.Symlink(target, linkPath); err != nil {
+		t.Skipf("symlinks not supported on this platform: %v", err)
+	}
+
+	w, err := shadow.Prepare(context.Background(), projectDir)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	shadowLink := filepath.Join(w.ShadowPath, "Assets", "Scripts", "PlayerAlias.cs")
+	info, err := os.Lstat(shadowLink)
+	if err != nil {
+		t.Fatalf("shadow symlink missing: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("expected symlink, got regular file (mode %v)", info.Mode())
+	}
+	got, err := os.Readlink(shadowLink)
+	if err != nil {
+		t.Fatalf("Readlink: %v", err)
+	}
+	if got != target {
+		t.Errorf("link target: got %q, want %q", got, target)
+	}
+}
+
 func TestPrepare_RespectsContextCancellation(t *testing.T) {
 	src := makeProject(t)
 	ctx, cancel := context.WithCancel(context.Background())

@@ -190,6 +190,13 @@ func copyDir(ctx context.Context, src, dst string) error {
 		if d.IsDir() {
 			return os.MkdirAll(target, 0755)
 		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			linkTarget, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			return os.Symlink(linkTarget, target)
+		}
 		return copyFile(path, target)
 	})
 }
