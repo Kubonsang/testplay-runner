@@ -369,6 +369,69 @@ func TestPrepare_RespectsContextCancellation(t *testing.T) {
 	}
 }
 
+func TestPrepare_CleansUpOnFirstCreateFailure(t *testing.T) {
+	src := makeProject(t)
+	// Make ProjectSettings/ unreadable so copyDir fails on the second iteration.
+	psDir := filepath.Join(src, "ProjectSettings")
+	if err := os.Chmod(psDir, 0000); err != nil {
+		t.Skipf("cannot chmod on this platform: %v", err)
+	}
+	t.Cleanup(func() { os.Chmod(psDir, 0755) })
+
+	shadowPath := filepath.Join(src, ".fastplay-shadow")
+
+	// Confirm shadow does not exist yet (first-create scenario).
+	if _, err := os.Stat(shadowPath); !os.IsNotExist(err) {
+		t.Fatalf("shadow should not exist before Prepare")
+	}
+
+	_, err := shadow.Prepare(context.Background(), src)
+	if err == nil {
+		t.Fatal("expected error from unreadable ProjectSettings, got nil")
+	}
+
+	// Shadow workspace must be cleaned up after first-create failure.
+	if _, err := os.Stat(shadowPath); !os.IsNotExist(err) {
+		t.Errorf("expected shadow workspace to be removed after failure, but it still exists")
+	}
+}
+
+func TestPrepare_DoesNotRollbackOnRefreshFailure(t *testing.T) {
+	src := makeProject(t)
+
+	// First successful prepare — establishes the workspace.
+	ws, err := shadow.Prepare(context.Background(), src)
+	if err != nil {
+		t.Fatalf("initial Prepare failed: %v", err)
+	}
+
+	// Write a sentinel file in Library/ to detect it survives.
+	libSentinel := filepath.Join(ws.ShadowPath, "Library", "cached.data")
+	if err := os.WriteFile(libSentinel, []byte("cache"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Make ProjectSettings/ unreadable so the refresh copyDir fails.
+	psDir := filepath.Join(src, "ProjectSettings")
+	if err := os.Chmod(psDir, 0000); err != nil {
+		t.Skipf("cannot chmod on this platform: %v", err)
+	}
+	t.Cleanup(func() { os.Chmod(psDir, 0755) })
+
+	_, err = shadow.Prepare(context.Background(), src)
+	if err == nil {
+		t.Fatal("expected error from unreadable ProjectSettings, got nil")
+	}
+
+	// Shadow workspace must NOT be deleted — Library/ cache must survive.
+	if _, err := os.Stat(ws.ShadowPath); os.IsNotExist(err) {
+		t.Error("shadow workspace was deleted during refresh failure — Library/ cache lost")
+	}
+	if _, err := os.Stat(libSentinel); os.IsNotExist(err) {
+		t.Error("Library/ sentinel was deleted during refresh failure")
+	}
+}
+
 func TestPrepare_CancelsInsideLargeFileCopy(t *testing.T) {
 	projectDir := makeProject(t)
 	// 2 MB file — large enough that io.Copy needs multiple Read calls.

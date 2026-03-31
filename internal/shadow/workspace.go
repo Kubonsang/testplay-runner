@@ -39,6 +39,19 @@ func Prepare(ctx context.Context, sourcePath string) (*Workspace, error) {
 	shadowPath := ShadowDir(abs)
 	ws := &Workspace{SourcePath: abs, ShadowPath: shadowPath}
 
+	// Track whether this is a first-time creation so we can clean up on failure.
+	// Refresh calls (workspace already exists) must not roll back Library/ on error.
+	isNew := false
+	if _, statErr := os.Stat(shadowPath); os.IsNotExist(statErr) {
+		isNew = true
+	}
+	succeeded := false
+	defer func() {
+		if isNew && !succeeded {
+			os.RemoveAll(shadowPath)
+		}
+	}()
+
 	if err := os.MkdirAll(shadowPath, 0755); err != nil {
 		return nil, err
 	}
@@ -71,6 +84,7 @@ func Prepare(ctx context.Context, sourcePath string) (*Workspace, error) {
 	// Patch .gitignore — non-fatal.
 	_ = EnsureIgnored(abs, ".fastplay-shadow/")
 
+	succeeded = true
 	return ws, nil
 }
 
