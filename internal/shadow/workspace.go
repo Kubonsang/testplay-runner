@@ -39,6 +39,19 @@ func Prepare(ctx context.Context, sourcePath string) (*Workspace, error) {
 	shadowPath := ShadowDir(abs)
 	ws := &Workspace{SourcePath: abs, ShadowPath: shadowPath}
 
+	// Track whether this is a first-time creation so we can clean up on failure.
+	// Refresh calls (workspace already exists) must not roll back Library/ on error.
+	isNew := false
+	if _, statErr := os.Stat(shadowPath); os.IsNotExist(statErr) {
+		isNew = true
+	}
+	succeeded := false
+	defer func() {
+		if isNew && !succeeded {
+			os.RemoveAll(shadowPath)
+		}
+	}()
+
 	if err := os.MkdirAll(shadowPath, 0755); err != nil {
 		return nil, err
 	}
@@ -71,6 +84,7 @@ func Prepare(ctx context.Context, sourcePath string) (*Workspace, error) {
 	// Patch .gitignore — non-fatal.
 	_ = EnsureIgnored(abs, ".fastplay-shadow/")
 
+	succeeded = true
 	return ws, nil
 }
 
@@ -172,6 +186,21 @@ func remapString(s, shadowPath, sourcePath string) string {
 	return result.String()
 }
 
+// ctxReader wraps an io.Reader and checks ctx.Err() before each Read call.
+// This allows io.Copy to respect context cancellation between 32KB chunks,
+// preventing large-file copies from blocking cancellation indefinitely.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r *ctxReader) Read(p []byte) (n int, err error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.r.Read(p)
+}
+
 // copyDir removes dst and recursively copies all files from src to dst.
 // It checks ctx.Err() at every WalkDir iteration so cancellation returns immediately.
 func copyDir(ctx context.Context, src, dst string) error {
@@ -190,11 +219,18 @@ func copyDir(ctx context.Context, src, dst string) error {
 		if d.IsDir() {
 			return os.MkdirAll(target, 0755)
 		}
-		return copyFile(path, target)
+		if d.Type()&fs.ModeSymlink != 0 {
+			linkTarget, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			return os.Symlink(linkTarget, target)
+		}
+		return copyFile(ctx, path, target)
 	})
 }
 
-func copyFile(src, dst string) error {
+func copyFile(ctx context.Context, src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return err
 	}
@@ -211,7 +247,7 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	if _, err = io.Copy(out, in); err != nil {
+	if _, err = io.Copy(out, &ctxReader{ctx: ctx, r: in}); err != nil {
 		out.Close()
 		return err
 	}

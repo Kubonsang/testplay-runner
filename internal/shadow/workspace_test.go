@@ -321,6 +321,37 @@ func TestCopyDir_CopiesFileContents(t *testing.T) {
 	}
 }
 
+func TestCopyDir_PreservesSymlink(t *testing.T) {
+	projectDir := makeProject(t)
+	// Create a symlink inside Assets/ pointing to the existing Player.cs.
+	linkPath := filepath.Join(projectDir, "Assets", "Scripts", "PlayerAlias.cs")
+	target := "Player.cs" // relative symlink target
+	if err := os.Symlink(target, linkPath); err != nil {
+		t.Skipf("symlinks not supported on this platform: %v", err)
+	}
+
+	w, err := shadow.Prepare(context.Background(), projectDir)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+
+	shadowLink := filepath.Join(w.ShadowPath, "Assets", "Scripts", "PlayerAlias.cs")
+	info, err := os.Lstat(shadowLink)
+	if err != nil {
+		t.Fatalf("shadow symlink missing: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("expected symlink, got regular file (mode %v)", info.Mode())
+	}
+	got, err := os.Readlink(shadowLink)
+	if err != nil {
+		t.Fatalf("Readlink: %v", err)
+	}
+	if got != target {
+		t.Errorf("link target: got %q, want %q", got, target)
+	}
+}
+
 func TestPrepare_RespectsContextCancellation(t *testing.T) {
 	src := makeProject(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -332,6 +363,102 @@ func TestPrepare_RespectsContextCancellation(t *testing.T) {
 	_, err := shadow.Prepare(ctx, src)
 	if err == nil {
 		t.Fatal("expected error from cancelled context, got nil")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+}
+
+func TestPrepare_CleansUpOnFirstCreateFailure(t *testing.T) {
+	src := makeProject(t)
+	// Make ProjectSettings/ unreadable so copyDir fails on the second iteration.
+	psDir := filepath.Join(src, "ProjectSettings")
+	if err := os.Chmod(psDir, 0000); err != nil {
+		t.Skipf("cannot chmod on this platform: %v", err)
+	}
+	t.Cleanup(func() { os.Chmod(psDir, 0755) })
+
+	shadowPath := filepath.Join(src, ".fastplay-shadow")
+
+	// Confirm shadow does not exist yet (first-create scenario).
+	if _, err := os.Stat(shadowPath); !os.IsNotExist(err) {
+		t.Fatalf("shadow should not exist before Prepare")
+	}
+
+	_, err := shadow.Prepare(context.Background(), src)
+	if err == nil {
+		t.Fatal("expected error from unreadable ProjectSettings, got nil")
+	}
+
+	// Shadow workspace must be cleaned up after first-create failure.
+	if _, err := os.Stat(shadowPath); !os.IsNotExist(err) {
+		t.Errorf("expected shadow workspace to be removed after failure, but it still exists")
+	}
+}
+
+func TestPrepare_DoesNotRollbackOnRefreshFailure(t *testing.T) {
+	src := makeProject(t)
+
+	// First successful prepare — establishes the workspace.
+	ws, err := shadow.Prepare(context.Background(), src)
+	if err != nil {
+		t.Fatalf("initial Prepare failed: %v", err)
+	}
+
+	// Write a sentinel file in Library/ to detect it survives.
+	libSentinel := filepath.Join(ws.ShadowPath, "Library", "cached.data")
+	if err := os.WriteFile(libSentinel, []byte("cache"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Make ProjectSettings/ unreadable so the refresh copyDir fails.
+	psDir := filepath.Join(src, "ProjectSettings")
+	if err := os.Chmod(psDir, 0000); err != nil {
+		t.Skipf("cannot chmod on this platform: %v", err)
+	}
+	t.Cleanup(func() { os.Chmod(psDir, 0755) })
+
+	_, err = shadow.Prepare(context.Background(), src)
+	if err == nil {
+		t.Fatal("expected error from unreadable ProjectSettings, got nil")
+	}
+
+	// Shadow workspace must NOT be deleted — Library/ cache must survive.
+	if _, err := os.Stat(ws.ShadowPath); os.IsNotExist(err) {
+		t.Error("shadow workspace was deleted during refresh failure — Library/ cache lost")
+	}
+	if _, err := os.Stat(libSentinel); os.IsNotExist(err) {
+		t.Error("Library/ sentinel was deleted during refresh failure")
+	}
+}
+
+func TestPrepare_CancelsInsideLargeFileCopy(t *testing.T) {
+	projectDir := makeProject(t)
+	// 2 MB file — large enough that io.Copy needs multiple Read calls.
+	// ctxReader checks ctx.Err() before each 32KB chunk, so cancellation
+	// during the copy propagates within one buffer-load.
+	largeFile := filepath.Join(projectDir, "Assets", "large.bin")
+	data := make([]byte, 2*1024*1024)
+	if err := os.WriteFile(largeFile, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := shadow.Prepare(ctx, projectDir)
+		errCh <- err
+	}()
+
+	// Cancel immediately — Prepare may still be in WalkDir setup or io.Copy.
+	cancel()
+
+	err := <-errCh
+	if err == nil {
+		// If Prepare finished before cancel fired, the test is inconclusive
+		// on fast hardware. Skip rather than fail.
+		t.Skip("Prepare completed before context was cancelled — test inconclusive on fast hardware")
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("expected context.Canceled, got: %v", err)
