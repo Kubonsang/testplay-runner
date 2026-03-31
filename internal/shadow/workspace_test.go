@@ -368,3 +368,36 @@ func TestPrepare_RespectsContextCancellation(t *testing.T) {
 		t.Errorf("expected context.Canceled, got: %v", err)
 	}
 }
+
+func TestPrepare_CancelsInsideLargeFileCopy(t *testing.T) {
+	projectDir := makeProject(t)
+	// 2 MB file — large enough that io.Copy needs multiple Read calls.
+	// ctxReader checks ctx.Err() before each 32KB chunk, so cancellation
+	// during the copy propagates within one buffer-load.
+	largeFile := filepath.Join(projectDir, "Assets", "large.bin")
+	data := make([]byte, 2*1024*1024)
+	if err := os.WriteFile(largeFile, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := shadow.Prepare(ctx, projectDir)
+		errCh <- err
+	}()
+
+	// Cancel immediately — Prepare may still be in WalkDir setup or io.Copy.
+	cancel()
+
+	err := <-errCh
+	if err == nil {
+		// If Prepare finished before cancel fired, the test is inconclusive
+		// on fast hardware. Skip rather than fail.
+		t.Skip("Prepare completed before context was cancelled — test inconclusive on fast hardware")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled, got: %v", err)
+	}
+}

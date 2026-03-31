@@ -172,6 +172,21 @@ func remapString(s, shadowPath, sourcePath string) string {
 	return result.String()
 }
 
+// ctxReader wraps an io.Reader and checks ctx.Err() before each Read call.
+// This allows io.Copy to respect context cancellation between 32KB chunks,
+// preventing large-file copies from blocking cancellation indefinitely.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (r *ctxReader) Read(p []byte) (n int, err error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.r.Read(p)
+}
+
 // copyDir removes dst and recursively copies all files from src to dst.
 // It checks ctx.Err() at every WalkDir iteration so cancellation returns immediately.
 func copyDir(ctx context.Context, src, dst string) error {
@@ -197,11 +212,11 @@ func copyDir(ctx context.Context, src, dst string) error {
 			}
 			return os.Symlink(linkTarget, target)
 		}
-		return copyFile(path, target)
+		return copyFile(ctx, path, target)
 	})
 }
 
-func copyFile(src, dst string) error {
+func copyFile(ctx context.Context, src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return err
 	}
@@ -218,7 +233,7 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	if _, err = io.Copy(out, in); err != nil {
+	if _, err = io.Copy(out, &ctxReader{ctx: ctx, r: in}); err != nil {
 		out.Close()
 		return err
 	}
