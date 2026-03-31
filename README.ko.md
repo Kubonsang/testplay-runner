@@ -374,7 +374,7 @@ gh workflow run smoke.yml
 `.github/workflows/smoke.yml` 참조. Unity가 설치된 self-hosted runner와 `UNITY_PATH` 환경변수가 필요합니다.
 
 실제 프로젝트에 재사용할 수 있는 패턴은
-[`docs/playmode-smoke-example.md`](docs/playmode-smoke-example.md)를 참고하세요.
+[`docs/05_v0.2.0_playmode_smoke_example.md`](docs/05_v0.2.0_playmode_smoke_example.md)를 참고하세요.
 fixture를 코드로 생성하는 scene-free PlayMode smoke 테스트를 `fastplay run`
 기준으로 정리해뒀습니다.
 
