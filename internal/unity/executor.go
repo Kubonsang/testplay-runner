@@ -13,6 +13,13 @@ import (
 	"github.com/Kubonsang/testplay-runner/internal/status"
 )
 
+// noopStatusWriter implements status.WriterInterface but discards all writes.
+// It is used as a sentinel when ExecuteOptions.StatusWriter is nil so that
+// all call sites can write unconditionally without nil guards.
+type noopStatusWriter struct{}
+
+func (noopStatusWriter) Write(_ status.Status) error { return nil }
+
 // maxTailBytes is the maximum number of stderr bytes retained in a tailBuffer.
 const maxTailBytes = 64 * 1024
 
@@ -124,6 +131,9 @@ type ExecuteOptions struct {
 //   - Multi-process network harness (NGO server+client) is not supported; that
 //     would require a different orchestration layer above Execute.
 func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.RunResult, int) {
+	if opts.StatusWriter == nil {
+		opts.StatusWriter = noopStatusWriter{}
+	}
 	if opts.CompileMs > 0 && opts.TestMs > 0 {
 		return executeTwoPhase(ctx, runner, opts)
 	}
@@ -133,9 +143,7 @@ func Execute(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.
 // executeSinglePhase runs compile + test in a single Unity invocation.
 func executeSinglePhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.RunResult, int) {
 	// Phase: compiling
-	if opts.StatusWriter != nil {
-		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseCompiling})
-	}
+	_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseCompiling})
 
 	runOpts := &RunOptions{
 		ResultsFilePath: opts.ResultsFile,
@@ -154,9 +162,7 @@ func executeSinglePhase(ctx context.Context, runner Runner, opts ExecuteOptions)
 	}
 
 	// Phase: running (Unity finished compilation, now checking results)
-	if opts.StatusWriter != nil {
-		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseRunning})
-	}
+	_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseRunning})
 
 	return parseResults(opts, tail.Bytes())
 }
@@ -165,9 +171,7 @@ func executeSinglePhase(ctx context.Context, runner Runner, opts ExecuteOptions)
 // with its own deadline (CompileMs and TestMs respectively).
 func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*history.RunResult, int) {
 	// ── Phase 1: compile only ──────────────────────────────────────────────
-	if opts.StatusWriter != nil {
-		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseCompiling})
-	}
+	_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseCompiling})
 
 	compileCtx, compileCancel := context.WithTimeout(ctx, time.Duration(opts.CompileMs)*time.Millisecond)
 	defer compileCancel()
@@ -181,9 +185,7 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 			return classifyPhaseContextErr(ctx, opts, status.PhaseTimeoutCompile, "compile")
 		}
 		// Non-context runner error (e.g. Unity binary missing) → compile failure.
-		if opts.StatusWriter != nil {
-			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
-		}
+		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      2,
@@ -194,9 +196,7 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 
 	// Compile errors in stderr → fail without running tests.
 	if compileErrors := ParseCompileErrorsWithProject(compileTail.Bytes(), opts.ProjectPath); len(compileErrors) > 0 {
-		if opts.StatusWriter != nil {
-			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
-		}
+		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      2,
@@ -207,9 +207,7 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 
 	// Non-zero exit with no recognisable compile errors (e.g. license failure, bad args).
 	if exitCode != 0 {
-		if opts.StatusWriter != nil {
-			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
-		}
+		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      2,
@@ -221,9 +219,7 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 	}
 
 	// ── Phase 2: run tests ─────────────────────────────────────────────────
-	if opts.StatusWriter != nil {
-		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseRunning})
-	}
+	_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseRunning})
 
 	testCtx, testCancel := context.WithTimeout(ctx, time.Duration(opts.TestMs)*time.Millisecond)
 	defer testCancel()
@@ -243,9 +239,7 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 			return classifyPhaseContextErr(ctx, opts, status.PhaseTimeoutTest, "test")
 		}
 		// Non-context runner error in test phase → no results available.
-		if opts.StatusWriter != nil {
-			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
-		}
+		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      2,
@@ -264,9 +258,7 @@ func classifyPhaseContextErr(ctx context.Context, opts ExecuteOptions, phaseTime
 	if outerErr := ctx.Err(); outerErr != nil {
 		if errors.Is(outerErr, context.DeadlineExceeded) {
 			// Outer total_ms deadline fired.
-			if opts.StatusWriter != nil {
-				_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseTimeoutTotal})
-			}
+			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseTimeoutTotal})
 			return &history.RunResult{
 				SchemaVersion: "1",
 				ExitCode:      4,
@@ -276,9 +268,7 @@ func classifyPhaseContextErr(ctx context.Context, opts ExecuteOptions, phaseTime
 			}, 4
 		}
 		// context.Canceled → signal interruption.
-		if opts.StatusWriter != nil {
-			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseInterrupted})
-		}
+		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseInterrupted})
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      4,
@@ -287,9 +277,7 @@ func classifyPhaseContextErr(ctx context.Context, opts ExecuteOptions, phaseTime
 		}, 4
 	}
 	// Outer ctx is still alive — only the phase deadline fired.
-	if opts.StatusWriter != nil {
-		_ = opts.StatusWriter.Write(status.Status{Phase: phaseTimeoutStatus})
-	}
+	_ = opts.StatusWriter.Write(status.Status{Phase: phaseTimeoutStatus})
 	return &history.RunResult{
 		SchemaVersion: "1",
 		ExitCode:      4,
@@ -303,9 +291,7 @@ func classifyPhaseContextErr(ctx context.Context, opts ExecuteOptions, phaseTime
 // Callers must guard with errors.Is(err, context.Canceled||DeadlineExceeded).
 func handleContextErr(err error, opts ExecuteOptions) (*history.RunResult, int) {
 	if errors.Is(err, context.DeadlineExceeded) {
-		if opts.StatusWriter != nil {
-			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseTimeoutTotal})
-		}
+		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseTimeoutTotal})
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      4,
@@ -315,9 +301,7 @@ func handleContextErr(err error, opts ExecuteOptions) (*history.RunResult, int) 
 		}, 4
 	}
 	if errors.Is(err, context.Canceled) {
-		if opts.StatusWriter != nil {
-			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseInterrupted})
-		}
+		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseInterrupted})
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      4,
@@ -326,9 +310,7 @@ func handleContextErr(err error, opts ExecuteOptions) (*history.RunResult, int) 
 		}, 4
 	}
 	// Should not be reached when the caller guards correctly.
-	if opts.StatusWriter != nil {
-		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseInterrupted})
-	}
+	_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseInterrupted})
 	return &history.RunResult{
 		SchemaVersion: "1",
 		ExitCode:      4,
@@ -362,9 +344,7 @@ func parseResults(opts ExecuteOptions, stderrTail []byte) (*history.RunResult, i
 	xmlData, xmlErr := os.ReadFile(opts.ResultsFile)
 	if xmlErr != nil {
 		// No XML file — compile failure
-		if opts.StatusWriter != nil {
-			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
-		}
+		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
 		compileErrors := ParseCompileErrorsWithProject(stderrTail, opts.ProjectPath)
 		return &history.RunResult{
 			SchemaVersion: "1",
@@ -378,9 +358,7 @@ func parseResults(opts ExecuteOptions, stderrTail []byte) (*history.RunResult, i
 	// (Unity can emit compile errors and produce a partial/empty XML)
 	compileErrors := ParseCompileErrorsWithProject(stderrTail, opts.ProjectPath)
 	if len(compileErrors) > 0 {
-		if opts.StatusWriter != nil {
-			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
-		}
+		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      2,
@@ -405,15 +383,13 @@ func parseResults(opts ExecuteOptions, stderrTail []byte) (*history.RunResult, i
 		exitCode = 3
 	}
 
-	if opts.StatusWriter != nil {
-		_ = opts.StatusWriter.Write(status.Status{
-			Phase:    status.PhaseDone,
-			Total:    parseResult.Total,
-			Passed:   parseResult.Passed,
-			Failed:   parseResult.Failed,
-			ExitCode: &exitCode,
-		})
-	}
+	_ = opts.StatusWriter.Write(status.Status{
+		Phase:    status.PhaseDone,
+		Total:    parseResult.Total,
+		Passed:   parseResult.Passed,
+		Failed:   parseResult.Failed,
+		ExitCode: &exitCode,
+	})
 
 	return &history.RunResult{
 		SchemaVersion: "1",
