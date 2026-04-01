@@ -35,7 +35,7 @@
 
 - **목표:** 여러 개의 유니티 프로세스를 띄우고 결과를 합치는 1차 코어 확장
 - **v0.2 P1 backlog 해소 (다중 실행의 전제 조건):**
-  - **runID UUID 기반 교체** — 1초 단위 타임스탬프 → UUID/nanosecond; 동시 실행 시 결과 파일 충돌 방지 (현재 `Medium` Known Limitation)
+  - **runID 교체** — 1초 단위 타임스탬프 → `YYYYMMDD-HHMMSS-xxxxxxxx` (crypto-random 4바이트 hex suffix); 동시 실행 시 결과 파일 충돌 방지 (현재 `Medium` Known Limitation)
   - **`--config` flag 도입** — CWD 의존 제거; 오케스트레이터가 각 인스턴스에 다른 config 경로를 직접 지정 가능
   - **Per-run shadow 격리** — run-ID 기반 독립 shadow 디렉터리(`.testplay-shadow-<run_id>/`); 병렬 `testplay run` 안전성 확보 (현재 `Medium` Known Limitation)
   - **Exit 8 구현** — SIGINT/SIGTERM → exit 8, timeout → exit 4로 명확 구분 (현재 두 경우 모두 exit 4)
@@ -46,15 +46,15 @@
 - **릴리즈 게이트:** 시나리오 파일로 2개 이상의 인스턴스가 동시 실행되고, 합쳐진 JSON 결과가 일관된 구조로 출력될 것
 
 ## 🟣 v0.4.0-beta (The Orchestrator)
-**테마:** 정교한 프로세스 동기화 및 에러 트래킹
+**테마:** Host/Client 기동 순서 제어
 
-- **목표:** 다중 인스턴스가 실제 네트워크 검증 도구로 기능하기 위한 타이밍 제어 확보
-- **포함 기능:**
-  - Host/Client 기동 순서(Startup Ordering) 및 Ready Gating 도입
-  - IPC 또는 로그/포트 기반 ready signal 대기 메커니즘 추가
-  - 다중 실행 환경에 맞춘 Exit Code 세분화
-  - JSON 내 `exit_code_reason` 필드 추가를 통한 실패 원인 명확화
-- **릴리즈 게이트:** Host 프로세스가 Ready 상태가 된 뒤 Client가 정해진 순서로 접속하고, 실패 시 원인이 구조화된 결과에 반영될 것
+- **목표:** Host가 네트워크 리슨 상태가 된 후 Client를 기동시키는 순서 보장 — 다중 인스턴스가 실제 협력 테스트를 수행하기 위한 최소 전제 조건
+- **P1 선행 조건 (Ready Gating의 전제):**
+  1. **Per-instance status polling 계약 정의** — `--scenario` 모드에서 인스턴스별 상태 파일(`testplay-status-<role>.json` 또는 동등한 메커니즘) 계약 확정 및 구현; 현재 `Medium` Known Limitation
+- **신규 기능:**
+  2. **Host ready gating** — 시나리오 파일에 `ready_signal` 필드 추가; Host 인스턴스의 status가 지정 phase에 도달할 때까지 Client 기동을 지연
+  3. **Scenario 실패 원인 구조화** — 기존 `timeout_type` 패턴 확장; ready timeout·host crash 등 오케스트레이션 실패를 구조화된 필드로 출력
+- **릴리즈 게이트:** Host 인스턴스가 ready 신호를 내기 전에 Client 프로세스가 시작되지 않을 것; 순서 위반 또는 ready timeout 발생 시 실패 원인이 시나리오 결과 JSON에 반영될 것
 
 ## 🟠 v0.5.0-beta (The AI Contract)
 **테마:** 테스트 파싱 고도화 및 스키마 수렴
