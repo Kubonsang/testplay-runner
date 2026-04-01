@@ -196,3 +196,29 @@ func TestCompare_NilPrev_ReturnsNil(t *testing.T) {
 		t.Errorf("expected nil when no compare-run, got %v", newFails)
 	}
 }
+
+func TestStore_SaveAndLoad_NewFormatRunID(t *testing.T) {
+	dir := t.TempDir()
+	store := history.NewStore(dir)
+
+	// New format: YYYYMMDD-HHMMSS-xxxxxxxx
+	runID := "20250301-102200-a3f8b2c1"
+	result := &history.RunResult{
+		RunID:         runID,
+		SchemaVersion: "1",
+		ExitCode:      0,
+		Tests:         []parser.TestCase{},
+	}
+
+	if err := store.Save(runID, result); err != nil {
+		t.Fatalf("Save with new-format runID: %v", err)
+	}
+
+	loaded, err := store.Load(runID)
+	if err != nil {
+		t.Fatalf("Load with new-format runID: %v", err)
+	}
+	if loaded.RunID != runID {
+		t.Errorf("expected RunID %q, got %q", runID, loaded.RunID)
+	}
+}

@@ -19,7 +19,8 @@ var (
 	ErrInvalidRunID = errors.New("invalid run ID format")
 )
 
-var runIDPattern = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}$`)
+// runIDPattern accepts both legacy (YYYYMMDD-HHMMSS) and current (YYYYMMDD-HHMMSS-xxxxxxxx) formats.
+var runIDPattern = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}(-[0-9a-f]{8})?$`)
 
 func validateRunID(runID string) error {
 	if !runIDPattern.MatchString(runID) {
