@@ -539,7 +539,7 @@ func TestRunScenario_DispatchesScenarioRunner(t *testing.T) {
 	// Inject a fake runner that returns canned responses
 	var mu sync.Mutex
 	var called []string
-	fakeRun := func(_ context.Context, inst scenario.InstanceSpec) (runsvc.Response, error) {
+	fakeRun := func(_ context.Context, inst scenario.InstanceSpec, _ chan<- struct{}) (runsvc.Response, error) {
 		mu.Lock()
 		called = append(called, inst.Role)
 		mu.Unlock()
@@ -609,7 +609,7 @@ func TestRunScenario_WritesPerRoleStatusFiles(t *testing.T) {
 
 	deps := scenarioDeps{
 		ctx: context.Background(),
-		run: func(_ context.Context, inst scenario.InstanceSpec) (runsvc.Response, error) {
+		run: func(_ context.Context, inst scenario.InstanceSpec, _ chan<- struct{}) (runsvc.Response, error) {
 			// capture which status file was written
 			statusPath := fmt.Sprintf("testplay-status-%s.json", inst.Role)
 			mu.Lock()
@@ -653,7 +653,7 @@ func TestRunScenario_ExitCodeMaxPropagated(t *testing.T) {
 	}`), 0644)
 
 	exitCodes := map[string]int{"Host": 0, "Client": 3}
-	fakeRun := func(_ context.Context, inst scenario.InstanceSpec) (runsvc.Response, error) {
+	fakeRun := func(_ context.Context, inst scenario.InstanceSpec, _ chan<- struct{}) (runsvc.Response, error) {
 		code := exitCodes[inst.Role]
 		return runsvc.Response{
 			RunID:    "20260326-143055-aabbccdd",

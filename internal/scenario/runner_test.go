@@ -36,7 +36,7 @@ func TestRunScenario_AllInstancesRun(t *testing.T) {
 	}
 
 	var ran int32
-	run := func(_ context.Context, inst scenario.InstanceSpec) (runsvc.Response, error) {
+	run := func(_ context.Context, inst scenario.InstanceSpec, _ chan<- struct{}) (runsvc.Response, error) {
 		atomic.AddInt32(&ran, 1)
 		return fakeResult(0), nil
 	}
@@ -70,7 +70,7 @@ func TestRunScenario_ExitCodeIsMaxOfInstances(t *testing.T) {
 
 	exitCodes := []int{0, 3}
 	var idx int32
-	run := func(_ context.Context, _ scenario.InstanceSpec) (runsvc.Response, error) {
+	run := func(_ context.Context, _ scenario.InstanceSpec, _ chan<- struct{}) (runsvc.Response, error) {
 		i := int(atomic.AddInt32(&idx, 1)) - 1
 		return fakeResult(exitCodes[i]), nil
 	}
@@ -89,7 +89,7 @@ func TestRunScenario_InfraErrorTreatedAsExit1(t *testing.T) {
 		},
 	}
 
-	run := func(_ context.Context, _ scenario.InstanceSpec) (runsvc.Response, error) {
+	run := func(_ context.Context, _ scenario.InstanceSpec, _ chan<- struct{}) (runsvc.Response, error) {
 		return runsvc.Response{}, fmt.Errorf("disk full")
 	}
 
@@ -110,7 +110,7 @@ func TestAggregateExitCode_AllZero(t *testing.T) {
 			{Role: "B", Config: "./b.json"},
 		},
 	}
-	run := func(_ context.Context, _ scenario.InstanceSpec) (runsvc.Response, error) {
+	run := func(_ context.Context, _ scenario.InstanceSpec, _ chan<- struct{}) (runsvc.Response, error) {
 		return fakeResult(0), nil
 	}
 	result, _ := scenario.RunScenario(context.Background(), spec, run)

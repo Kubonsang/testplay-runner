@@ -135,7 +135,7 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 
 	run := deps.run
 	if run == nil {
-		run = func(ctx context.Context, instSpec scenario.InstanceSpec) (runsvc.Response, error) {
+		run = func(ctx context.Context, instSpec scenario.InstanceSpec, readyCh chan<- struct{}) (runsvc.Response, error) {
 			cfgPath := spec.ConfigPath(instSpec)
 			cfg, loadErr := config.Load(cfgPath)
 			if loadErr != nil {
