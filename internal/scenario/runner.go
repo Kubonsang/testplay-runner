@@ -36,7 +36,6 @@ func RunScenario(ctx context.Context, spec *ScenarioFile, run InstanceRunner) (S
 	var wg sync.WaitGroup
 
 	for i, inst := range spec.Instances {
-		i, inst := i, inst // capture loop variables
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

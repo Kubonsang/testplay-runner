@@ -181,15 +181,16 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 			continue
 		}
 		m := map[string]any{
-			"role":      inst.Role,
-			"run_id":    inst.Response.RunID,
-			"exit_code": inst.Response.ExitCode,
-			"total":     r.Total,
-			"passed":    r.Passed,
-			"failed":    r.Failed,
-			"skipped":   r.Skipped,
-			"tests":     r.Tests,
-			"errors":    r.Errors,
+			"role":         inst.Role,
+			"run_id":       inst.Response.RunID,
+			"exit_code":    inst.Response.ExitCode,
+			"total":        r.Total,
+			"passed":       r.Passed,
+			"failed":       r.Failed,
+			"skipped":      r.Skipped,
+			"tests":        r.Tests,
+			"errors":       r.Errors,
+			"new_failures": r.NewFailures,
 		}
 		if r.TimeoutType != "" {
 			m["timeout_type"] = r.TimeoutType
