@@ -104,7 +104,7 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 
 **Two-phase execution:** when both `compile_ms` and `test_ms` are set (both > 0), two-phase execution is enabled. Both fields must be set together — setting only one is a validation error. When neither is set, single-phase execution uses only `total_ms`.
 
-**Config path:** Always loaded from `"fastplay.json"` in cwd. No `--config` flag yet — working directory must contain `fastplay.json`.
+**Config path:** Loaded from the path given by `--config <path>` (default: `"fastplay.json"` in cwd). When `--config` is omitted, behaviour is unchanged from v0.2.
 
 ## Runtime Files
 
@@ -115,8 +115,8 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
   - `timeout_compile`, `timeout_test` — written in two-phase mode when the respective phase deadline fires
   - `running` — written *after* Unity exits, not when tests actually start (phase detection is approximate)
   - `interrupted` — best-effort write on SIGINT/SIGTERM before context cancel; process exits 8
-- `.fastplay/results/<run_id>.json` — one file per run, never overwritten. `run_id` is a 1-second-granularity timestamp (e.g. `20250301-102200`); concurrent runs within the same second will collide.
-- `.fastplay-shadow/` — shadow workspace created automatically when `Temp/UnityLockfile` is detected (Unity Editor open). Contains copied `Assets/`, `ProjectSettings/`, linked `Packages/`, and a persistent `Library/` cache. Excluded from git via `.gitignore` auto-patching. Delete manually or via `--reset-shadow` if corrupted. See Known Limitations for concurrency and isolation constraints.
+- `.fastplay/results/<run_id>.json` — one file per run, never overwritten. `run_id` format: `YYYYMMDD-HHMMSS-xxxxxxxx` where the 8-char hex suffix is 4 crypto-random bytes (e.g. `20250301-102200-a3f8b2c1`). Collision probability is negligible even under parallel runs.
+- `.fastplay-shadow-<run_id>/` — per-run shadow workspace created automatically when `Temp/UnityLockfile` is detected (Unity Editor open). Contains copied `Assets/`, `ProjectSettings/`, linked `Packages/`, and an empty `Library/` (Unity populates during the run). Removed automatically after each run via `ws.Cleanup()`. Excluded from git via `.gitignore` auto-patching (`fastplay-shadow-*/`). Use `--reset-shadow` to force shadow mode (equivalent to `--shadow`; no persistent cache exists to reset).
 
 ## Agent Recommended Usage Flow
 
@@ -142,7 +142,7 @@ Run `fastplay result` to review the `run_id` list and decide the `--compare-run`
 
 > `version → check → list → run → result` — this five-command interface is the agent's entire surface. If this flow breaks, the project breaks.
 
-**Shadow mode is transparent to agents.** When `Temp/UnityLockfile` is present, `fastplay run` automatically uses `.fastplay-shadow/` as the project path and remaps all `absolute_path` fields in the JSON output back to source project paths. Agents do not need to detect or handle shadow mode explicitly.
+**Shadow mode is transparent to agents.** When `Temp/UnityLockfile` is present, `fastplay run` automatically uses a per-run `.fastplay-shadow-<run_id>/` workspace and remaps all `absolute_path` fields in the JSON output back to source project paths. Agents do not need to detect or handle shadow mode explicitly.
 
 ## Output Design Rules
 
@@ -160,13 +160,10 @@ Run `fastplay result` to review the `run_id` list and decide the `--compare-run`
 |---|---|---|
 | `list` scanner | Detects `[Test]` and `[UnityTest]` but misses other attributes (`[TestCase]`, `[Theory]`) — list output may be incomplete | Low |
 | Phase detection | `running` phase written after Unity exits, not when tests start — polling agents see misleading phase | Medium |
-| runID collision | 1-second timestamp granularity; concurrent runs within the same second overwrite the result file | Medium |
-| Config path | Always loads `fastplay.json` from cwd; no `--config` flag — agents must `cd` to project root | Low |
 | Unimplemented exit codes | Exit 6 (build failure), exit 7 (permission) are documented but never returned | Low |
-| Shadow — concurrent run safety | Two simultaneous `fastplay run` invocations against the same project share a single `.fastplay-shadow/` directory. `Prepare` re-copies `Assets/` and `ProjectSettings/` and deletes `Temp/` on every call; a second run starting while the first is executing will overwrite those directories mid-flight. Running `fastplay run` in parallel against the same project path is **not currently safe** in shadow mode. | Medium |
 | Shadow — `Packages/` not fully isolated | `Packages/` is linked (symlink on macOS/Linux, junction on Windows) rather than copied. If Unity or a package tool writes to the `Packages/` tree during batch execution (e.g. embedded packages), those changes propagate back to the original project. This is best-effort isolation. | Low |
 | Shadow — editor-open detection is best-effort | Shadow mode activates when `Temp/UnityLockfile` exists. A stale lockfile after an unclean Unity exit causes unnecessary shadow overhead. The lockfile check is a heuristic, not a guaranteed signal. | Low |
-| Shadow — `--reset-shadow` behaviour change | With per-run isolation (v0.3+), `--reset-shadow` is equivalent to `--shadow`. There is no persistent Library cache to reset. Old per-run shadow dirs are deleted automatically after each run via `Cleanup()`. | Low |
+| Shadow — Library cold-start per run | `Library/` starts empty each run (no cross-run cache reuse). Unity reimports on every invocation, which adds latency for sequential agent-driven runs. Accepted tradeoff for parallel correctness. | Low |
 
 ## Roadmap
 
