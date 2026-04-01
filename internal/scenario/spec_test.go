@@ -98,3 +98,15 @@ func TestLoad_AbsoluteConfigPath(t *testing.T) {
 		t.Errorf("absolute config path should not be joined: got %q", sf.ConfigPath(sf.Instances[0]))
 	}
 }
+
+func TestLoad_MissingConfig(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scenario.json")
+	_ = os.WriteFile(path, []byte(`{"schema_version":"1","instances":[{"role":"Host"}]}`), 0644)
+
+	_, err := scenario.Load(path)
+	if err == nil {
+		t.Fatal("expected error for missing config, got nil")
+	}
+}
