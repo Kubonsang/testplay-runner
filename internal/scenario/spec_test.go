@@ -110,3 +110,89 @@ func TestLoad_MissingConfig(t *testing.T) {
 		t.Fatal("expected error for missing config, got nil")
 	}
 }
+
+func TestLoad_DependsOn_ValidReference(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scenario.json")
+	content := `{
+		"schema_version": "1",
+		"instances": [
+			{"role": "host",   "config": "host.json"},
+			{"role": "client", "config": "client.json", "depends_on": "host", "ready_timeout_ms": 5000}
+		]
+	}`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	sf, err := scenario.Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sf.Instances[1].DependsOn != "host" {
+		t.Errorf("expected depends_on=host, got %q", sf.Instances[1].DependsOn)
+	}
+	if sf.Instances[1].ReadyTimeoutMs != 5000 {
+		t.Errorf("expected ready_timeout_ms=5000, got %d", sf.Instances[1].ReadyTimeoutMs)
+	}
+}
+
+func TestLoad_DependsOn_InvalidReference(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scenario.json")
+	content := `{
+		"schema_version": "1",
+		"instances": [
+			{"role": "client", "config": "client.json", "depends_on": "nonexistent"}
+		]
+	}`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := scenario.Load(path)
+	if err == nil {
+		t.Fatal("expected error for invalid depends_on")
+	}
+}
+
+func TestLoad_DuplicateRoles(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scenario.json")
+	content := `{
+		"schema_version": "1",
+		"instances": [
+			{"role": "host", "config": "a.json"},
+			{"role": "host", "config": "b.json"}
+		]
+	}`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := scenario.Load(path)
+	if err == nil {
+		t.Fatal("expected error for duplicate roles")
+	}
+}
+
+func TestInstanceSpec_EffectiveReadyPhase_Default(t *testing.T) {
+	inst := scenario.InstanceSpec{Role: "host", Config: "host.json"}
+	if inst.EffectiveReadyPhase() != "compiling" {
+		t.Errorf("expected default ready phase 'compiling', got %q", inst.EffectiveReadyPhase())
+	}
+}
+
+func TestInstanceSpec_EffectiveReadyPhase_Custom(t *testing.T) {
+	inst := scenario.InstanceSpec{Role: "host", Config: "host.json", ReadyPhase: "running"}
+	if inst.EffectiveReadyPhase() != "running" {
+		t.Errorf("expected 'running', got %q", inst.EffectiveReadyPhase())
+	}
+}
+
+func TestInstanceSpec_EffectiveReadyTimeoutMs_Default(t *testing.T) {
+	inst := scenario.InstanceSpec{Role: "host", Config: "host.json"}
+	if inst.EffectiveReadyTimeoutMs() != 30000 {
+		t.Errorf("expected default timeout 30000, got %d", inst.EffectiveReadyTimeoutMs())
+	}
+}

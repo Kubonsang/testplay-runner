@@ -13,8 +13,29 @@ var ErrScenarioInvalid = errors.New("scenario file is invalid")
 
 // InstanceSpec describes a single instance to run in the scenario.
 type InstanceSpec struct {
-	Role   string `json:"role"`
-	Config string `json:"config"` // path to testplay.json, relative to scenario file or absolute
+	Role           string `json:"role"`
+	Config         string `json:"config"`                      // path to testplay.json, relative to scenario file or absolute
+	DependsOn      string `json:"depends_on,omitempty"`        // role this instance waits for before starting
+	ReadyPhase     string `json:"ready_phase,omitempty"`       // phase to wait for in the depended-on instance
+	ReadyTimeoutMs int    `json:"ready_timeout_ms,omitempty"`  // how long to wait for the dependency (ms)
+}
+
+// EffectiveReadyPhase returns the phase string to wait for, defaulting to "compiling".
+// "compiling" is the first phase written by runsvc.Service.Run() — immediately before
+// Unity is invoked — and is the earliest observable signal that an instance has started.
+func (inst InstanceSpec) EffectiveReadyPhase() string {
+	if inst.ReadyPhase == "" {
+		return "compiling"
+	}
+	return inst.ReadyPhase
+}
+
+// EffectiveReadyTimeoutMs returns the dependency wait timeout in milliseconds, defaulting to 30000.
+func (inst InstanceSpec) EffectiveReadyTimeoutMs() int {
+	if inst.ReadyTimeoutMs <= 0 {
+		return 30000
+	}
+	return inst.ReadyTimeoutMs
 }
 
 // ScenarioFile is the parsed representation of a scenario JSON file.
@@ -54,12 +75,30 @@ func Load(path string) (*ScenarioFile, error) {
 	if len(sf.Instances) == 0 {
 		return nil, fmt.Errorf("%w: instances must not be empty", ErrScenarioInvalid)
 	}
+	// Build role set for cross-reference validation.
+	roles := make(map[string]struct{}, len(sf.Instances))
 	for i, inst := range sf.Instances {
 		if inst.Role == "" {
 			return nil, fmt.Errorf("%w: instances[%d].role is required", ErrScenarioInvalid, i)
 		}
 		if inst.Config == "" {
 			return nil, fmt.Errorf("%w: instances[%d].config is required", ErrScenarioInvalid, i)
+		}
+		if _, dup := roles[inst.Role]; dup {
+			return nil, fmt.Errorf("%w: instances[%d].role %q is not unique", ErrScenarioInvalid, i, inst.Role)
+		}
+		roles[inst.Role] = struct{}{}
+	}
+	// Validate depends_on references.
+	for i, inst := range sf.Instances {
+		if inst.DependsOn == "" {
+			continue
+		}
+		if _, ok := roles[inst.DependsOn]; !ok {
+			return nil, fmt.Errorf("%w: instances[%d].depends_on %q references unknown role", ErrScenarioInvalid, i, inst.DependsOn)
+		}
+		if inst.DependsOn == inst.Role {
+			return nil, fmt.Errorf("%w: instances[%d].depends_on %q cannot depend on itself", ErrScenarioInvalid, i, inst.Role)
 		}
 	}
 
