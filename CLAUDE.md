@@ -10,7 +10,7 @@ Agents interact via five commands: `version`, `check`, `list`, `run`, `result`. 
 
 **Supported test platforms:** `"edit_mode"` (default) and `"play_mode"` — set via `test_platform` in `testplay.json`. The platform is passed as `-testPlatform EditMode|PlayMode` to Unity.
 
-**Current version:** `v0.2.0-beta` (main). Shadow Workspace shipped. Next: multi-instance core (v0.3.0-beta).
+**Current version:** `v0.3.0-beta` (main). Multi-Instance Core shipped. Next: Host/Client orchestration (v0.4.0-beta).
 
 **Ultimate goal:** PlayMode + network environment testing.
 
@@ -163,7 +163,8 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 | Unimplemented exit codes | Exit 6 (build failure), exit 7 (permission) are documented but never returned | Low |
 | Shadow — `Packages/` not fully isolated | `Packages/` is linked (symlink on macOS/Linux, junction on Windows) rather than copied. If Unity or a package tool writes to the `Packages/` tree during batch execution (e.g. embedded packages), those changes propagate back to the original project. This is best-effort isolation. | Low |
 | Shadow — editor-open detection is best-effort | Shadow mode activates when `Temp/UnityLockfile` exists. A stale lockfile after an unclean Unity exit causes unnecessary shadow overhead. The lockfile check is a heuristic, not a guaranteed signal. | Low |
-| Shadow — Library cold-start per run | `Library/` starts empty each run (no cross-run cache reuse). Unity reimports on every invocation, which adds latency for sequential agent-driven runs. Accepted tradeoff for parallel correctness. | Low |
+| Shadow — Library cold-start per run | `Library/` starts empty each run (no cross-run cache reuse). Unity reimports on every invocation, which adds latency for sequential agent-driven runs. In `--scenario` mode each instance pays this cost; expect clean-build-equivalent startup time per instance. Accepted tradeoff for parallel correctness. | Low |
+| Scenario — no status polling | `testplay-status.json` is not written in `--scenario` mode (`StatusWriter` is nil per instance). Agents polling the status file will see stale or absent data during a scenario run. Per-instance status contract is undefined until v0.4+. | Medium |
 
 ## Roadmap
 
@@ -180,10 +181,10 @@ Shadow Workspace: automatic fallback when the Unity Editor has the project open.
 - `.gitignore` auto-patching — `.testplay-shadow/` excluded on first use
 - Production hardening: symlink preservation, FileMode copy, ctx-cancel mid-copy, rollback safety, ring-buffer stderr tail, Null Object StatusWriter
 
-### v0.3.0-beta 🔵 — The Multi-Instance Core (next)
+### v0.3.0-beta ✅ — The Multi-Instance Core (shipped)
 
 **P1 backlog resolved as prerequisites:**
-1. **Unique runID** — UUID/nanosecond-based; prevents concurrent-run result file collision
+1. **Unique runID** — crypto-random 8-hex suffix; prevents concurrent-run result file collision
 2. **`--config` flag** — config path as CLI arg; removes CWD dependency for multi-instance orchestration
 3. **Per-run shadow isolation** — run-ID-scoped shadow dir (`.testplay-shadow-<run_id>/`); makes parallel `testplay run` safe
 4. ~~**Exit 8 for signal interruption**~~ ✅ — SIGINT/SIGTERM → exit 8; timeout → exit 4
@@ -191,6 +192,10 @@ Shadow Workspace: automatic fallback when the Unity Editor has the project open.
 **New capability:**
 5. **`testplay run --scenario <file>`** — Role-based (Host/Client) multi-instance concurrent execution; individual results aggregated into single scenario JSON
 
+**CLI rename:** binary and all user-facing identifiers renamed `fastplay` → `testplay` to match repo name.
+
 ### Remaining items (v0.4+)
 
-- **Network test configuration** — multi-instance orchestration, NGO/Mirror harness; Host/Client ready gating, IPC-based readiness signaling
+- **Host/Client ready gating** — Host readiness signal before Client starts; IPC or file-based mechanism
+- **Per-instance status polling** — define `testplay-status-<role>.json` contract for scenario mode
+- **Network test configuration** — NGO/Mirror harness integration

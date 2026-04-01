@@ -1,6 +1,6 @@
 # 📈 testplay Release Plan & Version History
 
-**현재 버전:** `v0.2.0-beta`
+**현재 버전:** `v0.3.0-beta`
 **목표:** 단순한 로컬 테스트 래퍼를 넘어, AI 에이전트에 최적화된 시나리오 기반 멀티 인스턴스 러너로 단계적으로 확장
 
 > 이 문서는 확정 약속이 아니라, 베타 진행 상황에 따라 조정될 수 있는 릴리즈 계획을 정리한 것입니다.  
@@ -18,7 +18,7 @@
   - Shell self-check 및 opt-in Unity smoke 테스트 경로 확보
 - **릴리즈 게이트:** 단일 테스트 실행 시 JSON 출력과 주요 artifact가 일관되게 생성되고, 실패 시에도 계약이 깨지지 않을 것
 
-## 🟢 v0.2.0-beta (Current: The Editor Unlock)
+## 🟢 v0.2.0-beta (The Editor Unlock)
 **테마:** 에디터 락(Lock) 우회 및 섀도우 워크스페이스 구축
 
 - **목표:** 개발자의 작업 흐름을 끊지 않는 백그라운드 격리 실행 환경 확보
@@ -30,7 +30,7 @@
   - `--shadow` (강제 활성화) / `--reset-shadow` (캐시 재구축) 플래그 도입
 - **릴리즈 게이트:** 에디터가 켜진 상태로 `testplay run`을 실행해도 원본 워크스페이스를 오염시키지 않고, 결과 JSON과 artifact가 원본 기준 경로로 매핑될 것
 
-## 🔵 v0.3.0-beta (The Multi-Instance Core)
+## 🟢 v0.3.0-beta (Current: The Multi-Instance Core)
 **테마:** 시나리오 기반 다중 실행의 뼈대
 
 - **목표:** 여러 개의 유니티 프로세스를 띄우고 결과를 합치는 1차 코어 확장
