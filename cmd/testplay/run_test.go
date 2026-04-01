@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Kubonsang/testplay-runner/internal/config"
 	"github.com/Kubonsang/testplay-runner/internal/history"
@@ -671,5 +672,51 @@ func TestRunScenario_ExitCodeMaxPropagated(t *testing.T) {
 	code := runScenario(&buf, specPath, scenarioDeps{run: fakeRun})
 	if code != 3 {
 		t.Errorf("expected exit code 3, got %d", code)
+	}
+}
+
+func TestRunScenario_OrchestratorErrorsInOutput(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "scenario.json")
+	content := `{"schema_version":"1","instances":[
+        {"role":"host","config":"host.json"},
+        {"role":"client","config":"client.json","depends_on":"host","ready_timeout_ms":50}
+    ]}`
+	if err := os.WriteFile(specPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := scenarioDeps{
+		ctx: context.Background(),
+		run: func(_ context.Context, inst scenario.InstanceSpec, readyCh chan<- struct{}) (runsvc.Response, error) {
+			// host never signals ready
+			if inst.Role == "host" {
+				time.Sleep(200 * time.Millisecond)
+			}
+			return runsvc.Response{ExitCode: 0, Result: &history.RunResult{
+				SchemaVersion: "1", Tests: []parser.TestCase{}, Errors: []history.CompileError{},
+			}}, nil
+		},
+	}
+
+	var buf bytes.Buffer
+	code := runScenario(&buf, specPath, deps)
+	if code != 4 {
+		t.Errorf("expected exit 4, got %d", code)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, buf.String())
+	}
+	errs, ok := out["orchestrator_errors"]
+	if !ok {
+		t.Fatal("expected orchestrator_errors field in output")
+	}
+	errsSlice, ok := errs.([]any)
+	if !ok || len(errsSlice) == 0 {
+		t.Errorf("expected non-empty orchestrator_errors, got %v", errs)
 	}
 }

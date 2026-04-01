@@ -149,11 +149,19 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 			defer cancel()
 
 			artifactRoot := filepath.Join(cfg.ProjectPath, ".testplay", "runs")
+			// Per-instance status file for external polling by agents.
+			var sw status.WriterInterface = status.NewWriter(fmt.Sprintf("testplay-status-%s.json", instSpec.Role))
+			// Wrap with ReadyNotifier so this instance signals its readyCh when the
+			// target phase is reached. readyCh is nil for instances with no dependents.
+			if readyCh != nil {
+				sw = scenario.NewReadyNotifier(sw, instSpec.EffectiveReadyPhase(), readyCh)
+			}
+
 			svc := &runsvc.Service{
 				Runner:       &unity.ProcessRunner{UnityPath: cfg.UnityPath},
 				Store:        history.NewStore(cfg.ResultDir),
 				Artifacts:    artifacts.NewStore(artifactRoot),
-				StatusWriter: status.NewWriter(fmt.Sprintf("testplay-status-%s.json", instSpec.Role)),
+				StatusWriter: sw,
 			}
 			return svc.Run(instanceCtx, runsvc.Request{Config: cfg})
 		}
@@ -201,11 +209,16 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 		instances[i] = m
 	}
 
-	writeJSON(w, map[string]any{
+	output := map[string]any{
 		"schema_version": "1",
 		"exit_code":      scenarioResult.ExitCode,
 		"instances":      instances,
-	})
+	}
+	if len(scenarioResult.OrchestratorErrors) > 0 {
+		output["orchestrator_errors"] = scenarioResult.OrchestratorErrors
+	}
+
+	writeJSON(w, output)
 	return scenarioResult.ExitCode
 }
 
