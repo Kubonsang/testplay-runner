@@ -66,7 +66,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		clock = time.Now
 	}
 
-	runID := clock().Format("20060102-150405")
+	runID := generateRunID(clock())
 
 	// Prepare artifact directory and get results XML path.
 	runDir, err := s.Artifacts.PrepareRunDir(runID)

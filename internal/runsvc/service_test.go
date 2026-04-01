@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -262,8 +263,12 @@ func TestService_RunID_MatchesClock(t *testing.T) {
 	}
 
 	resp, _ := svc.Run(context.Background(), runsvc.Request{Config: cfg})
-	if resp.RunID != "20260326-143055" {
-		t.Errorf("expected run_id '20260326-143055', got %q", resp.RunID)
+	if !strings.HasPrefix(resp.RunID, "20260326-143055-") {
+		t.Errorf("expected run_id with prefix '20260326-143055-', got %q", resp.RunID)
+	}
+	parts := strings.Split(resp.RunID, "-")
+	if len(parts) != 3 || len(parts[2]) != 8 {
+		t.Errorf("unexpected run_id format %q: want 'YYYYMMDD-HHMMSS-xxxxxxxx'", resp.RunID)
 	}
 }
 
