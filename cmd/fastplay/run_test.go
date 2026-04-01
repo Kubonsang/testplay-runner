@@ -9,11 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/Kubonsang/testplay-runner/internal/config"
 	"github.com/Kubonsang/testplay-runner/internal/history"
 	"github.com/Kubonsang/testplay-runner/internal/parser"
+	"github.com/Kubonsang/testplay-runner/internal/runsvc"
+	"github.com/Kubonsang/testplay-runner/internal/scenario"
 )
 
 func mustReadXMLFixture(t *testing.T, path string) []byte {
@@ -515,5 +518,95 @@ func TestRunRun_InfraError_NoNewFailuresField(t *testing.T) {
 	}
 	if _, ok := out["new_failures"]; ok {
 		t.Error("new_failures must not appear in exit 1 error response")
+	}
+}
+
+func TestRunScenario_DispatchesScenarioRunner(t *testing.T) {
+	// Create a minimal scenario file on disk
+	dir := t.TempDir()
+	scenarioContent := `{
+		"schema_version": "1",
+		"instances": [
+			{"role": "Host",   "config": "./host.json"},
+			{"role": "Client", "config": "./client.json"}
+		]
+	}`
+	specPath := filepath.Join(dir, "scenario.json")
+	if err := os.WriteFile(specPath, []byte(scenarioContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Inject a fake runner that returns canned responses
+	var mu sync.Mutex
+	var called []string
+	fakeRun := func(_ context.Context, inst scenario.InstanceSpec) (runsvc.Response, error) {
+		mu.Lock()
+		called = append(called, inst.Role)
+		mu.Unlock()
+		return runsvc.Response{
+			RunID:    "20260326-143055-aabbccdd",
+			ExitCode: 0,
+			Result: &history.RunResult{
+				SchemaVersion: "1",
+				ExitCode:      0,
+				Tests:         []parser.TestCase{},
+				Errors:        []history.CompileError{},
+			},
+		}, nil
+	}
+
+	var buf bytes.Buffer
+	code := runScenario(&buf, specPath, scenarioDeps{run: fakeRun})
+
+	if code != 0 {
+		t.Errorf("expected exit code 0, got %d", code)
+	}
+	if len(called) != 2 {
+		t.Errorf("expected 2 instances called, got %d: %v", len(called), called)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("output is not valid JSON: %v\noutput: %s", err, buf.String())
+	}
+	if out["schema_version"] != "1" {
+		t.Errorf("missing schema_version in output")
+	}
+	instances, ok := out["instances"].([]any)
+	if !ok || len(instances) != 2 {
+		t.Errorf("expected 2 instances in output, got: %v", out["instances"])
+	}
+}
+
+func TestRunScenario_ExitCodeMaxPropagated(t *testing.T) {
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "scenario.json")
+	_ = os.WriteFile(specPath, []byte(`{
+		"schema_version": "1",
+		"instances": [
+			{"role": "Host",   "config": "./h.json"},
+			{"role": "Client", "config": "./c.json"}
+		]
+	}`), 0644)
+
+	exitCodes := map[string]int{"Host": 0, "Client": 3}
+	fakeRun := func(_ context.Context, inst scenario.InstanceSpec) (runsvc.Response, error) {
+		code := exitCodes[inst.Role]
+		return runsvc.Response{
+			RunID:    "20260326-143055-aabbccdd",
+			ExitCode: code,
+			Result: &history.RunResult{
+				SchemaVersion: "1",
+				ExitCode:      code,
+				Tests:         []parser.TestCase{},
+				Errors:        []history.CompileError{},
+			},
+		}, nil
+	}
+
+	var buf bytes.Buffer
+	code := runScenario(&buf, specPath, scenarioDeps{run: fakeRun})
+	if code != 3 {
+		t.Errorf("expected exit code 3, got %d", code)
 	}
 }

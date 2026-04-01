@@ -14,6 +14,7 @@ import (
 	"github.com/Kubonsang/testplay-runner/internal/config"
 	"github.com/Kubonsang/testplay-runner/internal/history"
 	"github.com/Kubonsang/testplay-runner/internal/runsvc"
+	"github.com/Kubonsang/testplay-runner/internal/scenario"
 	"github.com/Kubonsang/testplay-runner/internal/status"
 	"github.com/Kubonsang/testplay-runner/internal/unity"
 )
@@ -110,10 +111,109 @@ func runRun(w io.Writer, deps runDeps) int {
 	return resp.ExitCode
 }
 
+// scenarioDeps holds injectable dependencies for runScenario.
+// In production all fields are zero/nil; runScenario fills in real implementations.
+// In tests, run is set to a fake InstanceRunner.
+type scenarioDeps struct {
+	ctx context.Context
+	run scenario.InstanceRunner // nil = real runner constructed from each instance's config
+}
+
+// runScenario loads a scenario file, runs all instances concurrently, and writes
+// the aggregated JSON result to w. Returns the scenario exit code (max of instances).
+func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
+	ctx := deps.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	spec, err := scenario.Load(specPath)
+	if err != nil {
+		writeJSON(w, map[string]any{"schema_version": "1", "error": err.Error()})
+		return 5
+	}
+
+	run := deps.run
+	if run == nil {
+		run = func(ctx context.Context, instSpec scenario.InstanceSpec) (runsvc.Response, error) {
+			cfgPath := spec.ConfigPath(instSpec)
+			cfg, loadErr := config.Load(cfgPath)
+			if loadErr != nil {
+				return runsvc.Response{}, loadErr
+			}
+			if valErr := cfg.Validate(true); valErr != nil {
+				return runsvc.Response{}, valErr
+			}
+
+			instanceCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.Timeout.TotalMs)*time.Millisecond)
+			defer cancel()
+
+			artifactRoot := filepath.Join(cfg.ProjectPath, ".fastplay", "runs")
+			svc := &runsvc.Service{
+				Runner:    &unity.ProcessRunner{UnityPath: cfg.UnityPath},
+				Store:     history.NewStore(cfg.ResultDir),
+				Artifacts: artifacts.NewStore(artifactRoot),
+				// No StatusWriter in scenario mode — per-run status polling not yet defined
+			}
+			return svc.Run(instanceCtx, runsvc.Request{Config: cfg})
+		}
+	}
+
+	// RunScenario never returns a non-nil error per its contract; instance errors
+	// are recorded in InstanceResult.Err instead.
+	scenarioResult, _ := scenario.RunScenario(ctx, spec, run)
+
+	instances := make([]map[string]any, len(scenarioResult.Instances))
+	for i, inst := range scenarioResult.Instances {
+		if inst.Err != nil {
+			instances[i] = map[string]any{
+				"role":  inst.Role,
+				"error": inst.Err.Error(),
+			}
+			continue
+		}
+		r := inst.Response.Result
+		if r == nil {
+			instances[i] = map[string]any{
+				"role":      inst.Role,
+				"exit_code": inst.Response.ExitCode,
+			}
+			continue
+		}
+		m := map[string]any{
+			"role":         inst.Role,
+			"run_id":       inst.Response.RunID,
+			"exit_code":    inst.Response.ExitCode,
+			"total":        r.Total,
+			"passed":       r.Passed,
+			"failed":       r.Failed,
+			"skipped":      r.Skipped,
+			"tests":        r.Tests,
+			"errors":       r.Errors,
+			"new_failures": r.NewFailures,
+		}
+		if r.TimeoutType != "" {
+			m["timeout_type"] = r.TimeoutType
+		}
+		if len(inst.Response.Warnings) > 0 {
+			m["warnings"] = inst.Response.Warnings
+		}
+		instances[i] = m
+	}
+
+	writeJSON(w, map[string]any{
+		"schema_version": "1",
+		"exit_code":      scenarioResult.ExitCode,
+		"instances":      instances,
+	})
+	return scenarioResult.ExitCode
+}
+
 // runFilter, runCategory, runCompareRun, resetShadow and forceShadow are cobra flag values.
 var runFilter, runCategory, runCompareRun string
 var resetShadow bool
 var forceShadow bool
+var scenarioPath string
 
 var runCmd = &cobra.Command{
 	Use:   "run",
@@ -129,21 +229,26 @@ var runCmd = &cobra.Command{
 			_ = status.NewWriter(statusPath).Write(status.Status{Phase: status.PhaseInterrupted})
 		})
 
-		deps := runDeps{
-			ctx:        ctx,
-			loadConfig: config.Load,
-			// runner and resultStore are intentionally nil; runRun initialises them
-			// from config after loading, avoiding a double config-load.
-			statusPath: statusPath,
-			opts: RunCmdOptions{
-				Filter:      runFilter,
-				Category:    runCategory,
-				CompareRun:  runCompareRun,
-				ResetShadow: resetShadow,
-				ForceShadow: forceShadow,
-			},
+		var code int
+		if scenarioPath != "" {
+			code = runScenario(cmd.OutOrStdout(), scenarioPath, scenarioDeps{ctx: ctx})
+		} else {
+			deps := runDeps{
+				ctx:        ctx,
+				loadConfig: config.Load,
+				// runner and resultStore are intentionally nil; runRun initialises them
+				// from config after loading, avoiding a double config-load.
+				statusPath: statusPath,
+				opts: RunCmdOptions{
+					Filter:      runFilter,
+					Category:    runCategory,
+					CompareRun:  runCompareRun,
+					ResetShadow: resetShadow,
+					ForceShadow: forceShadow,
+				},
+			}
+			code = runRun(cmd.OutOrStdout(), deps)
 		}
-		code := runRun(cmd.OutOrStdout(), deps)
 		os.Exit(code)
 		return nil
 	},
@@ -156,4 +261,5 @@ func init() {
 	runCmd.Flags().StringVar(&runCompareRun, "compare-run", "", "Run ID to compare against for regression detection")
 	runCmd.Flags().BoolVar(&resetShadow, "reset-shadow", false, "Force shadow workspace (equivalent to --shadow; kept for compatibility)")
 	runCmd.Flags().BoolVar(&forceShadow, "shadow", false, "Force shadow workspace even when Unity Editor is not open")
+	runCmd.Flags().StringVar(&scenarioPath, "scenario", "", "Path to scenario JSON file for multi-instance execution")
 }

@@ -196,3 +196,49 @@ func TestCompare_NilPrev_ReturnsNil(t *testing.T) {
 		t.Errorf("expected nil when no compare-run, got %v", newFails)
 	}
 }
+
+func TestStore_SaveAndLoad_NewFormatRunID(t *testing.T) {
+	dir := t.TempDir()
+	store := history.NewStore(dir)
+
+	// New format: YYYYMMDD-HHMMSS-xxxxxxxx
+	runID := "20250301-102200-a3f8b2c1"
+	result := &history.RunResult{
+		RunID:         runID,
+		SchemaVersion: "1",
+		ExitCode:      0,
+		Tests:         []parser.TestCase{},
+	}
+
+	if err := store.Save(runID, result); err != nil {
+		t.Fatalf("Save with new-format runID: %v", err)
+	}
+
+	loaded, err := store.Load(runID)
+	if err != nil {
+		t.Fatalf("Load with new-format runID: %v", err)
+	}
+	if loaded.RunID != runID {
+		t.Errorf("expected RunID %q, got %q", runID, loaded.RunID)
+	}
+}
+
+func TestLoad_InvalidRunID_NewFormatVariants(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store := history.NewStore(dir)
+
+	invalid := []string{
+		"20250301-102200-A3F8B2C1",  // uppercase hex rejected
+		"20250301-102200-a3f8b2c",   // 7 chars (too short)
+		"20250301-102200-a3f8b2c1d", // 9 chars (too long)
+		"20250301-102200-",           // empty suffix
+		"20250301-102200-gggggggg",  // non-hex chars
+	}
+	for _, id := range invalid {
+		_, err := store.Load(id)
+		if !errors.Is(err, history.ErrInvalidRunID) {
+			t.Errorf("expected ErrInvalidRunID for %q, got %v", id, err)
+		}
+	}
+}
