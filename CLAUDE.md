@@ -10,7 +10,7 @@ Agents interact via five commands: `version`, `check`, `list`, `run`, `result`. 
 
 **Supported test platforms:** `"edit_mode"` (default) and `"play_mode"` — set via `test_platform` in `testplay.json`. The platform is passed as `-testPlatform EditMode|PlayMode` to Unity.
 
-**Current version:** `v0.3.0-beta` (main). Multi-Instance Core shipped. Next: Host/Client orchestration (v0.4.0-beta).
+**Current version:** `v0.4.0-beta` (main). Host/Client orchestration shipped. Next: AI contract stabilization (v0.5.0-beta).
 
 **Ultimate goal:** PlayMode + network environment testing.
 
@@ -57,7 +57,7 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 | `testplay version` | Print current version as JSON |
 | `testplay check` | Validate Unity path, project path, and testplay.json before running |
 | `testplay list` | Static source scan returning candidate test names (not guaranteed complete) |
-| `testplay run [--filter <name>] [--category <cat>] [--compare-run <run_id>] [--shadow] [--reset-shadow]` | Execute tests; streams progress to `testplay-status.json` |
+| `testplay run [--filter <name>] [--category <cat>] [--compare-run <run_id>] [--shadow] [--reset-shadow] [--scenario <file>]` | Execute tests; streams progress to `testplay-status.json` (single mode) or `testplay-status-<role>.json` (scenario mode) |
 | `testplay result [--last N]` | Re-read stored results; returns run_id history |
 
 **`--reset-shadow`**: Activates shadow workspace mode. With per-run isolation (v0.3+), equivalent to `--shadow` — every run already starts with a fresh workspace. Kept for API compatibility.
@@ -115,6 +115,7 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
   - `timeout_compile`, `timeout_test` — written in two-phase mode when the respective phase deadline fires
   - `running` — written *after* Unity exits, not when tests actually start (phase detection is approximate)
   - `interrupted` — best-effort write on SIGINT/SIGTERM before context cancel; process exits 8
+- `testplay-status-<role>.json` — written per instance in `--scenario` mode. Same schema as `testplay-status.json`. Path is in cwd, named after the instance's `role` field (e.g. `testplay-status-host.json`). Absent for instances that have not yet started.
 - `.testplay/results/<run_id>.json` — one file per run, never overwritten. `run_id` format: `YYYYMMDD-HHMMSS-xxxxxxxx` where the 8-char hex suffix is 4 crypto-random bytes (e.g. `20250301-102200-a3f8b2c1`). Collision probability is negligible even under parallel runs.
 - `.testplay-shadow-<run_id>/` — per-run shadow workspace created automatically when `Temp/UnityLockfile` is detected (Unity Editor open). Contains copied `Assets/`, `ProjectSettings/`, linked `Packages/`, and an empty `Library/` (Unity populates during the run). Removed automatically after each run via `ws.Cleanup()`. Excluded from git via `.gitignore` auto-patching (`testplay-shadow-*/`). Use `--reset-shadow` to force shadow mode (equivalent to `--shadow`; no persistent cache exists to reset).
 
@@ -153,6 +154,7 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 5. `hint` field is included only on exit 1 — the one case where an agent can auto-recover.
 6. `new_failures` in exit 3 is only populated when `--compare-run` is specified; otherwise `null`.
 7. `warnings` (string array) is included only when non-fatal infrastructure issues occur (e.g. result save failed, summary write failed). Absent when no warnings.
+8. `orchestrator_errors` (string array) is included in scenario mode output only when a dependency wait fails (ready timeout or context cancellation). Absent when no orchestration errors occurred.
 
 ## Known Limitations & Risks
 
@@ -164,7 +166,8 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 | Shadow — `Packages/` not fully isolated | `Packages/` is linked (symlink on macOS/Linux, junction on Windows) rather than copied. If Unity or a package tool writes to the `Packages/` tree during batch execution (e.g. embedded packages), those changes propagate back to the original project. This is best-effort isolation. | Low |
 | Shadow — editor-open detection is best-effort | Shadow mode activates when `Temp/UnityLockfile` exists. A stale lockfile after an unclean Unity exit causes unnecessary shadow overhead. The lockfile check is a heuristic, not a guaranteed signal. | Low |
 | Shadow — Library cold-start per run | `Library/` starts empty each run (no cross-run cache reuse). Unity reimports on every invocation, which adds latency for sequential agent-driven runs. In `--scenario` mode each instance pays this cost; expect clean-build-equivalent startup time per instance. Accepted tradeoff for parallel correctness. | Low |
-| Scenario — no status polling | `testplay-status.json` is not written in `--scenario` mode (`StatusWriter` is nil per instance). Agents polling the status file will see stale or absent data during a scenario run. Per-instance status contract is undefined until v0.4+. | Medium |
+| Scenario — status polling (per-instance) | `testplay-status-<role>.json` is written for each instance in `--scenario` mode. No scenario-level aggregate status file exists; agents must poll per-role files. | Low |
+| Scenario — host crash causes full ready timeout | If a host instance exits without reaching its `ready_phase`, dependent clients wait the full `ready_timeout_ms` (default 30s) before receiving exit 4. There is no fast-fail on host crash. | Medium |
 
 ## Roadmap
 
@@ -194,8 +197,13 @@ Shadow Workspace: automatic fallback when the Unity Editor has the project open.
 
 **CLI rename:** binary and all user-facing identifiers renamed `fastplay` → `testplay` to match repo name.
 
-### Remaining items (v0.4+)
+### v0.4.0-beta ✅ — The Orchestrator (shipped)
+Host/Client startup ordering via Go channels (no disk polling).
+- **Per-instance status polling** — `testplay-status-<role>.json` written per instance in scenario mode
+- **Host ready gating** — `depends_on`/`ready_phase`/`ready_timeout_ms` fields in scenario JSON; clients wait for host's ready phase before starting
+- **`orchestrator_errors`** — structured field in scenario output for dependency timeout/cancellation failures
 
-- **Host/Client ready gating** — Host readiness signal before Client starts; IPC or file-based mechanism
-- **Per-instance status polling** — define `testplay-status-<role>.json` contract for scenario mode
+### Remaining items (v0.5+)
+
+- **Test parsing improvements** — `[TestCase]`, `[Theory]`, `[TestCaseSource]` parameterized test support
 - **Network test configuration** — NGO/Mirror harness integration
