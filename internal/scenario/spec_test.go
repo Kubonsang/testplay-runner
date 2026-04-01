@@ -196,3 +196,68 @@ func TestInstanceSpec_EffectiveReadyTimeoutMs_Default(t *testing.T) {
 		t.Errorf("expected default timeout 30000, got %d", inst.EffectiveReadyTimeoutMs())
 	}
 }
+
+func TestLoad_CircularDependency_TwoNodes(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scenario.json")
+	content := `{
+		"schema_version": "1",
+		"instances": [
+			{"role": "host",   "config": "host.json", "depends_on": "client"},
+			{"role": "client", "config": "client.json", "depends_on": "host"}
+		]
+	}`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := scenario.Load(path)
+	if err == nil {
+		t.Fatal("expected error for circular dependency")
+	}
+}
+
+func TestLoad_CircularDependency_ThreeNodes(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scenario.json")
+	content := `{
+		"schema_version": "1",
+		"instances": [
+			{"role": "a", "config": "a.json", "depends_on": "c"},
+			{"role": "b", "config": "b.json", "depends_on": "a"},
+			{"role": "c", "config": "c.json", "depends_on": "b"}
+		]
+	}`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := scenario.Load(path)
+	if err == nil {
+		t.Fatal("expected error for circular dependency (3-node cycle)")
+	}
+}
+
+func TestLoad_LinearDependency_NoCycle(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scenario.json")
+	content := `{
+		"schema_version": "1",
+		"instances": [
+			{"role": "host",    "config": "host.json"},
+			{"role": "client1", "config": "c1.json", "depends_on": "host"},
+			{"role": "client2", "config": "c2.json", "depends_on": "host"}
+		]
+	}`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	sf, err := scenario.Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error for valid linear dependency: %v", err)
+	}
+	if len(sf.Instances) != 3 {
+		t.Errorf("expected 3 instances, got %d", len(sf.Instances))
+	}
+}

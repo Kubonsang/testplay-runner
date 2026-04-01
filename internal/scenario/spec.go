@@ -102,6 +102,26 @@ func Load(path string) (*ScenarioFile, error) {
 		}
 	}
 
+	// Detect circular dependencies via DFS.
+	// Build adjacency: role → depends_on role.
+	deps := make(map[string]string, len(sf.Instances))
+	for _, inst := range sf.Instances {
+		if inst.DependsOn != "" {
+			deps[inst.Role] = inst.DependsOn
+		}
+	}
+	for start := range deps {
+		visited := map[string]bool{start: true}
+		cur := deps[start]
+		for cur != "" {
+			if visited[cur] {
+				return nil, fmt.Errorf("%w: circular dependency detected involving role %q", ErrScenarioInvalid, cur)
+			}
+			visited[cur] = true
+			cur = deps[cur]
+		}
+	}
+
 	sf.dir = filepath.Dir(filepath.Clean(path))
 	return &sf, nil
 }
