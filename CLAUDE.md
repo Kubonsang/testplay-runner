@@ -70,19 +70,18 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 | 1 | Dependency error (Unity/project not found) | Fix env, check `hint` field | ✅ |
 | 2 | Compile failure | Fix source code, see `errors[].absolute_path` + `line` | ✅ |
 | 3 | Test failure | Fix test logic, see `tests[].absolute_path` + `line` | ✅ |
-| 4 | Timeout **or** interrupted by signal | Check `timeout_type` — `"compile"`, `"test"`, or `"total"`; absent means signal | ✅ |
+| 4 | Timeout | Check `timeout_type` — `"compile"`, `"test"`, or `"total"` | ✅ |
 | 5 | Config error (fastplay.json missing/invalid) | Fix config file | ✅ |
 | 6 | Build failure (missing build target, license) | Fix build environment | ❌ not yet returned |
 | 7 | Permission error | Fix path/permissions | ❌ not yet returned |
-| 8 | Interrupted by signal | Retry without code changes | ❌ signal currently returns exit 4 |
+| 8 | Interrupted by signal | Retry without code changes | ✅ |
 
 **timeout_type values for exit 4:**
 - `"compile"` — compile-only phase exceeded `compile_ms` deadline (two-phase mode)
 - `"test"` — test phase exceeded `test_ms` deadline (two-phase mode)
 - `"total"` — outer `total_ms` deadline expired (either phase)
-- *(absent)* — SIGINT/SIGTERM signal interruption
 
-**Signal behavior:** SIGINT/SIGTERM cancels the context (`cancel()`) → executor sees `context.Canceled` → returns exit 4 with no `timeout_type`. Exit 8 is not yet implemented.
+**Signal behavior:** SIGINT/SIGTERM calls `causeCancel(unity.ErrSignalInterrupt)` → executor checks `context.Cause(ctx)` → returns exit 8 with no `timeout_type`. Timeout returns exit 4.
 
 ## fastplay.json (project config)
 
@@ -115,7 +114,7 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
   - `waiting` — defined but never written by the runner (pre-run initial state)
   - `timeout_compile`, `timeout_test` — written in two-phase mode when the respective phase deadline fires
   - `running` — written *after* Unity exits, not when tests actually start (phase detection is approximate)
-  - `interrupted` — best-effort write on SIGINT/SIGTERM before context cancel; process still exits 4
+  - `interrupted` — best-effort write on SIGINT/SIGTERM before context cancel; process exits 8
 - `.fastplay/results/<run_id>.json` — one file per run, never overwritten. `run_id` is a 1-second-granularity timestamp (e.g. `20250301-102200`); concurrent runs within the same second will collide.
 - `.fastplay-shadow/` — shadow workspace created automatically when `Temp/UnityLockfile` is detected (Unity Editor open). Contains copied `Assets/`, `ProjectSettings/`, linked `Packages/`, and a persistent `Library/` cache. Excluded from git via `.gitignore` auto-patching. Delete manually or via `--reset-shadow` if corrupted. See Known Limitations for concurrency and isolation constraints.
 
@@ -162,7 +161,6 @@ Run `fastplay result` to review the `run_id` list and decide the `--compare-run`
 | `list` scanner | Detects `[Test]` and `[UnityTest]` but misses other attributes (`[TestCase]`, `[Theory]`) — list output may be incomplete | Low |
 | Phase detection | `running` phase written after Unity exits, not when tests start — polling agents see misleading phase | Medium |
 | runID collision | 1-second timestamp granularity; concurrent runs within the same second overwrite the result file | Medium |
-| Signal exit code | SIGINT/SIGTERM returns exit 4 (timeout), not exit 8 (interrupted) — agents cannot distinguish | Medium |
 | Config path | Always loads `fastplay.json` from cwd; no `--config` flag — agents must `cd` to project root | Low |
 | Unimplemented exit codes | Exit 6 (build failure), exit 7 (permission) are documented but never returned | Low |
 | Shadow — concurrent run safety | Two simultaneous `fastplay run` invocations against the same project share a single `.fastplay-shadow/` directory. `Prepare` re-copies `Assets/` and `ProjectSettings/` and deletes `Temp/` on every call; a second run starting while the first is executing will overwrite those directories mid-flight. Running `fastplay run` in parallel against the same project path is **not currently safe** in shadow mode. | Medium |
@@ -191,7 +189,7 @@ Shadow Workspace: automatic fallback when the Unity Editor has the project open.
 1. **Unique runID** — UUID/nanosecond-based; prevents concurrent-run result file collision
 2. **`--config` flag** — config path as CLI arg; removes CWD dependency for multi-instance orchestration
 3. **Per-run shadow isolation** — run-ID-scoped shadow dir (`.fastplay-shadow-<run_id>/`); makes parallel `fastplay run` safe
-4. **Exit 8 for signal interruption** — SIGINT/SIGTERM → exit 8; timeout → exit 4 (currently both return exit 4)
+4. ~~**Exit 8 for signal interruption**~~ ✅ — SIGINT/SIGTERM → exit 8; timeout → exit 4
 
 **New capability:**
 5. **`fastplay run --scenario <file>`** — Role-based (Host/Client) multi-instance concurrent execution; individual results aggregated into single scenario JSON

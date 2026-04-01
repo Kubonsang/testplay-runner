@@ -5,17 +5,20 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/Kubonsang/testplay-runner/internal/unity"
 )
 
 // watchSignals listens on sigCh for SIGINT/SIGTERM.
-// On signal: calls cancel() to propagate cancellation, then calls onInterrupt().
-func watchSignals(ctx context.Context, cancel context.CancelFunc, sigCh chan os.Signal, onInterrupt func()) {
+// On signal: calls cancelWithCause(unity.ErrSignalInterrupt) to propagate
+// cancellation with the signal sentinel, then calls onInterrupt().
+func watchSignals(ctx context.Context, cancelWithCause func(error), sigCh chan os.Signal, onInterrupt func()) {
 	select {
 	case <-ctx.Done():
 		// context already cancelled (e.g., timeout)
 		return
 	case <-sigCh:
-		cancel()
+		cancelWithCause(unity.ErrSignalInterrupt)
 		if onInterrupt != nil {
 			onInterrupt()
 		}

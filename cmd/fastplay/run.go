@@ -119,12 +119,12 @@ var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Execute Unity tests",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx, causeCancel := context.WithCancelCause(context.Background())
+		defer causeCancel(nil)
 
 		statusPath := "fastplay-status.json"
 		sigCh := setupSignals()
-		go watchSignals(ctx, cancel, sigCh, func() {
+		go watchSignals(ctx, causeCancel, sigCh, func() {
 			// Best-effort: write interrupted status so pollers see the phase change
 			_ = status.NewWriter(statusPath).Write(status.Status{Phase: status.PhaseInterrupted})
 		})
