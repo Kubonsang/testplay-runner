@@ -7,5 +7,5 @@
     "test_ms": 30000,
     "total_ms": 300000
   },
-  "result_dir": ".fastplay/results"
+  "result_dir": ".testplay/results"
 }
