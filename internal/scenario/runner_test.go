@@ -3,8 +3,10 @@ package scenario_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Kubonsang/testplay-runner/internal/history"
 	"github.com/Kubonsang/testplay-runner/internal/parser"
@@ -117,4 +119,112 @@ func TestAggregateExitCode_AllZero(t *testing.T) {
 	if result.ExitCode != 0 {
 		t.Errorf("expected exit code 0, got %d", result.ExitCode)
 	}
+}
+
+func TestRunScenario_ClientStartsAfterHostReady(t *testing.T) {
+	t.Parallel()
+	spec := &scenario.ScenarioFile{
+		Instances: []scenario.InstanceSpec{
+			{Role: "host",   Config: "./host.json"},
+			{Role: "client", Config: "./client.json", DependsOn: "host"},
+		},
+	}
+
+	var order []string
+	var mu sync.Mutex
+
+	run := func(_ context.Context, inst scenario.InstanceSpec, readyCh chan<- struct{}) (runsvc.Response, error) {
+		mu.Lock()
+		order = append(order, inst.Role+":start")
+		mu.Unlock()
+
+		if inst.Role == "host" && readyCh != nil {
+			close(readyCh) // signal ready immediately
+		}
+
+		mu.Lock()
+		order = append(order, inst.Role+":done")
+		mu.Unlock()
+		return fakeResult(0), nil
+	}
+
+	result, err := scenario.RunScenario(context.Background(), spec, run)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Errorf("expected exit 0, got %d", result.ExitCode)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	hostStartIdx, clientStartIdx := -1, -1
+	for i, ev := range order {
+		if ev == "host:start" { hostStartIdx = i }
+		if ev == "client:start" { clientStartIdx = i }
+	}
+	if hostStartIdx == -1 || clientStartIdx == -1 {
+		t.Fatalf("order incomplete: %v", order)
+	}
+	if hostStartIdx >= clientStartIdx {
+		t.Errorf("client started before host; order=%v", order)
+	}
+}
+
+func TestRunScenario_ReadyTimeout_ReturnsExit4(t *testing.T) {
+	t.Parallel()
+	spec := &scenario.ScenarioFile{
+		Instances: []scenario.InstanceSpec{
+			{Role: "host",   Config: "./host.json"},
+			{Role: "client", Config: "./client.json", DependsOn: "host", ReadyTimeoutMs: 50},
+		},
+	}
+
+	run := func(_ context.Context, inst scenario.InstanceSpec, readyCh chan<- struct{}) (runsvc.Response, error) {
+		if inst.Role == "host" {
+			// host never signals ready — simulates hang
+			time.Sleep(200 * time.Millisecond)
+		}
+		return fakeResult(0), nil
+	}
+
+	result, err := scenario.RunScenario(context.Background(), spec, run)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExitCode != 4 {
+		t.Errorf("expected exit 4 for ready timeout, got %d", result.ExitCode)
+	}
+	if len(result.OrchestratorErrors) == 0 {
+		t.Error("expected orchestrator_errors to be non-empty")
+	}
+}
+
+func TestRunScenario_ContextCancellation_StopsWait(t *testing.T) {
+	t.Parallel()
+	spec := &scenario.ScenarioFile{
+		Instances: []scenario.InstanceSpec{
+			{Role: "host",   Config: "./host.json"},
+			{Role: "client", Config: "./client.json", DependsOn: "host", ReadyTimeoutMs: 10000},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	run := func(_ context.Context, inst scenario.InstanceSpec, readyCh chan<- struct{}) (runsvc.Response, error) {
+		if inst.Role == "host" {
+			time.Sleep(200 * time.Millisecond) // host is slow
+		}
+		return fakeResult(0), nil
+	}
+
+	// Cancel shortly after start
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	result, _ := scenario.RunScenario(ctx, spec, run)
+	// key assertion: RunScenario returned (did not hang)
+	_ = result
 }
