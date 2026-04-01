@@ -12,6 +12,15 @@ var rootCmd = &cobra.Command{
 	Short: "Unity test runner for AI agents",
 }
 
+// configPath is set by the --config persistent flag.
+// Default "fastplay.json" preserves existing behaviour when the flag is absent.
+var configPath = "fastplay.json"
+
+func init() {
+	rootCmd.PersistentFlags().StringVar(&configPath, "config", "fastplay.json",
+		"Path to fastplay.json (default: fastplay.json in cwd)")
+}
+
 func main() {
 	rootCmd.SilenceErrors = true
 	rootCmd.SilenceUsage = true

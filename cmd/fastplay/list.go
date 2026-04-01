@@ -126,7 +126,7 @@ var listCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deps := listDeps{projectPath: "."}
 		// Try to load config to get project path
-		cfg, err := config.Load("fastplay.json")
+		cfg, err := config.Load(configPath)
 		if err == nil {
 			_ = cfg.Validate(false)
 			deps.projectPath = cfg.ProjectPath

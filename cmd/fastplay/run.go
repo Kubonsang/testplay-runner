@@ -42,7 +42,7 @@ func runRun(w io.Writer, deps runDeps) int {
 		baseCtx = context.Background()
 	}
 
-	cfg, err := deps.loadConfig("fastplay.json")
+	cfg, err := deps.loadConfig(configPath)
 	if err != nil {
 		writeJSON(w, map[string]any{"schema_version": "1", "error": err.Error()})
 		return 5
