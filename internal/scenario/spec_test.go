@@ -14,8 +14,8 @@ func TestLoad_ValidFile(t *testing.T) {
 	content := `{
 		"schema_version": "1",
 		"instances": [
-			{"role": "Host",   "config": "./host/fastplay.json"},
-			{"role": "Client", "config": "./client/fastplay.json"}
+			{"role": "Host",   "config": "./host/testplay.json"},
+			{"role": "Client", "config": "./client/testplay.json"}
 		]
 	}`
 	path := filepath.Join(dir, "scenario.json")
@@ -35,7 +35,7 @@ func TestLoad_ValidFile(t *testing.T) {
 	}
 	// Config path should resolve relative to the scenario file's directory.
 	got := sf.ConfigPath(sf.Instances[0])
-	want := filepath.Join(dir, "host", "fastplay.json")
+	want := filepath.Join(dir, "host", "testplay.json")
 	if got != want {
 		t.Errorf("ConfigPath: got %q, want %q", got, want)
 	}
@@ -88,7 +88,7 @@ func TestLoad_MissingRole(t *testing.T) {
 func TestLoad_AbsoluteConfigPath(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	absConfig := filepath.Join(dir, "absolute", "fastplay.json")
+	absConfig := filepath.Join(dir, "absolute", "testplay.json")
 	content := `{"schema_version":"1","instances":[{"role":"Host","config":"` + absConfig + `"}]}`
 	path := filepath.Join(dir, "scenario.json")
 	_ = os.WriteFile(path, []byte(content), 0644)

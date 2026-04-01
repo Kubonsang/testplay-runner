@@ -29,7 +29,7 @@ func validateRunID(runID string) error {
 	return nil
 }
 
-// RunResult is the persisted result of a single fastplay run.
+// RunResult is the persisted result of a single testplay run.
 type RunResult struct {
 	SchemaVersion string            `json:"schema_version"`
 	RunID         string            `json:"run_id"`

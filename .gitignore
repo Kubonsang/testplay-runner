@@ -1,14 +1,14 @@
 # Go build artifacts
-/fastplay
-/fastplay.exe
+/testplay
+/testplay.exe
 
 # Test cache
 *.test
 
 # Runtime files
-fastplay-status.json
-fastplay-status.json.tmp
-.fastplay/
+testplay-status.json
+testplay-status.json.tmp
+.testplay/
 
 # macOS
 .DS_Store

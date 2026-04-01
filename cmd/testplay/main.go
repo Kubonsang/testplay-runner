@@ -8,17 +8,17 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "fastplay",
+	Use:   "testplay",
 	Short: "Unity test runner for AI agents",
 }
 
 // configPath is set by the --config persistent flag.
-// Default "fastplay.json" preserves existing behaviour when the flag is absent.
-var configPath = "fastplay.json"
+// Default "testplay.json" preserves existing behaviour when the flag is absent.
+var configPath = "testplay.json"
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&configPath, "config", "fastplay.json",
-		"Path to fastplay.json (default: fastplay.json in cwd)")
+	rootCmd.PersistentFlags().StringVar(&configPath, "config", "testplay.json",
+		"Path to testplay.json (default: testplay.json in cwd)")
 }
 
 func main() {

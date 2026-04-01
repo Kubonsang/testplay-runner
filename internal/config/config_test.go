@@ -67,7 +67,7 @@ func TestValidate_DefaultResultDir(t *testing.T) {
 	t.Setenv("UNITY_PATH", "/fake/unity")
 	cfg := &config.Config{SchemaVersion: "1", ProjectPath: "/tmp/proj"}
 	_ = cfg.Validate(true)
-	if cfg.ResultDir != ".fastplay/results" {
+	if cfg.ResultDir != ".testplay/results" {
 		t.Errorf("expected default result_dir, got %q", cfg.ResultDir)
 	}
 }

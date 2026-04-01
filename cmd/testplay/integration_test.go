@@ -65,7 +65,7 @@ public class MyTest {
 	checkCode := runCheck(&checkBuf, checkDeps{
 		loadConfig: func(string) (*config.Config, error) { return cfg, nil },
 		fileExists: func(string) bool { return true },
-		configPath: "fastplay.json",
+		configPath: "testplay.json",
 	})
 	if checkCode != 0 {
 		t.Errorf("check: expected exit 0, got %d: %s", checkCode, checkBuf.String())
@@ -97,7 +97,7 @@ public class MyTest {
 	runCode := runRun(&runBuf, runDeps{
 		loadConfig:  func(string) (*config.Config, error) { return cfg, nil },
 		runner:      runner,
-		statusPath:  filepath.Join(dir, "fastplay-status.json"),
+		statusPath:  filepath.Join(dir, "testplay-status.json"),
 		resultStore: store,
 		opts:        RunCmdOptions{},
 	})

@@ -57,7 +57,7 @@ func TestPrepare_ShadowPathUnderSource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	want := filepath.Join(src, ".fastplay-shadow-"+runID)
+	want := filepath.Join(src, ".testplay-shadow-"+runID)
 	if ws.ShadowPath != want {
 		t.Errorf("ShadowPath: got %q, want %q", ws.ShadowPath, want)
 	}
@@ -128,7 +128,7 @@ func TestRemapPaths_TestAndErrorPaths(t *testing.T) {
 	src := t.TempDir()
 	ws := &shadow.Workspace{
 		SourcePath: src,
-		ShadowPath: filepath.Join(src, ".fastplay-shadow"),
+		ShadowPath: filepath.Join(src, ".testplay-shadow"),
 	}
 	result := &history.RunResult{
 		Tests: []parser.TestCase{
@@ -152,7 +152,7 @@ func TestRemapPaths_TestAndErrorPaths(t *testing.T) {
 
 func TestRemapPaths_NoopWhenNoShadowPaths(t *testing.T) {
 	src := t.TempDir()
-	ws := &shadow.Workspace{SourcePath: src, ShadowPath: filepath.Join(src, ".fastplay-shadow")}
+	ws := &shadow.Workspace{SourcePath: src, ShadowPath: filepath.Join(src, ".testplay-shadow")}
 	result := &history.RunResult{
 		Tests: []parser.TestCase{
 			{AbsolutePath: filepath.Join(src, "Assets", "Tests", "Player.cs")},
@@ -168,7 +168,7 @@ func TestRemapPaths_NewFailurePaths(t *testing.T) {
 	src := t.TempDir()
 	ws := &shadow.Workspace{
 		SourcePath: src,
-		ShadowPath: filepath.Join(src, ".fastplay-shadow"),
+		ShadowPath: filepath.Join(src, ".testplay-shadow"),
 	}
 	result := &history.RunResult{
 		NewFailures: []parser.TestCase{
@@ -190,10 +190,10 @@ func TestRemapPaths_ForwardSlashMixedCase(t *testing.T) {
 	ws := &shadow.Workspace{
 		// Simulate filepath.Abs output on Windows: backslashes, uppercase drive.
 		SourcePath: `C:\MyProject`,
-		ShadowPath: `C:\MyProject\.fastplay-shadow`,
+		ShadowPath: `C:\MyProject\.testplay-shadow`,
 	}
 	// Unity log path: forward slashes, lowercase drive letter.
-	unityPath := `c:/myproject/.fastplay-shadow/Assets/Tests/Foo.cs`
+	unityPath := `c:/myproject/.testplay-shadow/Assets/Tests/Foo.cs`
 	result := &history.RunResult{
 		Tests: []parser.TestCase{{AbsolutePath: unityPath}},
 	}
@@ -208,22 +208,22 @@ func TestRemapPaths_ForwardSlashMixedCase(t *testing.T) {
 }
 
 // TestRemapPaths_SiblingDirNotRemapped verifies that a path whose directory
-// name merely starts with ".fastplay-shadow" (e.g. ".fastplay-shadowX") is not
+// name merely starts with ".testplay-shadow" (e.g. ".testplay-shadowX") is not
 // incorrectly treated as a shadow path due to a loose prefix match.
 func TestRemapPaths_SiblingDirNotRemapped(t *testing.T) {
 	ws := &shadow.Workspace{
 		SourcePath: `C:\MyProject`,
-		ShadowPath: `C:\MyProject\.fastplay-shadow`,
+		ShadowPath: `C:\MyProject\.testplay-shadow`,
 	}
-	// Path under a sibling directory ".fastplay-shadowX" — must not be remapped.
-	siblingPath := `C:/MyProject/.fastplay-shadowX/Assets/Tests/Foo.cs`
+	// Path under a sibling directory ".testplay-shadowX" — must not be remapped.
+	siblingPath := `C:/MyProject/.testplay-shadowX/Assets/Tests/Foo.cs`
 	result := &history.RunResult{
 		Tests: []parser.TestCase{{AbsolutePath: siblingPath}},
 	}
 	ws.RemapPaths(result)
 	got := result.Tests[0].AbsolutePath
 	// Normalised to forward slashes but prefix must not be swapped.
-	want := `C:/MyProject/.fastplay-shadowX/Assets/Tests/Foo.cs`
+	want := `C:/MyProject/.testplay-shadowX/Assets/Tests/Foo.cs`
 	if got != want {
 		t.Errorf("RemapPaths sibling dir: got %q, want %q", got, want)
 	}
@@ -233,7 +233,7 @@ func TestRemapPaths_MessageFieldReplaced(t *testing.T) {
 	src := t.TempDir()
 	ws := &shadow.Workspace{
 		SourcePath: src,
-		ShadowPath: filepath.Join(src, ".fastplay-shadow"),
+		ShadowPath: filepath.Join(src, ".testplay-shadow"),
 	}
 	shadowMsg := "error in file " + filepath.Join(ws.ShadowPath, "Assets", "Scripts", "Foo.cs") + " at line 5"
 	result := &history.RunResult{
@@ -263,7 +263,7 @@ func TestRemapPaths_MessageFieldReplaced(t *testing.T) {
 
 func TestRemapPaths_MessageNoShadowPath_Unchanged(t *testing.T) {
 	src := t.TempDir()
-	ws := &shadow.Workspace{SourcePath: src, ShadowPath: filepath.Join(src, ".fastplay-shadow")}
+	ws := &shadow.Workspace{SourcePath: src, ShadowPath: filepath.Join(src, ".testplay-shadow")}
 	original := "CS0246: The type or namespace name 'Foo' could not be found"
 	result := &history.RunResult{
 		Errors: []history.CompileError{{Message: original}},
@@ -278,10 +278,10 @@ func TestRemapString_MixedCaseDriveLetter(t *testing.T) {
 	// Simulates Windows: Unity logs lowercase drive, filepath.Abs returns uppercase.
 	ws := &shadow.Workspace{
 		SourcePath: `C:\MyProject`,
-		ShadowPath: `C:\MyProject\.fastplay-shadow`,
+		ShadowPath: `C:\MyProject\.testplay-shadow`,
 	}
 	// Message contains forward slashes and lowercase drive (as Unity emits on Windows).
-	msg := `error in file c:/myproject/.fastplay-shadow/Assets/Scripts/Foo.cs at line 5`
+	msg := `error in file c:/myproject/.testplay-shadow/Assets/Scripts/Foo.cs at line 5`
 	result := &history.RunResult{
 		Errors: []history.CompileError{{Message: msg}},
 	}
@@ -396,7 +396,7 @@ func TestPrepare_CleansUpOnFirstCreateFailure(t *testing.T) {
 	t.Cleanup(func() { os.Chmod(psDir, 0755) })
 
 	const runID = "test-run-010"
-	shadowPath := filepath.Join(src, ".fastplay-shadow-"+runID)
+	shadowPath := filepath.Join(src, ".testplay-shadow-"+runID)
 
 	// Confirm shadow does not exist yet (first-create scenario).
 	if _, err := os.Stat(shadowPath); !os.IsNotExist(err) {
@@ -526,7 +526,7 @@ func TestPrepare_ShadowDirNameContainsRunID(t *testing.T) {
 	}
 	defer ws.Cleanup()
 
-	if !strings.HasSuffix(ws.ShadowPath, ".fastplay-shadow-"+runID) {
-		t.Errorf("ShadowPath %q does not end with '.fastplay-shadow-%s'", ws.ShadowPath, runID)
+	if !strings.HasSuffix(ws.ShadowPath, ".testplay-shadow-"+runID) {
+		t.Errorf("ShadowPath %q does not end with '.testplay-shadow-%s'", ws.ShadowPath, runID)
 	}
 }

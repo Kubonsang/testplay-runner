@@ -45,18 +45,18 @@ var resultCmd = &cobra.Command{
 	Use:   "result",
 	Short: "View stored test result history",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		resultDir := ".fastplay/results"
+		resultDir := ".testplay/results"
 		var warn string
 		cfg, err := config.Load(configPath)
 		if err == nil {
 			if valErr := cfg.Validate(false); valErr == nil && cfg.ResultDir != "" {
 				resultDir = cfg.ResultDir
 			} else if valErr != nil {
-				warn = "fastplay.json validation failed, using default result_dir: " + valErr.Error()
+				warn = "testplay.json validation failed, using default result_dir: " + valErr.Error()
 			}
 		} else if !errors.Is(err, config.ErrConfigNotFound) {
-			// fastplay.json exists but is malformed
-			warn = "fastplay.json load failed, using default result_dir: " + err.Error()
+			// testplay.json exists but is malformed
+			warn = "testplay.json load failed, using default result_dir: " + err.Error()
 		}
 		store := history.NewStore(resultDir)
 		deps := resultDeps{store: store, last: resultLast, warning: warn}

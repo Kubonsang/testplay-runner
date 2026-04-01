@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Phase represents the current execution phase of a fastplay run.
+// Phase represents the current execution phase of a testplay run.
 type Phase string
 
 const (
@@ -21,7 +21,7 @@ const (
 	PhaseInterrupted    Phase = "interrupted"
 )
 
-// Status is written atomically to fastplay-status.json during a run.
+// Status is written atomically to testplay-status.json during a run.
 type Status struct {
 	SchemaVersion string `json:"schema_version"`
 	Phase         Phase  `json:"phase"`

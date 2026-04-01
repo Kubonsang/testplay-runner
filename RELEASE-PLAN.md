@@ -1,4 +1,4 @@
-# 📈 fastplay Release Plan & Version History
+# 📈 testplay Release Plan & Version History
 
 **현재 버전:** `v0.2.0-beta`
 **목표:** 단순한 로컬 테스트 래퍼를 넘어, AI 에이전트에 최적화된 시나리오 기반 멀티 인스턴스 러너로 단계적으로 확장
@@ -23,12 +23,12 @@
 
 - **목표:** 개발자의 작업 흐름을 끊지 않는 백그라운드 격리 실행 환경 확보
 - **포함 기능:**
-  - `Temp/UnityLockfile` 감지 시 `.fastplay-shadow/` 워크스페이스 자동 생성
+  - `Temp/UnityLockfile` 감지 시 `.testplay-shadow/` 워크스페이스 자동 생성
   - OS별 심링크/Junction 처리를 통한 `Packages/` 연결, `Library/` 영구 캐시 보존
   - 심링크·컨텍스트 취소·FileMode 보존·롤백 안전성을 갖춘 프로덕션 수준 강화
   - 결과 JSON의 경로 재매핑(Path Remapping) — 에이전트는 원본 경로만 확인
   - `--shadow` (강제 활성화) / `--reset-shadow` (캐시 재구축) 플래그 도입
-- **릴리즈 게이트:** 에디터가 켜진 상태로 `fastplay run`을 실행해도 원본 워크스페이스를 오염시키지 않고, 결과 JSON과 artifact가 원본 기준 경로로 매핑될 것
+- **릴리즈 게이트:** 에디터가 켜진 상태로 `testplay run`을 실행해도 원본 워크스페이스를 오염시키지 않고, 결과 JSON과 artifact가 원본 기준 경로로 매핑될 것
 
 ## 🔵 v0.3.0-beta (The Multi-Instance Core)
 **테마:** 시나리오 기반 다중 실행의 뼈대
@@ -37,10 +37,10 @@
 - **v0.2 P1 backlog 해소 (다중 실행의 전제 조건):**
   - **runID UUID 기반 교체** — 1초 단위 타임스탬프 → UUID/nanosecond; 동시 실행 시 결과 파일 충돌 방지 (현재 `Medium` Known Limitation)
   - **`--config` flag 도입** — CWD 의존 제거; 오케스트레이터가 각 인스턴스에 다른 config 경로를 직접 지정 가능
-  - **Per-run shadow 격리** — run-ID 기반 독립 shadow 디렉터리(`.fastplay-shadow-<run_id>/`); 병렬 `fastplay run` 안전성 확보 (현재 `Medium` Known Limitation)
+  - **Per-run shadow 격리** — run-ID 기반 독립 shadow 디렉터리(`.testplay-shadow-<run_id>/`); 병렬 `testplay run` 안전성 확보 (현재 `Medium` Known Limitation)
   - **Exit 8 구현** — SIGINT/SIGTERM → exit 8, timeout → exit 4로 명확 구분 (현재 두 경우 모두 exit 4)
 - **포함 기능:**
-  - `fastplay run --scenario <file>` 인터페이스 최초 도입
+  - `testplay run --scenario <file>` 인터페이스 최초 도입
   - Role 기반(Host/Client) 다중 섀도우 워크스페이스 동시 실행
   - 개별 `results.xml`과 `status`를 단일 시나리오 결과 JSON으로 1차 통합
 - **릴리즈 게이트:** 시나리오 파일로 2개 이상의 인스턴스가 동시 실행되고, 합쳐진 JSON 결과가 일관된 구조로 출력될 것
@@ -71,7 +71,7 @@
 
 - **목표:** 정식 릴리즈를 앞두고 사용자 진입 장벽 낮추기 및 DX 향상
 - **포함 기능:**
-  - `fastplay init` 명령어 도입
+  - `testplay init` 명령어 도입
   - GoReleaser 연동을 통한 Windows/macOS/Linux Pre-built 바이너리 배포 체계 구축
   - 공식 문서(README, Docs) 전면 개편
 - **릴리즈 게이트:** 설치 경로가 단순해지고, 빈 프로젝트에서도 `init`과 기본 설정만으로 첫 실행 흐름을 재현할 수 있을 것
@@ -99,7 +99,7 @@
 
 ## 🔮 Post-v1.0 (장기 목표)
 
-- **`fastplay watch`**
+- **`testplay watch`**
   - 파일 변경 감지 및 섀도우 백그라운드 자동 재실행 기능
   - 코어 시나리오 실행 계약이 충분히 안정화된 뒤 도입 검토
 - **추가 DX 기능**

@@ -1,2 +1,2 @@
-// Package status writes atomic fastplay-status.json updates.
+// Package status writes atomic testplay-status.json updates.
 package status

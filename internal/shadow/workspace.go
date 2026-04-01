@@ -14,12 +14,12 @@ import (
 // Workspace represents an active shadow workspace for a Unity project.
 type Workspace struct {
 	SourcePath string // original project root (absolute)
-	ShadowPath string // .fastplay-shadow/ root (absolute)
+	ShadowPath string // .testplay-shadow/ root (absolute)
 }
 
 // ShadowWorkspaceDir returns the per-run shadow directory for a given runID.
 func ShadowWorkspaceDir(sourcePath, runID string) string {
-	return filepath.Join(sourcePath, ".fastplay-shadow-"+runID)
+	return filepath.Join(sourcePath, ".testplay-shadow-"+runID)
 }
 
 // Prepare creates an isolated shadow workspace for a single run.
@@ -27,7 +27,7 @@ func ShadowWorkspaceDir(sourcePath, runID string) string {
 //   - Packages/ is linked (symlink on unix, junction on windows); linked once per workspace.
 //   - Library/ is created empty; Unity populates it during the run.
 //   - Temp/ is deleted before the run; Unity recreates it.
-//   - .gitignore is patched to exclude .fastplay-shadow-*/ (non-fatal on failure).
+//   - .gitignore is patched to exclude .testplay-shadow-*/ (non-fatal on failure).
 //
 // The caller must call ws.Cleanup() after the run to remove the per-run directory.
 func Prepare(ctx context.Context, sourcePath, runID string) (*Workspace, error) {
@@ -75,7 +75,7 @@ func Prepare(ctx context.Context, sourcePath, runID string) (*Workspace, error) 
 	_ = os.RemoveAll(filepath.Join(shadowPath, "Temp"))
 
 	// Patch .gitignore — non-fatal.
-	_ = EnsureIgnored(abs, ".fastplay-shadow-*/")
+	_ = EnsureIgnored(abs, ".testplay-shadow-*/")
 
 	succeeded = true
 	return ws, nil
@@ -134,7 +134,7 @@ func (w *Workspace) RemapPaths(result *history.RunResult) {
 //
 // shadowPath is anchored with a trailing "/" before comparison to prevent
 // accidental prefix matches against sibling directories whose names start with
-// ".fastplay-shadow" (e.g. ".fastplay-shadowX").
+// ".testplay-shadow" (e.g. ".testplay-shadowX").
 func remapAbsPath(absPath, shadowPath, sourcePath string) string {
 	norm := strings.ReplaceAll(absPath, `\`, "/")
 	// Anchor with trailing "/" so prefix matching is directory-exact.

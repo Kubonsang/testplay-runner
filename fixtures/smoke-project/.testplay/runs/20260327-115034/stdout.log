@@ -1,0 +1,22 @@
+attempt to write a readonly database
+attempt to write a readonly database
+Unity Editor version:    2022.3.10f1 (ff3792e53c62)
+Branch:                  2022.3/staging
+Build type:              Release
+Batch mode:              YES
+macOS version:           Version 26.3 (Build 25D125)
+Darwin version:          25.3.0
+Architecture:            arm64
+Running under Rosetta:   NO
+Available memory:        16384 MB
+[Licensing::Module] Trying to connect to existing licensing client channel...
+No explicit failure code handling for error of type 1
+[Licensing::IpcConnector] Error: Failed to connect to License Client channel (error code: 0x80000000) .
+[Licensing::IpcConnector] Error: Connection attempt to the License Client on channel: "LicenseClient-gubonsang" failed); code: "0x80000000"
+[Licensing::IpcConnector] Error: Failed to connect to License Client channel (error code: 0x80000000) .
+[Licensing::IpcConnector] Connection attempt to the License Client on channel: "LicenseClient-gubonsang-2022.3.10" failed because channel doesn't exist; code: "0x80000002"
+Launching external process: /Applications/Unity/Hub/Editor/2022.3.10f1/Unity.app/Contents/Frameworks/UnityLicensingClient.app/Contents/MacOS/Unity.Licensing.Client
+[Licensing::Module] Successfully launched the LicensingClient (PId: 27789)
+[Licensing::IpcConnector] Connection attempt to the License Client on channel: "LicenseClient-gubonsang-2022.3.10" failed because channel doesn't exist; code: "0x80000002"
+[Licensing::Module] Timed-out after 60.01s, waiting for channel: "LicenseClient-gubonsang-2022.3.10"
+IPC channel to LicensingClient doesn't exist; aborting

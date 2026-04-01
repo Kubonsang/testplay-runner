@@ -14,7 +14,7 @@ var ErrScenarioInvalid = errors.New("scenario file is invalid")
 // InstanceSpec describes a single instance to run in the scenario.
 type InstanceSpec struct {
 	Role   string `json:"role"`
-	Config string `json:"config"` // path to fastplay.json, relative to scenario file or absolute
+	Config string `json:"config"` // path to testplay.json, relative to scenario file or absolute
 }
 
 // ScenarioFile is the parsed representation of a scenario JSON file.

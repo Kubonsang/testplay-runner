@@ -1,2 +1,2 @@
-// Package config loads and validates fastplay.json.
+// Package config loads and validates testplay.json.
 package config

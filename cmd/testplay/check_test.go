@@ -19,7 +19,7 @@ func TestCheckCmd_ReadyTrue(t *testing.T) {
 	code := runCheck(&buf, checkDeps{
 		loadConfig: func(string) (*config.Config, error) { return cfg, nil },
 		fileExists: func(string) bool { return true },
-		configPath: "fastplay.json",
+		configPath: "testplay.json",
 	})
 	if code != 0 {
 		t.Errorf("expected exit 0, got %d", code)
@@ -38,7 +38,7 @@ func TestCheckCmd_ConfigMissing_Exit5(t *testing.T) {
 			return nil, fmt.Errorf("%w", config.ErrConfigNotFound)
 		},
 		fileExists: func(string) bool { return false },
-		configPath: "fastplay.json",
+		configPath: "testplay.json",
 	})
 	if code != 5 {
 		t.Errorf("expected exit 5, got %d", code)
@@ -62,7 +62,7 @@ func TestCheckCmd_UnityNotFound_Exit1WithHint(t *testing.T) {
 		fileExists: func(path string) bool {
 			return path != "/fake/unity" // Unity binary missing
 		},
-		configPath: "fastplay.json",
+		configPath: "testplay.json",
 	})
 	if code != 1 {
 		t.Errorf("expected exit 1, got %d", code)
@@ -89,7 +89,7 @@ func TestCheckCmd_InvalidConfig_Exit5(t *testing.T) {
 	code := runCheck(&buf, checkDeps{
 		loadConfig: func(string) (*config.Config, error) { return cfg, nil },
 		fileExists: func(string) bool { return true },
-		configPath: "fastplay.json",
+		configPath: "testplay.json",
 	})
 	if code != 5 {
 		t.Errorf("expected exit 5, got %d", code)
@@ -116,7 +116,7 @@ func TestCheckCmd_ProjectDirMissing_Exit1WithHint(t *testing.T) {
 		fileExists: func(path string) bool {
 			return path != "/fake/project" // project dir missing
 		},
-		configPath: "fastplay.json",
+		configPath: "testplay.json",
 	})
 	if code != 1 {
 		t.Errorf("expected exit 1, got %d", code)

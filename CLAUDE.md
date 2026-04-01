@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-FastPlay Runner (`fastplay`) is a thin Go CLI wrapper around Unity's test runner. It solves eight specific problems that make Unity's raw CLI unusable for AI agents: unreliable exit codes, XML-only results, ambiguous compile vs. test failures, no progress visibility, no pre-validation, and platform path differences.
+TestPlay Runner (`testplay`) is a thin Go CLI wrapper around Unity's test runner. It solves eight specific problems that make Unity's raw CLI unusable for AI agents: unreliable exit codes, XML-only results, ambiguous compile vs. test failures, no progress visibility, no pre-validation, and platform path differences.
 
 Agents interact via five commands: `version`, `check`, `list`, `run`, `result`. All stdout is JSON; all human-readable logs go to stderr.
 
-**Supported test platforms:** `"edit_mode"` (default) and `"play_mode"` — set via `test_platform` in `fastplay.json`. The platform is passed as `-testPlatform EditMode|PlayMode` to Unity.
+**Supported test platforms:** `"edit_mode"` (default) and `"play_mode"` — set via `test_platform` in `testplay.json`. The platform is passed as `-testPlatform EditMode|PlayMode` to Unity.
 
 **Current version:** `v0.2.0-beta` (main). Shadow Workspace shipped. Next: multi-instance core (v0.3.0-beta).
 
@@ -18,11 +18,11 @@ Agents interact via five commands: `version`, `check`, `list`, `run`, `result`. 
 
 ```bash
 # Build for current platform
-go build ./cmd/fastplay
+go build ./cmd/testplay
 
 # Cross-compile
-GOOS=darwin  GOARCH=amd64 go build -o fastplay       ./cmd/fastplay
-GOOS=windows GOARCH=amd64 go build -o fastplay.exe   ./cmd/fastplay
+GOOS=darwin  GOARCH=amd64 go build -o testplay       ./cmd/testplay
+GOOS=windows GOARCH=amd64 go build -o testplay.exe   ./cmd/testplay
 
 # Run tests
 go test ./...
@@ -36,16 +36,16 @@ External dependencies are kept minimal — `cobra` for CLI parsing, everything e
 ## Package Structure
 
 ```
-cmd/fastplay/        # CLI entry points for version, check, list, run, result subcommands
+cmd/testplay/        # CLI entry points for version, check, list, run, result subcommands
 internal/
   unity/             # Unity process execution and path discovery
   parser/            # NUnit XML → Go struct → JSON conversion
-  status/            # Atomic fastplay-status.json updates during run
+  status/            # Atomic testplay-status.json updates during run
   history/           # Result file persistence and history queries
   runsvc/            # Run orchestration service (backend selection, path remap)
   shadow/            # Shadow Workspace — lockfile detection, copy/link, path remap
   artifacts/         # Per-run artifact directory and file management
-  config/            # fastplay.json loading and validation
+  config/            # testplay.json loading and validation
 ```
 
 ## CLI Contract (stdout = JSON only)
@@ -54,11 +54,11 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 
 | Command | Purpose |
 |---|---|
-| `fastplay version` | Print current version as JSON |
-| `fastplay check` | Validate Unity path, project path, and fastplay.json before running |
-| `fastplay list` | Static source scan returning candidate test names (not guaranteed complete) |
-| `fastplay run [--filter <name>] [--category <cat>] [--compare-run <run_id>] [--shadow] [--reset-shadow]` | Execute tests; streams progress to `fastplay-status.json` |
-| `fastplay result [--last N]` | Re-read stored results; returns run_id history |
+| `testplay version` | Print current version as JSON |
+| `testplay check` | Validate Unity path, project path, and testplay.json before running |
+| `testplay list` | Static source scan returning candidate test names (not guaranteed complete) |
+| `testplay run [--filter <name>] [--category <cat>] [--compare-run <run_id>] [--shadow] [--reset-shadow]` | Execute tests; streams progress to `testplay-status.json` |
+| `testplay result [--last N]` | Re-read stored results; returns run_id history |
 
 **`--reset-shadow`**: Activates shadow workspace mode. With per-run isolation (v0.3+), equivalent to `--shadow` — every run already starts with a fresh workspace. Kept for API compatibility.
 
@@ -71,7 +71,7 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 | 2 | Compile failure | Fix source code, see `errors[].absolute_path` + `line` | ✅ |
 | 3 | Test failure | Fix test logic, see `tests[].absolute_path` + `line` | ✅ |
 | 4 | Timeout | Check `timeout_type` — `"compile"`, `"test"`, or `"total"` | ✅ |
-| 5 | Config error (fastplay.json missing/invalid) | Fix config file | ✅ |
+| 5 | Config error (testplay.json missing/invalid) | Fix config file | ✅ |
 | 6 | Build failure (missing build target, license) | Fix build environment | ❌ not yet returned |
 | 7 | Permission error | Fix path/permissions | ❌ not yet returned |
 | 8 | Interrupted by signal | Retry without code changes | ✅ |
@@ -83,7 +83,7 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 
 **Signal behavior:** SIGINT/SIGTERM calls `causeCancel(unity.ErrSignalInterrupt)` → executor checks `context.Cause(ctx)` → returns exit 8 with no `timeout_type`. Timeout returns exit 4.
 
-## fastplay.json (project config)
+## testplay.json (project config)
 
 ```json
 {
@@ -94,42 +94,42 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
   "timeout": {
     "total_ms": 300000
   },
-  "result_dir": ".fastplay/results"
+  "result_dir": ".testplay/results"
 }
 ```
 
 `test_platform` accepts `"edit_mode"` (default) or `"play_mode"`.
 
-`unity_path` falls back to `UNITY_PATH` env var if omitted. `project_path` defaults to the directory containing `fastplay.json`.
+`unity_path` falls back to `UNITY_PATH` env var if omitted. `project_path` defaults to the directory containing `testplay.json`.
 
 **Two-phase execution:** when both `compile_ms` and `test_ms` are set (both > 0), two-phase execution is enabled. Both fields must be set together — setting only one is a validation error. When neither is set, single-phase execution uses only `total_ms`.
 
-**Config path:** Loaded from the path given by `--config <path>` (default: `"fastplay.json"` in cwd). When `--config` is omitted, behaviour is unchanged from v0.2.
+**Config path:** Loaded from the path given by `--config <path>` (default: `"testplay.json"` in cwd). When `--config` is omitted, behaviour is unchanged from v0.2.
 
 ## Runtime Files
 
-- `fastplay-status.json` — written atomically during `run`; poll this to observe progress.
-  - **Path:** hardcoded to `"fastplay-status.json"` in cwd. No config option.
+- `testplay-status.json` — written atomically during `run`; poll this to observe progress.
+  - **Path:** hardcoded to `"testplay-status.json"` in cwd. No config option.
   - **Phase values actually emitted:** `compiling → running → done | timeout_compile | timeout_test | timeout_total | interrupted`
   - `waiting` — defined but never written by the runner (pre-run initial state)
   - `timeout_compile`, `timeout_test` — written in two-phase mode when the respective phase deadline fires
   - `running` — written *after* Unity exits, not when tests actually start (phase detection is approximate)
   - `interrupted` — best-effort write on SIGINT/SIGTERM before context cancel; process exits 8
-- `.fastplay/results/<run_id>.json` — one file per run, never overwritten. `run_id` format: `YYYYMMDD-HHMMSS-xxxxxxxx` where the 8-char hex suffix is 4 crypto-random bytes (e.g. `20250301-102200-a3f8b2c1`). Collision probability is negligible even under parallel runs.
-- `.fastplay-shadow-<run_id>/` — per-run shadow workspace created automatically when `Temp/UnityLockfile` is detected (Unity Editor open). Contains copied `Assets/`, `ProjectSettings/`, linked `Packages/`, and an empty `Library/` (Unity populates during the run). Removed automatically after each run via `ws.Cleanup()`. Excluded from git via `.gitignore` auto-patching (`fastplay-shadow-*/`). Use `--reset-shadow` to force shadow mode (equivalent to `--shadow`; no persistent cache exists to reset).
+- `.testplay/results/<run_id>.json` — one file per run, never overwritten. `run_id` format: `YYYYMMDD-HHMMSS-xxxxxxxx` where the 8-char hex suffix is 4 crypto-random bytes (e.g. `20250301-102200-a3f8b2c1`). Collision probability is negligible even under parallel runs.
+- `.testplay-shadow-<run_id>/` — per-run shadow workspace created automatically when `Temp/UnityLockfile` is detected (Unity Editor open). Contains copied `Assets/`, `ProjectSettings/`, linked `Packages/`, and an empty `Library/` (Unity populates during the run). Removed automatically after each run via `ws.Cleanup()`. Excluded from git via `.gitignore` auto-patching (`testplay-shadow-*/`). Use `--reset-shadow` to force shadow mode (equivalent to `--shadow`; no persistent cache exists to reset).
 
 ## Agent Recommended Usage Flow
 
-Standard flow for agents using FastPlay Runner:
+Standard flow for agents using TestPlay Runner:
 
 **Step 1 — check**
-Run `fastplay check` to validate the environment. If `ready: false`, fix the environment per the `hint` field and re-check.
+Run `testplay check` to validate the environment. If `ready: false`, fix the environment per the `hint` field and re-check.
 
 **Step 2 — list**
-Run `fastplay list` to get candidate test names. Collect names related to modified code as `--filter` candidates. Assume the list may be incomplete.
+Run `testplay list` to get candidate test names. Collect names related to modified code as `--filter` candidates. Assume the list may be incomplete.
 
 **Step 3 — run**
-Run `fastplay run`. Use `--compare-run` to enable regression analysis. Poll `fastplay-status.json` to track progress.
+Run `testplay run`. Use `--compare-run` to enable regression analysis. Poll `testplay-status.json` to track progress.
 
 **Step 4 — Evaluate result**
 Branch on exit code. If exit 4, sub-branch on `timeout_type`. If exit 3 with `--compare-run` specified, check `new_failures` to determine regression.
@@ -138,11 +138,11 @@ Branch on exit code. If exit 4, sub-branch on `timeout_type`. If exit 3 with `--
 If exit 2, go to `errors[].absolute_path` + `line` to fix source. If exit 3, go directly to the failing test's `absolute_path`.
 
 **Step 6 — result**
-Run `fastplay result` to review the `run_id` list and decide the `--compare-run` value for the next run.
+Run `testplay result` to review the `run_id` list and decide the `--compare-run` value for the next run.
 
 > `version → check → list → run → result` — this five-command interface is the agent's entire surface. If this flow breaks, the project breaks.
 
-**Shadow mode is transparent to agents.** When `Temp/UnityLockfile` is present, `fastplay run` automatically uses a per-run `.fastplay-shadow-<run_id>/` workspace and remaps all `absolute_path` fields in the JSON output back to source project paths. Agents do not need to detect or handle shadow mode explicitly.
+**Shadow mode is transparent to agents.** When `Temp/UnityLockfile` is present, `testplay run` automatically uses a per-run `.testplay-shadow-<run_id>/` workspace and remaps all `absolute_path` fields in the JSON output back to source project paths. Agents do not need to detect or handle shadow mode explicitly.
 
 ## Output Design Rules
 
@@ -174,10 +174,10 @@ Single-process Unity test runner with structured JSON output, phase-aware timeou
 
 ### v0.2.0-beta ✅ — The Editor Unlock (shipped)
 Shadow Workspace: automatic fallback when the Unity Editor has the project open.
-- Shadow Workspace auto-fallback — `Temp/UnityLockfile` detection → `.fastplay-shadow/` isolation
+- Shadow Workspace auto-fallback — `Temp/UnityLockfile` detection → `.testplay-shadow/` isolation
 - Path remapping — all `absolute_path` fields in JSON output use source project paths
 - `--shadow` flag (force) / `--reset-shadow` flag (rebuild Library cache)
-- `.gitignore` auto-patching — `.fastplay-shadow/` excluded on first use
+- `.gitignore` auto-patching — `.testplay-shadow/` excluded on first use
 - Production hardening: symlink preservation, FileMode copy, ctx-cancel mid-copy, rollback safety, ring-buffer stderr tail, Null Object StatusWriter
 
 ### v0.3.0-beta 🔵 — The Multi-Instance Core (next)
@@ -185,11 +185,11 @@ Shadow Workspace: automatic fallback when the Unity Editor has the project open.
 **P1 backlog resolved as prerequisites:**
 1. **Unique runID** — UUID/nanosecond-based; prevents concurrent-run result file collision
 2. **`--config` flag** — config path as CLI arg; removes CWD dependency for multi-instance orchestration
-3. **Per-run shadow isolation** — run-ID-scoped shadow dir (`.fastplay-shadow-<run_id>/`); makes parallel `fastplay run` safe
+3. **Per-run shadow isolation** — run-ID-scoped shadow dir (`.testplay-shadow-<run_id>/`); makes parallel `testplay run` safe
 4. ~~**Exit 8 for signal interruption**~~ ✅ — SIGINT/SIGTERM → exit 8; timeout → exit 4
 
 **New capability:**
-5. **`fastplay run --scenario <file>`** — Role-based (Host/Client) multi-instance concurrent execution; individual results aggregated into single scenario JSON
+5. **`testplay run --scenario <file>`** — Role-based (Host/Client) multi-instance concurrent execution; individual results aggregated into single scenario JSON
 
 ### Remaining items (v0.4+)
 

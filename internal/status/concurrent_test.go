@@ -12,7 +12,7 @@ import (
 
 func TestWrite_ConcurrentWrites_NoRaceCondition(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "fastplay-status.json")
+	path := filepath.Join(dir, "testplay-status.json")
 	w := status.NewWriter(path)
 
 	var wg sync.WaitGroup

@@ -95,7 +95,7 @@ func TestEventLog_Append_OrderPreserved(t *testing.T) {
 
 func TestManager_Write_UpdatesSnapshotAndAppendsEvent(t *testing.T) {
 	dir := t.TempDir()
-	snapshotPath := filepath.Join(dir, "fastplay-status.json")
+	snapshotPath := filepath.Join(dir, "testplay-status.json")
 	eventsPath := filepath.Join(dir, "events.ndjson")
 
 	mgr := status.NewManager(

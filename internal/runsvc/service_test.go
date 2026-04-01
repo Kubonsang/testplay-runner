@@ -72,7 +72,7 @@ func TestService_AllPass_ExitCode0(t *testing.T) {
 	svc := &runsvc.Service{
 		Runner:    fake,
 		Store:     history.NewStore(cfg.ResultDir),
-		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
 		StatusWriter: status.NewWriter(filepath.Join(dir, "status.json")),
 		Clock:     func() time.Time { return time.Date(2026, 3, 26, 12, 0, 0, 0, time.UTC) },
 	}
@@ -98,7 +98,7 @@ func TestService_StatusSnapshot_ContainsRunID(t *testing.T) {
 	svc := &runsvc.Service{
 		Runner:       fake,
 		Store:        history.NewStore(cfg.ResultDir),
-		Artifacts:    artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Artifacts:    artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
 		StatusWriter: status.NewWriter(statusPath),
 		Clock:        func() time.Time { return time.Date(2026, 3, 26, 12, 0, 0, 0, time.UTC) },
 	}
@@ -125,7 +125,7 @@ func TestService_EventsNDJSON_WrittenToArtifactDir(t *testing.T) {
 	cfg, dir := baseConfig(t)
 	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
 	fake := &fakeRunner{resultsXML: xmlData}
-	artifactRoot := filepath.Join(dir, ".fastplay", "runs")
+	artifactRoot := filepath.Join(dir, ".testplay", "runs")
 
 	svc := &runsvc.Service{
 		Runner:       fake,
@@ -200,7 +200,7 @@ func TestService_TestFailure_ExitCode3(t *testing.T) {
 	svc := &runsvc.Service{
 		Runner:    fake,
 		Store:     history.NewStore(cfg.ResultDir),
-		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
 		Clock:     func() time.Time { return time.Now() },
 	}
 
@@ -218,7 +218,7 @@ func TestService_CompileFailure_ExitCode2(t *testing.T) {
 	svc := &runsvc.Service{
 		Runner:    fake,
 		Store:     history.NewStore(cfg.ResultDir),
-		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
 		Clock:     func() time.Time { return time.Now() },
 	}
 
@@ -239,7 +239,7 @@ func TestService_CompileFailure_WithNonZeroExitCode_ExitCode2(t *testing.T) {
 	svc := &runsvc.Service{
 		Runner:    fake,
 		Store:     history.NewStore(cfg.ResultDir),
-		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
 		Clock:     func() time.Time { return time.Now() },
 	}
 
@@ -258,7 +258,7 @@ func TestService_RunID_MatchesClock(t *testing.T) {
 	svc := &runsvc.Service{
 		Runner:    fake,
 		Store:     history.NewStore(cfg.ResultDir),
-		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
 		Clock:     func() time.Time { return fixed },
 	}
 
@@ -276,7 +276,7 @@ func TestService_SummaryJSON_WrittenToArtifactDir(t *testing.T) {
 	cfg, dir := baseConfig(t)
 	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
 	fake := &fakeRunner{resultsXML: xmlData}
-	artifactRoot := filepath.Join(dir, ".fastplay", "runs")
+	artifactRoot := filepath.Join(dir, ".testplay", "runs")
 	fixed := time.Date(2026, 3, 26, 14, 30, 55, 0, time.UTC)
 
 	svc := &runsvc.Service{
@@ -305,7 +305,7 @@ func TestService_ManifestAndLogs_WrittenToArtifactDir(t *testing.T) {
 	cfg, dir := baseConfig(t)
 	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
 	fake := &fakeRunner{resultsXML: xmlData, stderr: []byte("unity stderr")}
-	artifactRoot := filepath.Join(dir, ".fastplay", "runs")
+	artifactRoot := filepath.Join(dir, ".testplay", "runs")
 
 	svc := &runsvc.Service{
 		Runner:    fake,
@@ -364,7 +364,7 @@ func TestService_Filter_ForwardedToRunner(t *testing.T) {
 	svc := &runsvc.Service{
 		Runner:    fake,
 		Store:     history.NewStore(cfg.ResultDir),
-		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
 		Clock:     func() time.Time { return time.Now() },
 	}
 
@@ -398,7 +398,7 @@ func TestService_CompareRun_PopulatesNewFailures(t *testing.T) {
 	svc := &runsvc.Service{
 		Runner:    fake,
 		Store:     store,
-		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
 		Clock:     func() time.Time { return time.Now() },
 	}
 
@@ -425,7 +425,7 @@ func TestService_CompareRun_NewFailuresHaveRelativePath(t *testing.T) {
 	svc := &runsvc.Service{
 		Runner:    fake,
 		Store:     store,
-		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
 		Clock:     func() time.Time { return time.Now() },
 	}
 
@@ -448,7 +448,7 @@ func TestService_NoCompareRun_NewFailuresIsNil(t *testing.T) {
 	svc := &runsvc.Service{
 		Runner:    fake,
 		Store:     history.NewStore(cfg.ResultDir),
-		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
 		Clock:     func() time.Time { return time.Now() },
 	}
 
@@ -498,11 +498,11 @@ func TestService_UsesShadowProjectPath_WhenLocked(t *testing.T) {
 		return 0, nil
 	})
 
-	resultDir := filepath.Join(projectDir, ".fastplay", "results")
+	resultDir := filepath.Join(projectDir, ".testplay", "results")
 	svc := &runsvc.Service{
 		Runner:    runner,
 		Store:     history.NewStore(resultDir),
-		Artifacts: artifacts.NewStore(filepath.Join(projectDir, ".fastplay", "runs")),
+		Artifacts: artifacts.NewStore(filepath.Join(projectDir, ".testplay", "runs")),
 	}
 
 	cfg := &config.Config{
@@ -513,7 +513,7 @@ func TestService_UsesShadowProjectPath_WhenLocked(t *testing.T) {
 	}
 	_, _ = svc.Run(context.Background(), runsvc.Request{Config: cfg})
 
-	shadowPrefix := filepath.Join(projectDir, ".fastplay-shadow-")
+	shadowPrefix := filepath.Join(projectDir, ".testplay-shadow-")
 	if !strings.HasPrefix(usedProjectPath, shadowPrefix) {
 		t.Errorf("expected shadow projectPath to have prefix %q, got %q", shadowPrefix, usedProjectPath)
 	}
@@ -545,11 +545,11 @@ func TestService_ResetShadow_RebuildsShadow(t *testing.T) {
 		return 0, nil
 	})
 
-	resultDir := filepath.Join(projectDir, ".fastplay", "results")
+	resultDir := filepath.Join(projectDir, ".testplay", "results")
 	svc := &runsvc.Service{
 		Runner:    runner,
 		Store:     history.NewStore(resultDir),
-		Artifacts: artifacts.NewStore(filepath.Join(projectDir, ".fastplay", "runs")),
+		Artifacts: artifacts.NewStore(filepath.Join(projectDir, ".testplay", "runs")),
 	}
 
 	cfg := &config.Config{
@@ -561,7 +561,7 @@ func TestService_ResetShadow_RebuildsShadow(t *testing.T) {
 
 	_, _ = svc.Run(context.Background(), runsvc.Request{Config: cfg, ResetShadow: true})
 
-	shadowPrefix := filepath.Join(projectDir, ".fastplay-shadow-")
+	shadowPrefix := filepath.Join(projectDir, ".testplay-shadow-")
 	if !strings.HasPrefix(usedProjectPath, shadowPrefix) {
 		t.Errorf("expected shadow projectPath to have prefix %q, got %q", shadowPrefix, usedProjectPath)
 	}
@@ -580,11 +580,11 @@ func TestService_UsesSourceProjectPath_WhenNotLocked(t *testing.T) {
 		return 0, nil
 	})
 
-	resultDir := filepath.Join(projectDir, ".fastplay", "results")
+	resultDir := filepath.Join(projectDir, ".testplay", "results")
 	svc := &runsvc.Service{
 		Runner:    runner,
 		Store:     history.NewStore(resultDir),
-		Artifacts: artifacts.NewStore(filepath.Join(projectDir, ".fastplay", "runs")),
+		Artifacts: artifacts.NewStore(filepath.Join(projectDir, ".testplay", "runs")),
 	}
 
 	cfg := &config.Config{
@@ -617,8 +617,8 @@ func TestService_ShadowPrepareFailure_ReturnsError(t *testing.T) {
 
 	svc := &runsvc.Service{
 		Runner:    runnerFunc(func(_ context.Context, _ []string, _, _ io.Writer) (int, error) { return 0, nil }),
-		Store:     history.NewStore(filepath.Join(projectDir, ".fastplay", "results")),
-		Artifacts: artifacts.NewStore(filepath.Join(projectDir, ".fastplay", "runs")),
+		Store:     history.NewStore(filepath.Join(projectDir, ".testplay", "results")),
+		Artifacts: artifacts.NewStore(filepath.Join(projectDir, ".testplay", "runs")),
 	}
 
 	cfg := &config.Config{
@@ -644,7 +644,7 @@ func TestService_SaveFailure_ReturnsWarning(t *testing.T) {
 	svc := &runsvc.Service{
 		Runner:    fake,
 		Store:     history.NewStore(cfg.ResultDir),
-		Artifacts: artifacts.NewStore(filepath.Join(dir, ".fastplay", "runs")),
+		Artifacts: artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
 		Clock:     func() time.Time { return time.Now() },
 	}
 

@@ -21,7 +21,7 @@ var (
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "Print fastplay version as JSON",
+	Short: "Print testplay version as JSON",
 	Args:  cobra.NoArgs,
 	Run:   func(cmd *cobra.Command, args []string) { runVersion(cmd.OutOrStdout()) },
 }

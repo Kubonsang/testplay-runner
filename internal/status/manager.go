@@ -6,7 +6,7 @@ import (
 )
 
 // Manager combines a snapshot Writer with an append-only EventLog.
-// Each Write call updates the fastplay-status.json snapshot and appends
+// Each Write call updates the testplay-status.json snapshot and appends
 // a corresponding event to events.ndjson.
 //
 // Manager implements WriterInterface so it can be used anywhere a Writer is

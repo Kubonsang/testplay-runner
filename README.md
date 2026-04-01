@@ -6,7 +6,7 @@
 
 ---
 
-Unity's raw CLI is broken for automation: exit code 0 even on compile failure, XML-only output, no progress visibility, ambiguous error types. `fastplay` fixes all of that with a five-command interface designed for AI agents and CI pipelines.
+Unity's raw CLI is broken for automation: exit code 0 even on compile failure, XML-only output, no progress visibility, ambiguous error types. `testplay` fixes all of that with a five-command interface designed for AI agents and CI pipelines.
 
 ## Problems Solved
 
@@ -14,31 +14,31 @@ Unity's raw CLI is broken for automation: exit code 0 even on compile failure, X
 |---|---|
 | Exit code 0 on compile failure | Exit 2 on compile error, exit 3 on test failure — always distinct |
 | XML-only output | All stdout is JSON with `schema_version` |
-| No pre-run validation | `fastplay check` validates environment before touching Unity |
-| No progress visibility | `fastplay-status.json` updated atomically during run |
+| No pre-run validation | `testplay check` validates environment before touching Unity |
+| No progress visibility | `testplay-status.json` updated atomically during run |
 | Ambiguous timeout | `timeout_type: compile / test / total` in JSON; two-phase execution separates compile and test deadlines |
 | No regression tracking | `--compare-run` populates `new_failures` |
 | Platform path differences | Absolute + relative paths in every response |
-| No test discovery without running | `fastplay list` static-scans `[Test]` and `[UnityTest]` attributes |
-| Unity Editor holds project lock | Shadow Workspace runs tests in `.fastplay-shadow/` while editor stays open |
+| No test discovery without running | `testplay list` static-scans `[Test]` and `[UnityTest]` attributes |
+| Unity Editor holds project lock | Shadow Workspace runs tests in `.testplay-shadow/` while editor stays open |
 
 ## Installation
 
 ```bash
 git clone https://github.com/Kubonsang/testplay-runner.git
 cd testplay-runner
-go build -o fastplay ./cmd/fastplay
+go build -o testplay ./cmd/testplay
 ```
 
 Or cross-compile:
 
 ```bash
-GOOS=windows GOARCH=amd64 go build -o fastplay.exe ./cmd/fastplay
+GOOS=windows GOARCH=amd64 go build -o testplay.exe ./cmd/testplay
 ```
 
 ## Configuration
 
-Create `fastplay.json` in your project root:
+Create `testplay.json` in your project root:
 
 ```json
 {
@@ -51,17 +51,17 @@ Create `fastplay.json` in your project root:
     "compile_ms": 60000,
     "test_ms": 240000
   },
-  "result_dir": ".fastplay/results"
+  "result_dir": ".testplay/results"
 }
 ```
 
 `unity_path` falls back to the `UNITY_PATH` environment variable if omitted.
-`project_path` defaults to the directory containing `fastplay.json`.
+`project_path` defaults to the directory containing `testplay.json`.
 `test_platform` accepts `"edit_mode"` (default) or `"play_mode"`. This is passed as `-testPlatform EditMode|PlayMode` to Unity.
-`result_dir` controls the persisted history JSON used by `fastplay result`.
+`result_dir` controls the persisted history JSON used by `testplay result`.
 Per-run artifacts (`results.xml`, `summary.json`, `manifest.json`, `stdout.log`,
 `stderr.log`, `events.ndjson`) are always written under
-`<project_path>/.fastplay/runs/<run_id>/`.
+`<project_path>/.testplay/runs/<run_id>/`.
 
 **Timeout configuration:**
 - `total_ms` (default 300000): outer safety-net deadline for the entire run.
@@ -72,12 +72,12 @@ Per-run artifacts (`results.xml`, `summary.json`, `manifest.json`, `stdout.log`,
 
 ## Commands
 
-### `fastplay version`
+### `testplay version`
 
-Prints the current fastplay version as JSON.
+Prints the current testplay version as JSON.
 
 ```bash
-fastplay version
+testplay version
 ```
 
 ```json
@@ -89,12 +89,12 @@ fastplay version
 
 ---
 
-### `fastplay check`
+### `testplay check`
 
 Validates Unity path, project path, and config before running. Run this first.
 
 ```bash
-fastplay check
+testplay check
 ```
 
 ```json
@@ -110,7 +110,7 @@ On failure:
 {
   "schema_version": "1",
   "ready": false,
-  "hint": "set UNITY_PATH or add unity_path to fastplay.json"
+  "hint": "set UNITY_PATH or add unity_path to testplay.json"
 }
 ```
 
@@ -118,12 +118,12 @@ Exit 0 = ready. Exit 1 = dependency missing (fix per `hint`). Exit 5 = config in
 
 ---
 
-### `fastplay list`
+### `testplay list`
 
 Static scan of `*.cs` files for `[Test]` and `[UnityTest]` attributes. Returns candidate test names without running Unity. The list may be incomplete (e.g. `[TestCase]`, `[Theory]` are not detected).
 
 ```bash
-fastplay list
+testplay list
 ```
 
 ```json
@@ -135,17 +135,17 @@ fastplay list
 
 ---
 
-### `fastplay run`
+### `testplay run`
 
-Runs Unity tests using the configured `test_platform` (`edit_mode` or `play_mode`). Streams progress to `fastplay-status.json`.
+Runs Unity tests using the configured `test_platform` (`edit_mode` or `play_mode`). Streams progress to `testplay-status.json`.
 
 ```bash
-fastplay run
-fastplay run --filter TestJump
-fastplay run --category Smoke
-fastplay run --compare-run 20250301-102200
-fastplay run --shadow              # force shadow workspace even without editor lock
-fastplay run --reset-shadow        # destroy and rebuild shadow Library cache, then run
+testplay run
+testplay run --filter TestJump
+testplay run --category Smoke
+testplay run --compare-run 20250301-102200
+testplay run --shadow              # force shadow workspace even without editor lock
+testplay run --reset-shadow        # destroy and rebuild shadow Library cache, then run
 ```
 
 **All tests pass (exit 0):**
@@ -225,13 +225,13 @@ fastplay run --reset-shadow        # destroy and rebuild shadow Library cache, t
 
 ---
 
-### `fastplay result`
+### `testplay result`
 
 Lists stored run history. Never re-runs Unity.
 
 ```bash
-fastplay result
-fastplay result --last 3
+testplay result
+testplay result --last 3
 ```
 
 ```json
@@ -246,7 +246,7 @@ fastplay result --last 3
 
 ## Shadow Workspace
 
-When the Unity Editor has the project open, `Temp/UnityLockfile` exists and Unity's batch mode cannot run against the same project directory. `fastplay run` detects this automatically and creates a shadow workspace at `.fastplay-shadow/` inside your project root:
+When the Unity Editor has the project open, `Temp/UnityLockfile` exists and Unity's batch mode cannot run against the same project directory. `testplay run` detects this automatically and creates a shadow workspace at `.testplay-shadow/` inside your project root:
 
 | Directory | Strategy |
 |---|---|
@@ -256,15 +256,15 @@ When the Unity Editor has the project open, `Temp/UnityLockfile` exists and Unit
 | `Library/` | Created empty on first run; preserved across runs for Unity import cache reuse |
 | `Temp/` | Deleted before each run; Unity recreates it |
 
-**Shadow mode is transparent to agents.** All `absolute_path` fields in the JSON output are remapped to source project paths — agents never see `.fastplay-shadow/` paths.
+**Shadow mode is transparent to agents.** All `absolute_path` fields in the JSON output are remapped to source project paths — agents never see `.testplay-shadow/` paths.
 
 **Flags:**
 - `--shadow` — force shadow workspace even when the editor is not open (useful for testing shadow behaviour)
-- `--reset-shadow` — destroy `.fastplay-shadow/` and rebuild from scratch before running (use after a Unity version upgrade or when the Library cache is stale)
+- `--reset-shadow` — destroy `.testplay-shadow/` and rebuild from scratch before running (use after a Unity version upgrade or when the Library cache is stale)
 
-**`.gitignore` is patched automatically** to exclude `.fastplay-shadow/` on first use.
+**`.gitignore` is patched automatically** to exclude `.testplay-shadow/` on first use.
 
-**When to use `--reset-shadow`:** If Unity version was upgraded, or if tests fail with import errors that don't appear in the source project, the Library cache may be stale. Delete and rebuild it with `fastplay run --reset-shadow`.
+**When to use `--reset-shadow`:** If Unity version was upgraded, or if tests fail with import errors that don't appear in the source project, the Library cache may be stale. Delete and rebuild it with `testplay run --reset-shadow`.
 
 ## Exit Codes
 
@@ -275,7 +275,7 @@ When the Unity Editor has the project open, `Temp/UnityLockfile` exists and Unit
 | 2 | Compile failure | Fix source, see `errors[].absolute_path` + `line` |
 | 3 | Test failure | Fix test, see `tests[].absolute_path` + `line` |
 | 4 | Timeout or signal interruption | Check `timeout_type` in the JSON result — see table below |
-| 5 | Config error | Fix or create `fastplay.json` |
+| 5 | Config error | Fix or create `testplay.json` |
 | 6 | Build failure (not yet returned) | Check Unity license / build target |
 | 7 | Permission error (not yet returned) | Fix path permissions |
 
@@ -302,7 +302,7 @@ Example JSON for a compile-phase timeout:
 
 ## Progress Monitoring
 
-During `fastplay run`, poll `fastplay-status.json` to track progress:
+During `testplay run`, poll `testplay-status.json` to track progress:
 
 ```json
 {
@@ -315,7 +315,7 @@ During `fastplay run`, poll `fastplay-status.json` to track progress:
   "updated_at": "2025-03-25T14:30:05Z",
   "started_at": "2025-03-25T14:29:58Z",
   "last_heartbeat_at": "2025-03-25T14:30:03Z",
-  "artifact_root": "/Users/user/MyProject/.fastplay/runs/20250325-143000",
+  "artifact_root": "/Users/user/MyProject/.testplay/runs/20250325-143000",
   "pid": 12345
 }
 ```
@@ -326,10 +326,10 @@ Failure phases: `timeout_compile`, `timeout_test`, `timeout_total`, `interrupted
 ## Recommended Agent Flow
 
 ```
-1. fastplay check          # Validate environment
-2. fastplay list           # Discover test names
-3. fastplay run            # Execute (poll fastplay-status.json for progress)
-4. fastplay result --last 3  # Review run history
+1. testplay check          # Validate environment
+2. testplay list           # Discover test names
+3. testplay run            # Execute (poll testplay-status.json for progress)
+4. testplay result --last 3  # Review run history
 ```
 
 ## Development
@@ -339,16 +339,16 @@ Failure phases: `timeout_compile`, `timeout_test`, `timeout_total`, `interrupted
 go test -race ./...
 
 # Run integration tests
-go test -tags=integration ./cmd/fastplay/...
+go test -tags=integration ./cmd/testplay/...
 
 # Build for current platform
-go build ./cmd/fastplay
+go build ./cmd/testplay
 ```
 
 ## Unity Smoke Verification
 
 A minimal Unity project (`fixtures/smoke-project/`) is included to verify that
-`fastplay run` works end-to-end with a real Unity installation. It contains one
+`testplay run` works end-to-end with a real Unity installation. It contains one
 EditMode test and one PlayMode (`[UnityTest]`) test.
 
 **Local reproduction:**
@@ -360,12 +360,12 @@ export UNITY_PATH=/Applications/Unity/Hub/Editor/2022.3.0f1/Unity.app/Contents/M
 ```
 
 The script:
-1. Writes a `fastplay.json` for each platform (EditMode then PlayMode)
-2. Runs `fastplay check` + `fastplay run`
-3. Verifies all 6 run artifacts are present in `.fastplay/runs/<run_id>/`:
+1. Writes a `testplay.json` for each platform (EditMode then PlayMode)
+2. Runs `testplay check` + `testplay run`
+3. Verifies all 6 run artifacts are present in `.testplay/runs/<run_id>/`:
    `results.xml`, `summary.json`, `manifest.json`, `stdout.log`, `stderr.log`, `events.ndjson`
-4. Verifies `fastplay-status.json` exists in the project root (status snapshot, outside the run artifact directory)
-5. Runs a shadow-mode smoke stage using `--shadow` and verifies `.fastplay-shadow/` workspace is created with expected subdirectories
+4. Verifies `testplay-status.json` exists in the project root (status snapshot, outside the run artifact directory)
+5. Runs a shadow-mode smoke stage using `--shadow` and verifies `.testplay-shadow/` workspace is created with expected subdirectories
 
 **CI (opt-in):**
 
@@ -379,7 +379,7 @@ and `UNITY_PATH` set in the runner environment.
 For a reusable real-project pattern, see
 [`docs/05_v0.2.0_playmode_smoke_example.md`](docs/05_v0.2.0_playmode_smoke_example.md). It shows a
 scene-free PlayMode smoke test that creates its fixture in code and runs
-cleanly through `fastplay run`.
+cleanly through `testplay run`.
 
 ## License
 

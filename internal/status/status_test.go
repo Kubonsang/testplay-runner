@@ -12,7 +12,7 @@ import (
 
 func TestWrite_CreatesFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "fastplay-status.json")
+	path := filepath.Join(dir, "testplay-status.json")
 	w := status.NewWriter(path)
 	if err := w.Write(status.Status{Phase: status.PhaseWaiting}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -24,7 +24,7 @@ func TestWrite_CreatesFile(t *testing.T) {
 
 func TestWrite_ValidJSON(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "fastplay-status.json")
+	path := filepath.Join(dir, "testplay-status.json")
 	w := status.NewWriter(path)
 	_ = w.Write(status.Status{Phase: status.PhaseCompiling, RunID: "20250301-102200"})
 
@@ -40,7 +40,7 @@ func TestWrite_ValidJSON(t *testing.T) {
 
 func TestWrite_IsAtomic(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "fastplay-status.json")
+	path := filepath.Join(dir, "testplay-status.json")
 	w := status.NewWriter(path)
 
 	// Write twice; no temp file should linger
@@ -59,7 +59,7 @@ func TestWrite_IsAtomic(t *testing.T) {
 
 func TestWrite_ContainsSchemaVersion(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "fastplay-status.json")
+	path := filepath.Join(dir, "testplay-status.json")
 	w := status.NewWriter(path)
 	_ = w.Write(status.Status{Phase: status.PhaseRunning})
 

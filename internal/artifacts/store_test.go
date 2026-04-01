@@ -12,7 +12,7 @@ import (
 
 func TestStore_PrepareRunDir_CreatesDirectory(t *testing.T) {
 	root := t.TempDir()
-	store := artifacts.NewStore(filepath.Join(root, ".fastplay", "runs"))
+	store := artifacts.NewStore(filepath.Join(root, ".testplay", "runs"))
 
 	dir, err := store.PrepareRunDir("20260326-120000")
 	if err != nil {
@@ -27,7 +27,7 @@ func TestStore_PrepareRunDir_CreatesDirectory(t *testing.T) {
 
 func TestStore_PrepareRunDir_PathContainsRunID(t *testing.T) {
 	root := t.TempDir()
-	store := artifacts.NewStore(filepath.Join(root, ".fastplay", "runs"))
+	store := artifacts.NewStore(filepath.Join(root, ".testplay", "runs"))
 
 	dir, err := store.PrepareRunDir("20260326-120000")
 	if err != nil {
@@ -40,7 +40,7 @@ func TestStore_PrepareRunDir_PathContainsRunID(t *testing.T) {
 
 func TestStore_SaveSummary_WritesSummaryJSON(t *testing.T) {
 	root := t.TempDir()
-	store := artifacts.NewStore(filepath.Join(root, ".fastplay", "runs"))
+	store := artifacts.NewStore(filepath.Join(root, ".testplay", "runs"))
 	_, err := store.PrepareRunDir("20260326-120000")
 	if err != nil {
 		t.Fatalf("PrepareRunDir: %v", err)
@@ -51,7 +51,7 @@ func TestStore_SaveSummary_WritesSummaryJSON(t *testing.T) {
 		t.Fatalf("SaveSummary: %v", err)
 	}
 
-	summaryPath := filepath.Join(root, ".fastplay", "runs", "20260326-120000", "summary.json")
+	summaryPath := filepath.Join(root, ".testplay", "runs", "20260326-120000", "summary.json")
 	data, readErr := os.ReadFile(summaryPath)
 	if readErr != nil {
 		t.Fatalf("summary.json not found: %v", readErr)
@@ -67,7 +67,7 @@ func TestStore_SaveSummary_WritesSummaryJSON(t *testing.T) {
 
 func TestStore_ResultsFilePath_ReturnsPathInsideRunDir(t *testing.T) {
 	root := t.TempDir()
-	store := artifacts.NewStore(filepath.Join(root, ".fastplay", "runs"))
+	store := artifacts.NewStore(filepath.Join(root, ".testplay", "runs"))
 
 	path := store.ResultsFilePath("20260326-120000")
 	if filepath.Base(path) != "results.xml" {
@@ -80,7 +80,7 @@ func TestStore_ResultsFilePath_ReturnsPathInsideRunDir(t *testing.T) {
 
 func TestStore_SaveRawLogs_WritesStdoutAndStderr(t *testing.T) {
 	root := t.TempDir()
-	store := artifacts.NewStore(filepath.Join(root, ".fastplay", "runs"))
+	store := artifacts.NewStore(filepath.Join(root, ".testplay", "runs"))
 	if _, err := store.PrepareRunDir("20260326-120000"); err != nil {
 		t.Fatalf("PrepareRunDir: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestStore_SaveRawLogs_WritesStdoutAndStderr(t *testing.T) {
 
 func TestStore_SaveManifest_WritesManifestJSON(t *testing.T) {
 	root := t.TempDir()
-	store := artifacts.NewStore(filepath.Join(root, ".fastplay", "runs"))
+	store := artifacts.NewStore(filepath.Join(root, ".testplay", "runs"))
 	if _, err := store.PrepareRunDir("20260326-120000"); err != nil {
 		t.Fatalf("PrepareRunDir: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestStore_SaveManifest_WritesManifestJSON(t *testing.T) {
 		t.Fatalf("SaveManifest: %v", err)
 	}
 
-	manifestPath := filepath.Join(root, ".fastplay", "runs", "20260326-120000", "manifest.json")
+	manifestPath := filepath.Join(root, ".testplay", "runs", "20260326-120000", "manifest.json")
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatalf("manifest.json not found: %v", err)

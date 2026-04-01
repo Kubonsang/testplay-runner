@@ -19,7 +19,7 @@ import (
 	"github.com/Kubonsang/testplay-runner/internal/unity"
 )
 
-// RunCmdOptions holds the flag values for `fastplay run`.
+// RunCmdOptions holds the flag values for `testplay run`.
 type RunCmdOptions struct {
 	Filter      string
 	Category    string
@@ -63,7 +63,7 @@ func runRun(w io.Writer, deps runDeps) int {
 		deps.resultStore = history.NewStore(cfg.ResultDir)
 	}
 
-	artifactRoot := filepath.Join(cfg.ProjectPath, ".fastplay", "runs")
+	artifactRoot := filepath.Join(cfg.ProjectPath, ".testplay", "runs")
 	svc := &runsvc.Service{
 		Runner:       deps.runner,
 		Store:        deps.resultStore,
@@ -148,7 +148,7 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 			instanceCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.Timeout.TotalMs)*time.Millisecond)
 			defer cancel()
 
-			artifactRoot := filepath.Join(cfg.ProjectPath, ".fastplay", "runs")
+			artifactRoot := filepath.Join(cfg.ProjectPath, ".testplay", "runs")
 			svc := &runsvc.Service{
 				Runner:    &unity.ProcessRunner{UnityPath: cfg.UnityPath},
 				Store:     history.NewStore(cfg.ResultDir),
@@ -222,7 +222,7 @@ var runCmd = &cobra.Command{
 		ctx, causeCancel := context.WithCancelCause(context.Background())
 		defer causeCancel(nil)
 
-		statusPath := "fastplay-status.json"
+		statusPath := "testplay-status.json"
 		sigCh := setupSignals()
 		go watchSignals(ctx, causeCancel, sigCh, func() {
 			// Best-effort: write interrupted status so pollers see the phase change

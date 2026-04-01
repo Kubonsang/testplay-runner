@@ -40,7 +40,7 @@ func runCheck(w io.Writer, deps checkDeps) int {
 		writeJSON(w, map[string]any{
 			"ready": false,
 			"error": fmt.Sprintf("Unity binary not found: %s", cfg.UnityPath),
-			"hint":  "Ensure unity_path in fastplay.json points to a valid Unity binary",
+			"hint":  "Ensure unity_path in testplay.json points to a valid Unity binary",
 		})
 		return 1
 	}
@@ -50,7 +50,7 @@ func runCheck(w io.Writer, deps checkDeps) int {
 		writeJSON(w, map[string]any{
 			"ready": false,
 			"error": fmt.Sprintf("Project directory not found: %s", cfg.ProjectPath),
-			"hint":  "Ensure project_path in fastplay.json points to a valid Unity project",
+			"hint":  "Ensure project_path in testplay.json points to a valid Unity project",
 		})
 		return 1
 	}
@@ -65,7 +65,7 @@ func runCheck(w io.Writer, deps checkDeps) int {
 
 var checkCmd = &cobra.Command{
 	Use:   "check",
-	Short: "Validate Unity path, project path, and fastplay.json",
+	Short: "Validate Unity path, project path, and testplay.json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deps := checkDeps{
 			loadConfig: config.Load,

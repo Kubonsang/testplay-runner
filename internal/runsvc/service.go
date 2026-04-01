@@ -27,7 +27,7 @@ type ResultStore interface {
 	Load(string) (*history.RunResult, error)
 }
 
-// Service orchestrates a single fastplay run.
+// Service orchestrates a single testplay run.
 // It is intentionally decoupled from cobra/CLI concerns; all inputs come
 // through Request and all outputs through Response.
 type Service struct {
@@ -38,7 +38,7 @@ type Service struct {
 	Clock        func() time.Time       // defaults to time.Now if nil
 }
 
-// Request carries all inputs for a single fastplay run.
+// Request carries all inputs for a single testplay run.
 type Request struct {
 	Config      *config.Config
 	Filter      string
@@ -48,7 +48,7 @@ type Request struct {
 	ForceShadow bool // activate shadow workspace without resetting Library cache
 }
 
-// Response carries all outputs of a single fastplay run.
+// Response carries all outputs of a single testplay run.
 type Response struct {
 	RunID    string
 	Result   *history.RunResult

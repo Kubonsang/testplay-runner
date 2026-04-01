@@ -36,7 +36,7 @@ type Manifest struct {
 }
 
 // NewStore creates a Store rooted at the given directory
-// (typically .fastplay/runs relative to the project).
+// (typically .testplay/runs relative to the project).
 func NewStore(root string) *Store {
 	abs, err := filepath.Abs(root)
 	if err != nil {

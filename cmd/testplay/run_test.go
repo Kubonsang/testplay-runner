@@ -318,7 +318,7 @@ func TestRunCmd_SummaryJSON_WrittenToArtifactDir(t *testing.T) {
 	xmlData := mustReadXMLFixture(t, "../../internal/parser/testdata/passing.xml")
 	fake := &fakeCmdRunner{resultsXML: xmlData, exitCode: 0}
 
-	resultDir := filepath.Join(dir, ".fastplay", "results")
+	resultDir := filepath.Join(dir, ".testplay", "results")
 	store := history.NewStore(resultDir)
 	cfg := &config.Config{
 		SchemaVersion: "1",
@@ -344,8 +344,8 @@ func TestRunCmd_SummaryJSON_WrittenToArtifactDir(t *testing.T) {
 		t.Fatal("run_id not in output")
 	}
 
-	// artifactRoot = cfg.ProjectPath + "/.fastplay/runs"
-	artifactRoot := filepath.Join(dir, ".fastplay", "runs")
+	// artifactRoot = cfg.ProjectPath + "/.testplay/runs"
+	artifactRoot := filepath.Join(dir, ".testplay", "runs")
 	summaryPath := filepath.Join(artifactRoot, runID, "summary.json")
 	if _, err := os.Stat(summaryPath); err != nil {
 		t.Errorf("expected summary.json at %s, got error: %v", summaryPath, err)
@@ -473,7 +473,7 @@ func TestRunRun_ForceShadowActivatesShadow(t *testing.T) {
 	var buf bytes.Buffer
 	runRun(&buf, deps)
 
-	shadowPrefix := filepath.Join(projectDir, ".fastplay-shadow-")
+	shadowPrefix := filepath.Join(projectDir, ".testplay-shadow-")
 	for _, a := range capturedArgs {
 		if strings.HasPrefix(a, shadowPrefix) {
 			return // per-run shadow path was passed to Unity — test passes
@@ -489,7 +489,7 @@ func TestRunRun_InfraError_NoNewFailuresField(t *testing.T) {
 	// Block artifact directory creation by placing a regular file where
 	// the artifact root directory would be. os.MkdirAll will fail with
 	// ENOTDIR, causing Service.Run to return an infra error → exit 1.
-	artifactRoot := filepath.Join(projectDir, ".fastplay", "runs")
+	artifactRoot := filepath.Join(projectDir, ".testplay", "runs")
 	_ = os.MkdirAll(filepath.Dir(artifactRoot), 0755)
 	_ = os.WriteFile(artifactRoot, []byte("poison"), 0644)
 

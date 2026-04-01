@@ -9,8 +9,8 @@ import (
 )
 
 var (
-	ErrConfigNotFound  = errors.New("fastplay.json not found")
-	ErrConfigInvalid   = errors.New("fastplay.json is invalid")
+	ErrConfigNotFound  = errors.New("testplay.json not found")
+	ErrConfigInvalid   = errors.New("testplay.json is invalid")
 	ErrUnityPathMissing = errors.New("unity_path not set and UNITY_PATH env var not found")
 )
 
@@ -21,10 +21,10 @@ type Config struct {
 	Timeout       Timeouts `json:"timeout"`
 	ResultDir     string   `json:"result_dir"`
 	TestPlatform  string   `json:"test_platform"` // "edit_mode" (default) | "play_mode"
-	configDir     string   // unexported: directory containing fastplay.json
+	configDir     string   // unexported: directory containing testplay.json
 }
 
-// Timeouts holds timeout configuration for a fastplay run.
+// Timeouts holds timeout configuration for a testplay run.
 // When both CompileMs and TestMs are > 0, two-phase execution is enabled:
 // Unity runs compile-only first (CompileMs deadline), then runs tests
 // (TestMs deadline). TotalMs remains as an outer safety-net context.
@@ -59,7 +59,7 @@ func (c *Config) Validate(requireUnity bool) error {
 
 	// Default result dir
 	if c.ResultDir == "" {
-		c.ResultDir = ".fastplay/results"
+		c.ResultDir = ".testplay/results"
 	}
 
 	// Default total timeout
