@@ -42,7 +42,7 @@ func runRun(w io.Writer, deps runDeps) int {
 		baseCtx = context.Background()
 	}
 
-	cfg, err := deps.loadConfig("fastplay.json")
+	cfg, err := deps.loadConfig(configPath)
 	if err != nil {
 		writeJSON(w, map[string]any{"schema_version": "1", "error": err.Error()})
 		return 5
@@ -119,12 +119,12 @@ var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Execute Unity tests",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+		ctx, causeCancel := context.WithCancelCause(context.Background())
+		defer causeCancel(nil)
 
 		statusPath := "fastplay-status.json"
 		sigCh := setupSignals()
-		go watchSignals(ctx, cancel, sigCh, func() {
+		go watchSignals(ctx, causeCancel, sigCh, func() {
 			// Best-effort: write interrupted status so pollers see the phase change
 			_ = status.NewWriter(statusPath).Write(status.Status{Phase: status.PhaseInterrupted})
 		})
@@ -154,6 +154,6 @@ func init() {
 	runCmd.Flags().StringVar(&runFilter, "filter", "", "Test name filter")
 	runCmd.Flags().StringVar(&runCategory, "category", "", "Test category filter")
 	runCmd.Flags().StringVar(&runCompareRun, "compare-run", "", "Run ID to compare against for regression detection")
-	runCmd.Flags().BoolVar(&resetShadow, "reset-shadow", false, "Delete and rebuild shadow workspace before running")
+	runCmd.Flags().BoolVar(&resetShadow, "reset-shadow", false, "Force shadow workspace (equivalent to --shadow; kept for compatibility)")
 	runCmd.Flags().BoolVar(&forceShadow, "shadow", false, "Force shadow workspace even when Unity Editor is not open")
 }

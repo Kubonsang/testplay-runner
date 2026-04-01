@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Kubonsang/testplay-runner/internal/config"
@@ -469,13 +470,13 @@ func TestRunRun_ForceShadowActivatesShadow(t *testing.T) {
 	var buf bytes.Buffer
 	runRun(&buf, deps)
 
-	shadowPath := filepath.Join(projectDir, ".fastplay-shadow")
+	shadowPrefix := filepath.Join(projectDir, ".fastplay-shadow-")
 	for _, a := range capturedArgs {
-		if a == shadowPath {
-			return // shadow path was passed to Unity — test passes
+		if strings.HasPrefix(a, shadowPrefix) {
+			return // per-run shadow path was passed to Unity — test passes
 		}
 	}
-	t.Errorf("shadow path %q not found in Unity args %v", shadowPath, capturedArgs)
+	t.Errorf("shadow path with prefix %q not found in Unity args %v", shadowPrefix, capturedArgs)
 }
 
 func TestRunRun_InfraError_NoNewFailuresField(t *testing.T) {

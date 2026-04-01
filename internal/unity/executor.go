@@ -13,6 +13,11 @@ import (
 	"github.com/Kubonsang/testplay-runner/internal/status"
 )
 
+// ErrSignalInterrupt is set as the context cancel cause when SIGINT or SIGTERM
+// is received. Executors check context.Cause(ctx) against this sentinel to
+// distinguish signal interruption (exit 8) from timeout (exit 4).
+var ErrSignalInterrupt = errors.New("signal interrupt")
+
 // noopStatusWriter implements status.WriterInterface but discards all writes.
 // It is used as a sentinel when ExecuteOptions.StatusWriter is nil so that
 // all call sites can write unconditionally without nil guards.
@@ -117,7 +122,8 @@ type ExecuteOptions struct {
 //	0 = all tests passed
 //	2 = compile failure (no results XML produced, or compile errors in stderr)
 //	3 = test failure (results XML exists but contains failures)
-//	4 = timeout (DeadlineExceeded) or signal interruption (Canceled)
+//	4 = timeout (DeadlineExceeded)
+//	8 = signal interruption (context.Canceled with ErrSignalInterrupt cause)
 //
 // When CompileMs and TestMs are both > 0, two-phase execution is used:
 // phase 1 compiles with a CompileMs deadline (emits timeout_type "compile"),
@@ -158,7 +164,7 @@ func executeSinglePhase(ctx context.Context, runner Runner, opts ExecuteOptions)
 	_, err := runner.Run(ctx, args, stdoutW, stderrW)
 
 	if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-		return handleContextErr(err, opts)
+		return handleContextErr(ctx, err, opts)
 	}
 
 	// Phase: running (Unity finished compilation, now checking results)
@@ -267,14 +273,18 @@ func classifyPhaseContextErr(ctx context.Context, opts ExecuteOptions, phaseTime
 				Errors:        []history.CompileError{},
 			}, 4
 		}
-		// context.Canceled → signal interruption.
+		// context.Canceled → signal interruption or unknown cancellation.
 		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseInterrupted})
+		exitCode := 4
+		if errors.Is(context.Cause(ctx), ErrSignalInterrupt) {
+			exitCode = 8
+		}
 		return &history.RunResult{
 			SchemaVersion: "1",
-			ExitCode:      4,
+			ExitCode:      exitCode,
 			Tests:         []parser.TestCase{},
 			Errors:        []history.CompileError{},
-		}, 4
+		}, exitCode
 	}
 	// Outer ctx is still alive — only the phase deadline fired.
 	_ = opts.StatusWriter.Write(status.Status{Phase: phaseTimeoutStatus})
@@ -289,7 +299,7 @@ func classifyPhaseContextErr(ctx context.Context, opts ExecuteOptions, phaseTime
 
 // handleContextErr maps context errors to the appropriate exit result.
 // Callers must guard with errors.Is(err, context.Canceled||DeadlineExceeded).
-func handleContextErr(err error, opts ExecuteOptions) (*history.RunResult, int) {
+func handleContextErr(ctx context.Context, err error, opts ExecuteOptions) (*history.RunResult, int) {
 	if errors.Is(err, context.DeadlineExceeded) {
 		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseTimeoutTotal})
 		return &history.RunResult{
@@ -302,12 +312,16 @@ func handleContextErr(err error, opts ExecuteOptions) (*history.RunResult, int) 
 	}
 	if errors.Is(err, context.Canceled) {
 		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseInterrupted})
+		exitCode := 4
+		if errors.Is(context.Cause(ctx), ErrSignalInterrupt) {
+			exitCode = 8
+		}
 		return &history.RunResult{
 			SchemaVersion: "1",
-			ExitCode:      4,
+			ExitCode:      exitCode,
 			Tests:         []parser.TestCase{},
 			Errors:        []history.CompileError{},
-		}, 4
+		}, exitCode
 	}
 	// Should not be reached when the caller guards correctly.
 	_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseInterrupted})

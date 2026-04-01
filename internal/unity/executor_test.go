@@ -652,6 +652,48 @@ func TestExecute_NilStatusWriterDoesNotPanic(t *testing.T) {
 	}
 }
 
+func TestExecute_SignalInterrupt_Returns8(t *testing.T) {
+	t.Parallel()
+	ctx, causeCancel := context.WithCancelCause(context.Background())
+	causeCancel(unity.ErrSignalInterrupt)
+
+	dir := t.TempDir()
+	fake := &fakeRunner{err: context.Canceled}
+
+	result, exitCode := unity.Execute(ctx, fake, unity.ExecuteOptions{
+		ProjectPath:  dir,
+		ResultsFile:  filepath.Join(dir, "results.xml"),
+		TestPlatform: "edit_mode",
+	})
+	if exitCode != 8 {
+		t.Errorf("expected exit 8 for signal interrupt, got %d", exitCode)
+	}
+	if result.ExitCode != 8 {
+		t.Errorf("expected result.ExitCode 8, got %d", result.ExitCode)
+	}
+	if result.TimeoutType != "" {
+		t.Errorf("expected no timeout_type for signal, got %q", result.TimeoutType)
+	}
+}
+
+func TestExecute_ContextCanceled_WithoutSignalCause_Returns4(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // plain cancel, no cause
+
+	dir := t.TempDir()
+	fake := &fakeRunner{err: context.Canceled}
+
+	_, exitCode := unity.Execute(ctx, fake, unity.ExecuteOptions{
+		ProjectPath:  dir,
+		ResultsFile:  filepath.Join(dir, "results.xml"),
+		TestPlatform: "edit_mode",
+	})
+	if exitCode != 4 {
+		t.Errorf("expected exit 4 for plain cancel, got %d", exitCode)
+	}
+}
+
 func TestExecute_CompileErrorsInStderr_Returns2(t *testing.T) {
 	dir := t.TempDir()
 	// fakeRunner writes an empty XML but also has compile errors in stderr

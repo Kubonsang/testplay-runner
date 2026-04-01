@@ -47,7 +47,7 @@ var resultCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		resultDir := ".fastplay/results"
 		var warn string
-		cfg, err := config.Load("fastplay.json")
+		cfg, err := config.Load(configPath)
 		if err == nil {
 			if valErr := cfg.Validate(false); valErr == nil && cfg.ResultDir != "" {
 				resultDir = cfg.ResultDir

@@ -17,37 +17,30 @@ type Workspace struct {
 	ShadowPath string // .fastplay-shadow/ root (absolute)
 }
 
-// ShadowDir returns the canonical shadow workspace path for a project.
-// sourcePath must be an absolute path; callers should use filepath.Abs
-// before calling this function. Prepare and Reset both enforce this
-// internally; external callers are responsible for their own resolution.
-func ShadowDir(sourcePath string) string {
-	return filepath.Join(sourcePath, ".fastplay-shadow")
+// ShadowWorkspaceDir returns the per-run shadow directory for a given runID.
+func ShadowWorkspaceDir(sourcePath, runID string) string {
+	return filepath.Join(sourcePath, ".fastplay-shadow-"+runID)
 }
 
-// Prepare creates or refreshes a shadow workspace.
-//   - Assets/ and ProjectSettings/ are always re-copied from source.
-//   - Packages/ is linked (symlink on unix, junction on windows) on first call; skipped if link already exists.
-//   - Library/ is created empty on first call; preserved on subsequent calls so Unity reuses its import cache.
-//   - Temp/ is deleted before each run and recreated empty by Unity.
-//   - .gitignore is patched to exclude .fastplay-shadow/ (non-fatal on failure).
-func Prepare(ctx context.Context, sourcePath string) (*Workspace, error) {
+// Prepare creates an isolated shadow workspace for a single run.
+//   - Assets/ and ProjectSettings/ are always copied fresh from source.
+//   - Packages/ is linked (symlink on unix, junction on windows); linked once per workspace.
+//   - Library/ is created empty; Unity populates it during the run.
+//   - Temp/ is deleted before the run; Unity recreates it.
+//   - .gitignore is patched to exclude .fastplay-shadow-*/ (non-fatal on failure).
+//
+// The caller must call ws.Cleanup() after the run to remove the per-run directory.
+func Prepare(ctx context.Context, sourcePath, runID string) (*Workspace, error) {
 	abs, err := filepath.Abs(sourcePath)
 	if err != nil {
 		return nil, err
 	}
-	shadowPath := ShadowDir(abs)
+	shadowPath := ShadowWorkspaceDir(abs, runID)
 	ws := &Workspace{SourcePath: abs, ShadowPath: shadowPath}
 
-	// Track whether this is a first-time creation so we can clean up on failure.
-	// Refresh calls (workspace already exists) must not roll back Library/ on error.
-	isNew := false
-	if _, statErr := os.Stat(shadowPath); os.IsNotExist(statErr) {
-		isNew = true
-	}
 	succeeded := false
 	defer func() {
-		if isNew && !succeeded {
+		if !succeeded {
 			os.RemoveAll(shadowPath)
 		}
 	}()
@@ -73,7 +66,7 @@ func Prepare(ctx context.Context, sourcePath string) (*Workspace, error) {
 		}
 	}
 
-	// Ensure Library/ exists (Unity will populate on first run, reuse on subsequent runs).
+	// Ensure Library/ exists (Unity will populate during the run; starts empty each run).
 	if err := os.MkdirAll(filepath.Join(shadowPath, "Library"), 0755); err != nil {
 		return nil, err
 	}
@@ -82,23 +75,22 @@ func Prepare(ctx context.Context, sourcePath string) (*Workspace, error) {
 	_ = os.RemoveAll(filepath.Join(shadowPath, "Temp"))
 
 	// Patch .gitignore — non-fatal.
-	_ = EnsureIgnored(abs, ".fastplay-shadow/")
+	_ = EnsureIgnored(abs, ".fastplay-shadow-*/")
 
 	succeeded = true
 	return ws, nil
 }
 
-// Reset destroys the shadow workspace and rebuilds it from scratch.
-// Use when the Library cache is stale (e.g. after a Unity version upgrade).
-func Reset(ctx context.Context, sourcePath string) (*Workspace, error) {
-	abs, err := filepath.Abs(sourcePath)
-	if err != nil {
-		return nil, err
-	}
-	if err := os.RemoveAll(ShadowDir(abs)); err != nil {
-		return nil, err
-	}
-	return Prepare(ctx, abs)
+// Reset is equivalent to Prepare with per-run isolation — each run already
+// starts with a fresh workspace. Kept for API stability.
+func Reset(ctx context.Context, sourcePath, runID string) (*Workspace, error) {
+	return Prepare(ctx, sourcePath, runID)
+}
+
+// Cleanup removes the per-run shadow workspace directory.
+// Always call this after the run completes (defer recommended).
+func (w *Workspace) Cleanup() error {
+	return os.RemoveAll(w.ShadowPath)
 }
 
 // RemapPaths replaces shadow workspace path prefixes with the original source

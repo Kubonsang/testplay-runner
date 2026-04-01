@@ -73,7 +73,7 @@ var checkCmd = &cobra.Command{
 				_, err := os.Stat(path)
 				return err == nil
 			},
-			configPath: "fastplay.json",
+			configPath: configPath,
 		}
 		code := runCheck(cmd.OutOrStdout(), deps)
 		os.Exit(code)
