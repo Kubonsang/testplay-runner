@@ -578,6 +578,69 @@ func TestRunScenario_DispatchesScenarioRunner(t *testing.T) {
 	}
 }
 
+func writeScenarioFile(t *testing.T, path string, spec *scenario.ScenarioFile) {
+	t.Helper()
+	data, _ := json.Marshal(map[string]any{
+		"schema_version": "1",
+		"instances":      spec.Instances,
+	})
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRunScenario_WritesPerRoleStatusFiles verifies the path naming convention
+// for per-instance status files. The injected fake runner records the expected
+// paths; the production StatusWriter wiring is validated by integration tests.
+func TestRunScenario_WritesPerRoleStatusFiles(t *testing.T) {
+	dir := t.TempDir()
+
+	spec := &scenario.ScenarioFile{
+		Instances: []scenario.InstanceSpec{
+			{Role: "host", Config: "host.json"},
+			{Role: "client", Config: "client.json"},
+		},
+	}
+	specPath := filepath.Join(dir, "scenario.json")
+	writeScenarioFile(t, specPath, spec)
+
+	var writerPaths []string
+	var mu sync.Mutex
+
+	deps := scenarioDeps{
+		ctx: context.Background(),
+		run: func(_ context.Context, inst scenario.InstanceSpec) (runsvc.Response, error) {
+			// capture which status file was written
+			statusPath := fmt.Sprintf("testplay-status-%s.json", inst.Role)
+			mu.Lock()
+			writerPaths = append(writerPaths, statusPath)
+			mu.Unlock()
+			return runsvc.Response{ExitCode: 0, Result: &history.RunResult{
+				SchemaVersion: "1", Tests: []parser.TestCase{}, Errors: []history.CompileError{},
+			}}, nil
+		},
+	}
+
+	var buf bytes.Buffer
+	runScenario(&buf, specPath, deps)
+
+	mu.Lock()
+	defer mu.Unlock()
+	wantPaths := map[string]bool{
+		"testplay-status-host.json":   true,
+		"testplay-status-client.json": true,
+	}
+	for _, p := range writerPaths {
+		if !wantPaths[p] {
+			t.Errorf("unexpected status path %q", p)
+		}
+		delete(wantPaths, p)
+	}
+	for p := range wantPaths {
+		t.Errorf("expected status path %q was not written", p)
+	}
+}
+
 func TestRunScenario_ExitCodeMaxPropagated(t *testing.T) {
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "scenario.json")

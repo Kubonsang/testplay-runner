@@ -150,10 +150,10 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 
 			artifactRoot := filepath.Join(cfg.ProjectPath, ".testplay", "runs")
 			svc := &runsvc.Service{
-				Runner:    &unity.ProcessRunner{UnityPath: cfg.UnityPath},
-				Store:     history.NewStore(cfg.ResultDir),
-				Artifacts: artifacts.NewStore(artifactRoot),
-				// No StatusWriter in scenario mode — per-run status polling not yet defined
+				Runner:       &unity.ProcessRunner{UnityPath: cfg.UnityPath},
+				Store:        history.NewStore(cfg.ResultDir),
+				Artifacts:    artifacts.NewStore(artifactRoot),
+				StatusWriter: status.NewWriter(fmt.Sprintf("testplay-status-%s.json", instSpec.Role)),
 			}
 			return svc.Run(instanceCtx, runsvc.Request{Config: cfg})
 		}
