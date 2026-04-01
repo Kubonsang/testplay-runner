@@ -154,6 +154,6 @@ func init() {
 	runCmd.Flags().StringVar(&runFilter, "filter", "", "Test name filter")
 	runCmd.Flags().StringVar(&runCategory, "category", "", "Test category filter")
 	runCmd.Flags().StringVar(&runCompareRun, "compare-run", "", "Run ID to compare against for regression detection")
-	runCmd.Flags().BoolVar(&resetShadow, "reset-shadow", false, "Delete and rebuild shadow workspace before running")
+	runCmd.Flags().BoolVar(&resetShadow, "reset-shadow", false, "Force shadow workspace (equivalent to --shadow; kept for compatibility)")
 	runCmd.Flags().BoolVar(&forceShadow, "shadow", false, "Force shadow workspace even when Unity Editor is not open")
 }

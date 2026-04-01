@@ -60,7 +60,7 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 | `fastplay run [--filter <name>] [--category <cat>] [--compare-run <run_id>] [--shadow] [--reset-shadow]` | Execute tests; streams progress to `fastplay-status.json` |
 | `fastplay result [--last N]` | Re-read stored results; returns run_id history |
 
-**`--reset-shadow`**: Delete and rebuild `.fastplay-shadow/` before running. Use after a Unity version upgrade or when the shadow Library cache appears stale.
+**`--reset-shadow`**: Activates shadow workspace mode. With per-run isolation (v0.3+), equivalent to `--shadow` — every run already starts with a fresh workspace. Kept for API compatibility.
 
 ## Exit Code Semantics
 
@@ -166,7 +166,7 @@ Run `fastplay result` to review the `run_id` list and decide the `--compare-run`
 | Shadow — concurrent run safety | Two simultaneous `fastplay run` invocations against the same project share a single `.fastplay-shadow/` directory. `Prepare` re-copies `Assets/` and `ProjectSettings/` and deletes `Temp/` on every call; a second run starting while the first is executing will overwrite those directories mid-flight. Running `fastplay run` in parallel against the same project path is **not currently safe** in shadow mode. | Medium |
 | Shadow — `Packages/` not fully isolated | `Packages/` is linked (symlink on macOS/Linux, junction on Windows) rather than copied. If Unity or a package tool writes to the `Packages/` tree during batch execution (e.g. embedded packages), those changes propagate back to the original project. This is best-effort isolation. | Low |
 | Shadow — editor-open detection is best-effort | Shadow mode activates when `Temp/UnityLockfile` exists. A stale lockfile after an unclean Unity exit causes unnecessary shadow overhead. The lockfile check is a heuristic, not a guaranteed signal. | Low |
-| Shadow — `--reset-shadow` without lockfile | When `--reset-shadow` is passed and `Temp/UnityLockfile` is absent, that specific run still executes against the shadow workspace (not the source project). The shadow directory remains on disk after the run; subsequent runs without the flag return to source mode automatically. Delete `.fastplay-shadow/` manually if the disk usage is unwanted. | Low |
+| Shadow — `--reset-shadow` behaviour change | With per-run isolation (v0.3+), `--reset-shadow` is equivalent to `--shadow`. There is no persistent Library cache to reset. Old per-run shadow dirs are deleted automatically after each run via `Cleanup()`. | Low |
 
 ## Roadmap
 

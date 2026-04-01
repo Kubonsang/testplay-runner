@@ -44,7 +44,7 @@ type Request struct {
 	Filter      string
 	Category    string
 	CompareRun  string
-	ResetShadow bool // when true, delete and rebuild .fastplay-shadow/ before running
+	ResetShadow bool // activates shadow workspace; equivalent to ForceShadow with per-run isolation
 	ForceShadow bool // activate shadow workspace without resetting Library cache
 }
 
