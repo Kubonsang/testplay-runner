@@ -478,11 +478,22 @@ func TestService_UsesShadowProjectPath_WhenLocked(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(projectDir, "ProjectSettings", "ProjectVersion.txt"), []byte("m_EditorVersion: 6000.3.8f1"), 0644)
 
 	var usedProjectPath string
+	// filesExistDuringRun checks shadow file presence while the shadow dir is still live
+	// (before ws.Cleanup() is deferred by service.Run on return).
+	filesExistDuringRun := make(map[string]bool)
 	runner := runnerFunc(func(_ context.Context, args []string, _, _ io.Writer) (int, error) {
 		for i, a := range args {
 			if a == "-projectPath" && i+1 < len(args) {
 				usedProjectPath = args[i+1]
 			}
+		}
+		// Check shadow files while the workspace is still live.
+		for _, rel := range []string{
+			filepath.Join("Assets", "Player.cs"),
+			filepath.Join("ProjectSettings", "ProjectVersion.txt"),
+		} {
+			_, err := os.Stat(filepath.Join(usedProjectPath, rel))
+			filesExistDuringRun[rel] = (err == nil)
 		}
 		return 0, nil
 	})
@@ -502,19 +513,18 @@ func TestService_UsesShadowProjectPath_WhenLocked(t *testing.T) {
 	}
 	_, _ = svc.Run(context.Background(), runsvc.Request{Config: cfg})
 
-	shadowPath := filepath.Join(projectDir, ".fastplay-shadow")
-	if usedProjectPath != shadowPath {
-		t.Errorf("expected shadow projectPath %q, got %q", shadowPath, usedProjectPath)
+	shadowPrefix := filepath.Join(projectDir, ".fastplay-shadow-")
+	if !strings.HasPrefix(usedProjectPath, shadowPrefix) {
+		t.Errorf("expected shadow projectPath to have prefix %q, got %q", shadowPrefix, usedProjectPath)
 	}
 
-	// Verify that copyDir actually copied the source files into the shadow.
+	// Verify that copyDir actually copied the source files into the shadow during the run.
 	for _, rel := range []string{
 		filepath.Join("Assets", "Player.cs"),
 		filepath.Join("ProjectSettings", "ProjectVersion.txt"),
 	} {
-		shadowFile := filepath.Join(shadowPath, rel)
-		if _, err := os.Stat(shadowFile); err != nil {
-			t.Errorf("expected shadow copy of %q to exist: %v", rel, err)
+		if !filesExistDuringRun[rel] {
+			t.Errorf("expected shadow copy of %q to exist during run", rel)
 		}
 	}
 }
@@ -551,9 +561,9 @@ func TestService_ResetShadow_RebuildsShadow(t *testing.T) {
 
 	_, _ = svc.Run(context.Background(), runsvc.Request{Config: cfg, ResetShadow: true})
 
-	shadowPath := filepath.Join(projectDir, ".fastplay-shadow")
-	if usedProjectPath != shadowPath {
-		t.Errorf("expected shadow projectPath %q, got %q", shadowPath, usedProjectPath)
+	shadowPrefix := filepath.Join(projectDir, ".fastplay-shadow-")
+	if !strings.HasPrefix(usedProjectPath, shadowPrefix) {
+		t.Errorf("expected shadow projectPath to have prefix %q, got %q", shadowPrefix, usedProjectPath)
 	}
 }
 
@@ -591,17 +601,19 @@ func TestService_UsesSourceProjectPath_WhenNotLocked(t *testing.T) {
 }
 
 func TestService_ShadowPrepareFailure_ReturnsError(t *testing.T) {
-	// Trigger shadow mode via UnityLockfile, then poison the shadow path by
-	// placing a regular file where .fastplay-shadow/ would be created.
-	// shadow.Prepare calls os.MkdirAll on that path, which fails when a
-	// non-directory already exists there.
+	// Trigger shadow mode via UnityLockfile, then cause shadow.Prepare to fail
+	// by making Assets/ unreadable so copyDir returns an error.
 	projectDir := t.TempDir()
 	for _, d := range []string{"Assets", "ProjectSettings", "Packages", "Temp"} {
 		_ = os.MkdirAll(filepath.Join(projectDir, d), 0755)
 	}
 	_ = os.WriteFile(filepath.Join(projectDir, "Temp", "UnityLockfile"), []byte{}, 0644)
-	// Block shadow creation: put a regular file where the shadow dir would go.
-	_ = os.WriteFile(filepath.Join(projectDir, ".fastplay-shadow"), []byte("poison"), 0644)
+	// Make Assets/ unreadable so copyDir fails inside Prepare.
+	assetsDir := filepath.Join(projectDir, "Assets")
+	if err := os.Chmod(assetsDir, 0000); err != nil {
+		t.Skipf("cannot chmod on this platform: %v", err)
+	}
+	t.Cleanup(func() { os.Chmod(assetsDir, 0755) })
 
 	svc := &runsvc.Service{
 		Runner:    runnerFunc(func(_ context.Context, _ []string, _, _ io.Writer) (int, error) { return 0, nil }),

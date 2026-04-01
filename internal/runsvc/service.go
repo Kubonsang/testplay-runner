@@ -129,15 +129,13 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	// Determine execution backend: shadow if editor has the project open.
 	var ws *shadow.Workspace
 	if req.ForceShadow || req.ResetShadow || shadow.IsLocked(req.Config.ProjectPath) {
+		// ResetShadow and ForceShadow behave identically — per-run dirs are always fresh.
 		var wsErr error
-		if req.ResetShadow {
-			ws, wsErr = shadow.Reset(ctx, req.Config.ProjectPath)
-		} else {
-			ws, wsErr = shadow.Prepare(ctx, req.Config.ProjectPath)
-		}
+		ws, wsErr = shadow.Prepare(ctx, req.Config.ProjectPath, runID)
 		if wsErr != nil {
 			return Response{}, fmt.Errorf("runsvc: prepare shadow workspace: %w", wsErr)
 		}
+		defer func() { _ = ws.Cleanup() }()
 	}
 
 	execProjectPath := req.Config.ProjectPath
