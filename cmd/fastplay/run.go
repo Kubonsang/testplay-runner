@@ -159,6 +159,8 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 		}
 	}
 
+	// RunScenario never returns a non-nil error per its contract; instance errors
+	// are recorded in InstanceResult.Err instead.
 	scenarioResult, _ := scenario.RunScenario(ctx, spec, run)
 
 	instances := make([]map[string]any, len(scenarioResult.Instances))
@@ -171,6 +173,13 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 			continue
 		}
 		r := inst.Response.Result
+		if r == nil {
+			instances[i] = map[string]any{
+				"role":      inst.Role,
+				"exit_code": inst.Response.ExitCode,
+			}
+			continue
+		}
 		m := map[string]any{
 			"role":      inst.Role,
 			"run_id":    inst.Response.RunID,
