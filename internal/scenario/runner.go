@@ -36,12 +36,16 @@ type ScenarioResult struct {
 // RunScenario itself never returns a non-nil error; instance errors are recorded
 // in InstanceResult.Err and orchestration errors in ScenarioResult.OrchestratorErrors.
 func RunScenario(ctx context.Context, spec *ScenarioFile, run InstanceRunner) (ScenarioResult, error) {
-	// Create one ready channel per instance.
-	// The channel is closed by the instance's runner (via ReadyNotifier or test fake)
-	// when the instance reaches its configured ready phase.
+	// Create one ready channel and one done channel per instance.
+	// readyCh is closed by the runner (via ReadyNotifier) when the instance
+	// reaches its configured ready phase.
+	// doneCh is closed by the orchestrator when the instance's goroutine finishes,
+	// regardless of success or failure — enabling fast-fail for dependents.
 	readyChannels := make(map[string]chan struct{}, len(spec.Instances))
+	doneChannels := make(map[string]chan struct{}, len(spec.Instances))
 	for _, inst := range spec.Instances {
 		readyChannels[inst.Role] = make(chan struct{})
+		doneChannels[inst.Role] = make(chan struct{})
 	}
 
 	results := make([]InstanceResult, len(spec.Instances))
@@ -55,14 +59,28 @@ func RunScenario(ctx context.Context, spec *ScenarioFile, run InstanceRunner) (S
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer close(doneChannels[inst.Role])
 
 			// If this instance depends on another, wait for its ready signal.
 			if inst.DependsOn != "" {
-				depCh := readyChannels[inst.DependsOn]
+				depReadyCh := readyChannels[inst.DependsOn]
+				depDoneCh := doneChannels[inst.DependsOn]
 				timeout := time.Duration(inst.EffectiveReadyTimeoutMs()) * time.Millisecond
 				select {
-				case <-depCh:
+				case <-depReadyCh:
 					// dependency reached ready phase — proceed
+				case <-depDoneCh:
+					// dependency exited without signaling ready — fast-fail
+					msg := fmt.Sprintf("instance %q: dependency %q exited before reaching phase %q",
+						inst.Role, inst.DependsOn, inst.EffectiveReadyPhase())
+					orchMu.Lock()
+					orchErrs = append(orchErrs, msg)
+					orchMu.Unlock()
+					results[i] = InstanceResult{
+						Role:     inst.Role,
+						Response: runsvc.Response{ExitCode: 4},
+					}
+					return
 				case <-time.After(timeout):
 					msg := fmt.Sprintf("instance %q timed out waiting for %q to reach phase %q (%dms)",
 						inst.Role, inst.DependsOn, inst.EffectiveReadyPhase(), inst.EffectiveReadyTimeoutMs())

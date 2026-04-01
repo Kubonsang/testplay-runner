@@ -200,6 +200,43 @@ func TestRunScenario_ReadyTimeout_ReturnsExit4(t *testing.T) {
 	}
 }
 
+func TestRunScenario_HostCrash_ClientFastFails(t *testing.T) {
+	t.Parallel()
+	spec := &scenario.ScenarioFile{
+		Instances: []scenario.InstanceSpec{
+			{Role: "host", Config: "./host.json"},
+			{Role: "client", Config: "./client.json", DependsOn: "host", ReadyTimeoutMs: 10000},
+		},
+	}
+
+	run := func(_ context.Context, inst scenario.InstanceSpec, readyCh chan<- struct{}) (runsvc.Response, error) {
+		if inst.Role == "host" {
+			// Host crashes immediately without signaling ready
+			// (readyCh is NOT closed — simulates crash before reaching ready phase)
+			return fakeResult(2), nil // exit 2 = compile failure
+		}
+		return fakeResult(0), nil
+	}
+
+	start := time.Now()
+	result, err := scenario.RunScenario(context.Background(), spec, run)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Client should have fast-failed, NOT waited the full 10s timeout
+	if elapsed > 2*time.Second {
+		t.Errorf("expected fast-fail but RunScenario took %v (timeout is 10s)", elapsed)
+	}
+	if result.ExitCode < 2 {
+		t.Errorf("expected exit code >= 2, got %d", result.ExitCode)
+	}
+	if len(result.OrchestratorErrors) == 0 {
+		t.Error("expected orchestrator_errors for host crash fast-fail")
+	}
+}
+
 func TestRunScenario_ContextCancellation_StopsWait(t *testing.T) {
 	t.Parallel()
 	spec := &scenario.ScenarioFile{
