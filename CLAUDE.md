@@ -10,7 +10,7 @@ Agents interact via five commands: `version`, `check`, `list`, `run`, `result`. 
 
 **Supported test platforms:** `"edit_mode"` (default) and `"play_mode"` — set via `test_platform` in `fastplay.json`. The platform is passed as `-testPlatform EditMode|PlayMode` to Unity.
 
-**Current version:** `v0.1.0-beta` (main). Shadow Workspace (`v0.2.0-beta`) is in review — see PR #15.
+**Current version:** `v0.2.0-beta` (main). Shadow Workspace shipped. Next: multi-instance core (v0.3.0-beta).
 
 **Ultimate goal:** PlayMode + network environment testing.
 
@@ -174,22 +174,28 @@ Run `fastplay result` to review the `run_id` list and decide the `--compare-run`
 
 Tracked against [RELEASE-PLAN.md](RELEASE-PLAN.md).
 
-### v0.1.0-beta ✅ — Foundation (current main)
+### v0.1.0-beta ✅ — Foundation
 Single-process Unity test runner with structured JSON output, phase-aware timeouts, artifact persistence, and run history.
 
-### v0.2.0-beta 🚧 — The Editor Unlock (PR #15 in review)
+### v0.2.0-beta ✅ — The Editor Unlock (shipped)
 Shadow Workspace: automatic fallback when the Unity Editor has the project open.
-- ~~Shadow Workspace auto-fallback~~ ✅ — `Temp/UnityLockfile` detection → `.fastplay-shadow/` isolation
-- ~~Path remapping~~ ✅ — all `absolute_path` fields in JSON output use source project paths
-- ~~`--reset-shadow` flag~~ ✅ — force rebuild of shadow Library cache
-- ~~`.gitignore` auto-patching~~ ✅ — `.fastplay-shadow/` excluded on first use
+- Shadow Workspace auto-fallback — `Temp/UnityLockfile` detection → `.fastplay-shadow/` isolation
+- Path remapping — all `absolute_path` fields in JSON output use source project paths
+- `--shadow` flag (force) / `--reset-shadow` flag (rebuild Library cache)
+- `.gitignore` auto-patching — `.fastplay-shadow/` excluded on first use
+- Production hardening: symlink preservation, FileMode copy, ctx-cancel mid-copy, rollback safety, ring-buffer stderr tail, Null Object StatusWriter
 
-**Release gate (v0.2):** With the Unity Editor open, `fastplay run` completes without corrupting the source project and all `absolute_path` fields in the result JSON point to source project paths.
+### v0.3.0-beta 🔵 — The Multi-Instance Core (next)
 
-### Remaining P1 items (v0.3+)
+**P1 backlog resolved as prerequisites:**
+1. **Unique runID** — UUID/nanosecond-based; prevents concurrent-run result file collision
+2. **`--config` flag** — config path as CLI arg; removes CWD dependency for multi-instance orchestration
+3. **Per-run shadow isolation** — run-ID-scoped shadow dir (`.fastplay-shadow-<run_id>/`); makes parallel `fastplay run` safe
+4. **Exit 8 for signal interruption** — SIGINT/SIGTERM → exit 8; timeout → exit 4 (currently both return exit 4)
 
-1. **Exit 8 for signal interruption** — distinguish SIGINT/SIGTERM from timeout at exit code level
-2. **Unique runID** — nanosecond or UUID-based to prevent concurrent-run collision
-3. **`--config` flag** — allow specifying config path so agents do not need to `cd`
-4. **Parallel `fastplay run` safety in shadow mode** — per-run shadow workspace (advisory lock or run-ID-scoped directory)
-5. **Network test configuration** — multi-instance orchestration, NGO/Mirror harness (v0.3–v0.4 scope)
+**New capability:**
+5. **`fastplay run --scenario <file>`** — Role-based (Host/Client) multi-instance concurrent execution; individual results aggregated into single scenario JSON
+
+### Remaining items (v0.4+)
+
+- **Network test configuration** — multi-instance orchestration, NGO/Mirror harness; Host/Client ready gating, IPC-based readiness signaling

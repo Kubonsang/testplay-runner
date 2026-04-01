@@ -34,6 +34,11 @@
 **테마:** 시나리오 기반 다중 실행의 뼈대
 
 - **목표:** 여러 개의 유니티 프로세스를 띄우고 결과를 합치는 1차 코어 확장
+- **v0.2 P1 backlog 해소 (다중 실행의 전제 조건):**
+  - **runID UUID 기반 교체** — 1초 단위 타임스탬프 → UUID/nanosecond; 동시 실행 시 결과 파일 충돌 방지 (현재 `Medium` Known Limitation)
+  - **`--config` flag 도입** — CWD 의존 제거; 오케스트레이터가 각 인스턴스에 다른 config 경로를 직접 지정 가능
+  - **Per-run shadow 격리** — run-ID 기반 독립 shadow 디렉터리(`.fastplay-shadow-<run_id>/`); 병렬 `fastplay run` 안전성 확보 (현재 `Medium` Known Limitation)
+  - **Exit 8 구현** — SIGINT/SIGTERM → exit 8, timeout → exit 4로 명확 구분 (현재 두 경우 모두 exit 4)
 - **포함 기능:**
   - `fastplay run --scenario <file>` 인터페이스 최초 도입
   - Role 기반(Host/Client) 다중 섀도우 워크스페이스 동시 실행
