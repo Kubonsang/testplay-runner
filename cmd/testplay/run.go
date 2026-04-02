@@ -26,6 +26,7 @@ type RunCmdOptions struct {
 	CompareRun  string
 	ResetShadow bool
 	ForceShadow bool // activate shadow workspace without resetting Library cache
+	ClearCache  bool // remove cached Library before shadow workspace creation
 }
 
 type runDeps struct {
@@ -78,6 +79,7 @@ func runRun(w io.Writer, deps runDeps) int {
 		CompareRun:  deps.opts.CompareRun,
 		ResetShadow: deps.opts.ResetShadow,
 		ForceShadow: deps.opts.ForceShadow,
+		ClearCache:  deps.opts.ClearCache,
 	})
 	if infraErr != nil {
 		writeJSON(w, map[string]any{"schema_version": "1", "error": infraErr.Error()})
@@ -222,10 +224,11 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 	return scenarioResult.ExitCode
 }
 
-// runFilter, runCategory, runCompareRun, resetShadow and forceShadow are cobra flag values.
+// runFilter, runCategory, runCompareRun, resetShadow, forceShadow and clearCache are cobra flag values.
 var runFilter, runCategory, runCompareRun string
 var resetShadow bool
 var forceShadow bool
+var clearCache bool
 var scenarioPath string
 
 var runCmd = &cobra.Command{
@@ -258,6 +261,7 @@ var runCmd = &cobra.Command{
 					CompareRun:  runCompareRun,
 					ResetShadow: resetShadow,
 					ForceShadow: forceShadow,
+					ClearCache:  clearCache,
 				},
 			}
 			code = runRun(cmd.OutOrStdout(), deps)
@@ -274,5 +278,6 @@ func init() {
 	runCmd.Flags().StringVar(&runCompareRun, "compare-run", "", "Run ID to compare against for regression detection")
 	runCmd.Flags().BoolVar(&resetShadow, "reset-shadow", false, "Force shadow workspace (equivalent to --shadow; kept for compatibility)")
 	runCmd.Flags().BoolVar(&forceShadow, "shadow", false, "Force shadow workspace even when Unity Editor is not open")
+	runCmd.Flags().BoolVar(&clearCache, "clear-cache", false, "Remove cached Library before shadow workspace creation")
 	runCmd.Flags().StringVar(&scenarioPath, "scenario", "", "Path to scenario JSON file for multi-instance execution")
 }
