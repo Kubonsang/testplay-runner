@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/Kubonsang/testplay-runner/internal/history"
 )
@@ -193,21 +195,61 @@ func (r *ctxReader) Read(p []byte) (n int, err error) {
 	return r.r.Read(p)
 }
 
-// copyDir removes dst and recursively copies all files from src to dst.
-// It checks ctx.Err() at every WalkDir iteration so cancellation returns immediately.
-func copyDir(ctx context.Context, src, dst string) error {
+const copyDirWorkers = 8
+
+// CopyDirParallel removes dst and recursively copies all files from src to dst
+// using a bounded pool of worker goroutines for file copies. Directories and
+// symlinks are handled inline by the WalkDir goroutine. workers <= 0 defaults
+// to copyDirWorkers.
+func CopyDirParallel(ctx context.Context, src, dst string, workers int) error {
+	if workers <= 0 {
+		workers = copyDirWorkers
+	}
 	if err := os.RemoveAll(dst); err != nil {
 		return err
 	}
-	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+
+	type copyJob struct {
+		src, dst string
+	}
+
+	jobs := make(chan copyJob, workers*2)
+	var wg sync.WaitGroup
+	var copyErr atomic.Value
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				if copyErr.Load() != nil {
+					return
+				}
+				if err := copyFile(ctx, job.src, job.dst); err != nil {
+					copyErr.CompareAndSwap(nil, err)
+					return
+				}
+			}
+		}()
+	}
+
+	walkErr := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		if copyErr.Load() != nil {
+			return copyErr.Load().(error)
+		}
+
 		rel, _ := filepath.Rel(src, path)
 		target := filepath.Join(dst, rel)
+
 		if d.IsDir() {
 			return os.MkdirAll(target, 0755)
 		}
@@ -218,8 +260,31 @@ func copyDir(ctx context.Context, src, dst string) error {
 			}
 			return os.Symlink(linkTarget, target)
 		}
-		return copyFile(ctx, path, target)
+
+		select {
+		case jobs <- copyJob{src: path, dst: target}:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	})
+
+	close(jobs)
+	wg.Wait()
+
+	if walkErr != nil {
+		return walkErr
+	}
+	if v := copyErr.Load(); v != nil {
+		return v.(error)
+	}
+	return nil
+}
+
+// copyDir removes dst and recursively copies all files from src to dst.
+// Delegates to CopyDirParallel with the default worker count.
+func copyDir(ctx context.Context, src, dst string) error {
+	return CopyDirParallel(ctx, src, dst, copyDirWorkers)
 }
 
 func copyFile(ctx context.Context, src, dst string) error {
