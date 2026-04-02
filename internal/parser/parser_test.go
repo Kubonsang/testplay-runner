@@ -178,6 +178,69 @@ func TestMakeRelative_OutsideProjectPath(t *testing.T) {
 	}
 }
 
+func TestParse_ParameterizedMethod(t *testing.T) {
+	data, err := os.ReadFile("testdata/parameterized.xml")
+	if err != nil {
+		t.Fatalf("failed to read fixture: %v", err)
+	}
+	result, err := parser.Parse(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Total != 5 {
+		t.Errorf("got Total=%d, want 5", result.Total)
+	}
+	if result.Passed != 4 {
+		t.Errorf("got Passed=%d, want 4", result.Passed)
+	}
+	if result.Failed != 1 {
+		t.Errorf("got Failed=%d, want 1", result.Failed)
+	}
+	if len(result.Tests) != 5 {
+		t.Fatalf("got %d tests, want 5", len(result.Tests))
+	}
+
+	// First 4 tests should belong to the parameterized group "MathTests.AddTest"
+	for i := 0; i < 4; i++ {
+		tc := result.Tests[i]
+		if tc.ParameterizedGroup != "MathTests.AddTest" {
+			t.Errorf("Tests[%d].ParameterizedGroup = %q, want %q", i, tc.ParameterizedGroup, "MathTests.AddTest")
+		}
+	}
+
+	// 5th test is a regular test — no parameterized group
+	if result.Tests[4].ParameterizedGroup != "" {
+		t.Errorf("Tests[4].ParameterizedGroup = %q, want empty", result.Tests[4].ParameterizedGroup)
+	}
+}
+
+func TestParse_ParameterizedMethod_FailedTestHasFileInfo(t *testing.T) {
+	data, err := os.ReadFile("testdata/parameterized.xml")
+	if err != nil {
+		t.Fatalf("failed to read fixture: %v", err)
+	}
+	result, err := parser.Parse(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	failed := result.FailedTests()
+	if len(failed) != 1 {
+		t.Fatalf("expected 1 failure, got %d", len(failed))
+	}
+	tc := failed[0]
+	if tc.AbsolutePath != "/home/user/MyProject/Assets/Tests/MathTests.cs" {
+		t.Errorf("got absolute_path %q", tc.AbsolutePath)
+	}
+	if tc.Line != 15 {
+		t.Errorf("got line %d, want 15", tc.Line)
+	}
+	if tc.ParameterizedGroup != "MathTests.AddTest" {
+		t.Errorf("ParameterizedGroup = %q, want %q", tc.ParameterizedGroup, "MathTests.AddTest")
+	}
+}
+
 func TestParse_CommaDurationLocale(t *testing.T) {
 	// Unity on Windows with a non-English locale writes "1,5" instead of "1.5".
 	raw := []byte(`<?xml version="1.0" encoding="utf-8"?>

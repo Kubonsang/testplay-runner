@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<test-run id="1" result="Failed" total="5" passed="4" failed="1" skipped="0" duration="0.500">
+  <test-suite type="Assembly" name="MyProject.Tests.dll" result="Failed">
+    <test-suite type="TestFixture" name="MathTests" fullname="MathTests" result="Failed">
+      <test-suite type="ParameterizedMethod" name="AddTest" fullname="MathTests.AddTest" result="Failed">
+        <test-case id="1" name="AddTest(1,2,3)" fullname="MathTests.AddTest(1,2,3)" result="Passed" duration="0.050" />
+        <test-case id="2" name="AddTest(2,3,5)" fullname="MathTests.AddTest(2,3,5)" result="Passed" duration="0.040" />
+        <test-case id="3" name="AddTest(-1,1,0)" fullname="MathTests.AddTest(-1,1,0)" result="Passed" duration="0.030" />
+        <test-case id="4" name="AddTest(0,0,1)" fullname="MathTests.AddTest(0,0,1)" result="Failed" duration="0.060">
+          <failure>
+            <message><![CDATA[Expected 1 but was 0]]></message>
+            <stack-trace><![CDATA[at MathTests.AddTest(Int32 a, Int32 b, Int32 expected) [0x00000] in /home/user/MyProject/Assets/Tests/MathTests.cs:line 15]]></stack-trace>
+          </failure>
+        </test-case>
+      </test-suite>
+      <test-case id="5" name="SimpleTest" fullname="MathTests.SimpleTest" result="Passed" duration="0.020" />
+    </test-suite>
+  </test-suite>
+</test-run>

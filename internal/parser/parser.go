@@ -32,13 +32,14 @@ type Result struct {
 
 // TestCase represents a single NUnit test-case element.
 type TestCase struct {
-	Name         string  `json:"name"`
-	Result       string  `json:"result"`
-	Duration     float64 `json:"duration_s"`
-	Message      string  `json:"message,omitempty"`
-	File         string  `json:"file,omitempty"`
-	AbsolutePath string  `json:"absolute_path,omitempty"`
-	Line         int     `json:"line,omitempty"`
+	Name               string  `json:"name"`
+	Result             string  `json:"result"`
+	Duration           float64 `json:"duration_s"`
+	Message            string  `json:"message,omitempty"`
+	File               string  `json:"file,omitempty"`
+	AbsolutePath       string  `json:"absolute_path,omitempty"`
+	Line               int     `json:"line,omitempty"`
+	ParameterizedGroup string  `json:"parameterized_group,omitempty"`
 }
 
 // FailedTests returns all test cases with Result == "Failed".
@@ -64,6 +65,9 @@ type xmlTestRun struct {
 }
 
 type xmlTestSuite struct {
+	Type       string         `xml:"type,attr"`
+	Name       string         `xml:"name,attr"`
+	FullName   string         `xml:"fullname,attr"`
 	TestCases  []xmlTestCase  `xml:"test-case"`
 	TestSuites []xmlTestSuite `xml:"test-suite"`
 }
@@ -99,17 +103,26 @@ func Parse(data []byte) (*Result, error) {
 	}
 
 	for _, suite := range run.TestSuites {
-		collectCases(&result.Tests, suite)
+		collectCases(&result.Tests, suite, "")
 	}
 
 	return result, nil
 }
 
-func collectCases(out *[]TestCase, suite xmlTestSuite) {
+func collectCases(out *[]TestCase, suite xmlTestSuite, paramGroup string) {
+	group := paramGroup
+	if suite.Type == "ParameterizedMethod" {
+		group = suite.FullName
+	}
+
+	for _, sub := range suite.TestSuites {
+		collectCases(out, sub, group)
+	}
 	for _, xc := range suite.TestCases {
 		tc := TestCase{
-			Name:   xc.FullName,
-			Result: xc.Result,
+			Name:               xc.FullName,
+			Result:             xc.Result,
+			ParameterizedGroup: group,
 		}
 		if d, err := parseDuration(xc.Duration); err == nil {
 			tc.Duration = d
@@ -122,9 +135,6 @@ func collectCases(out *[]TestCase, suite xmlTestSuite) {
 			tc.Line = line
 		}
 		*out = append(*out, tc)
-	}
-	for _, sub := range suite.TestSuites {
-		collectCases(out, sub)
 	}
 }
 
