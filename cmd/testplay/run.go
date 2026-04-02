@@ -166,7 +166,11 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 				Artifacts:    artifacts.NewStore(artifactRoot),
 				StatusWriter: sw,
 			}
-			return svc.Run(instanceCtx, runsvc.Request{Config: cfg, ClearCache: deps.clearCache})
+			return svc.Run(instanceCtx, runsvc.Request{
+				Config:             cfg,
+				ClearCache:         deps.clearCache,
+				SkipCacheWriteBack: true, // avoid concurrent writes to shared cache dir
+			})
 		}
 	}
 

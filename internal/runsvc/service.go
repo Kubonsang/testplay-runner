@@ -46,7 +46,8 @@ type Request struct {
 	CompareRun  string
 	ResetShadow bool // activates shadow workspace; equivalent to ForceShadow with per-run isolation
 	ForceShadow bool // activate shadow workspace without resetting Library cache
-	ClearCache  bool // remove cached Library before preparing shadow workspace
+	ClearCache         bool // remove cached Library before preparing shadow workspace
+	SkipCacheWriteBack bool // skip Library cache write-back (used in scenario mode to avoid concurrent writes)
 }
 
 // Response carries all outputs of a single testplay run.
@@ -246,7 +247,8 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	}
 
 	// Write Library cache back on successful runs (exit 0 or 3).
-	if ws != nil && (exitCode == 0 || exitCode == 3) {
+	// Skipped in scenario mode to avoid concurrent writes to the shared cache dir.
+	if ws != nil && !req.SkipCacheWriteBack && (exitCode == 0 || exitCode == 3) {
 		if cacheErr := ws.UpdateLibraryCache(ctx); cacheErr != nil {
 			warnings = append(warnings, fmt.Sprintf("library cache not updated: %v", cacheErr))
 		}

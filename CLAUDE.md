@@ -167,7 +167,7 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 | Unimplemented exit codes | Exit 6 (build failure), exit 7 (permission) are documented but never returned | Low |
 | Shadow — `Packages/` not fully isolated | `Packages/` is linked (symlink on macOS/Linux, junction on Windows) rather than copied. If Unity or a package tool writes to the `Packages/` tree during batch execution (e.g. embedded packages), those changes propagate back to the original project. This is best-effort isolation. | Low |
 | Shadow — editor-open detection is best-effort | Shadow mode activates when `Temp/UnityLockfile` exists. A stale lockfile after an unclean Unity exit causes unnecessary shadow overhead. The lockfile check is a heuristic, not a guaranteed signal. | Low |
-| Shadow — Library cold-start per run | `Library/` is seeded from a project-local cache (`.testplay/cache/Library/`) when available. First run after a cache miss still cold-starts. Cache is invalidated when `ProjectVersion.txt` or `Packages/manifest.json` changes. Use `--clear-cache` to force a cold start. In `--scenario` mode each instance pays this cost independently. | Low |
+| Shadow — Library cold-start per run | `Library/` is seeded from a project-local cache (`.testplay/cache/Library/`) when available. First run after a cache miss still cold-starts. Cache is invalidated when `ProjectVersion.txt` or `Packages/manifest.json` changes. Use `--clear-cache` to force a cold start. In `--scenario` mode, cache seeding (read) works per instance but cache write-back is skipped to avoid concurrent writes; a single-mode run is needed to populate the cache. | Low |
 | Scenario — status polling (per-instance) | `testplay-status-<role>.json` is written for each instance in `--scenario` mode. No scenario-level aggregate status file exists; agents must poll per-role files. | Low |
 | Scenario — host crash error detail | Dependent instances fast-fail immediately on host crash (v0.4.1+), but the error message does not include the host's exit code or failure details. | Low |
 
@@ -210,6 +210,7 @@ Shadow workspace Library/ seeded from project-local cache to eliminate cold-star
 - **Parallel copy** — `copyDir` parallelized with 8-goroutine worker pool
 - **Cache infrastructure** — `.testplay/cache/Library/` with SHA256-based invalidation key
 - **Cache lifecycle** — first run cold-starts → cache on success (exit 0/3) → seed subsequent runs → invalidate on project change
+- **Scenario safety** — cache write-back skipped in `--scenario` mode to prevent concurrent write corruption
 - **`--clear-cache` flag** — force cache removal before shadow workspace creation
 
 ### Remaining items (v0.5+)

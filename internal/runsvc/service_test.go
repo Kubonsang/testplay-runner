@@ -703,3 +703,49 @@ func TestService_CachesLibraryOnSuccessfulShadowRun(t *testing.T) {
 		t.Error("expected ValidateCache to return true after successful run")
 	}
 }
+
+func TestService_SkipCacheWriteBack(t *testing.T) {
+	projectDir := t.TempDir()
+	for _, d := range []string{"Assets", "ProjectSettings", "Packages", "Temp"} {
+		_ = os.MkdirAll(filepath.Join(projectDir, d), 0755)
+	}
+	_ = os.WriteFile(filepath.Join(projectDir, "Assets", "Player.cs"), []byte("// test"), 0644)
+	_ = os.WriteFile(filepath.Join(projectDir, "ProjectSettings", "ProjectVersion.txt"), []byte("m_EditorVersion: 6000.3.8f1"), 0644)
+	_ = os.WriteFile(filepath.Join(projectDir, "Packages", "manifest.json"), []byte(`{"dependencies":{}}`), 0644)
+	_ = os.WriteFile(filepath.Join(projectDir, "Temp", "UnityLockfile"), []byte{}, 0644)
+
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+
+	resultDir := filepath.Join(projectDir, ".testplay", "results")
+	svc := &runsvc.Service{
+		Runner:    fake,
+		Store:     history.NewStore(resultDir),
+		Artifacts: artifacts.NewStore(filepath.Join(projectDir, ".testplay", "runs")),
+		Clock:     func() time.Time { return time.Date(2026, 4, 2, 12, 0, 0, 0, time.UTC) },
+	}
+
+	cfg := &config.Config{
+		UnityPath:    "/fake/unity",
+		ProjectPath:  projectDir,
+		TestPlatform: "edit_mode",
+		Timeout:      config.Timeouts{TotalMs: 30000},
+	}
+
+	resp, err := svc.Run(context.Background(), runsvc.Request{
+		Config:             cfg,
+		SkipCacheWriteBack: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if resp.ExitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", resp.ExitCode)
+	}
+
+	// Verify cache was NOT written.
+	cacheLib := shadow.CacheLibraryDir(projectDir)
+	if _, err := os.Stat(cacheLib); !os.IsNotExist(err) {
+		t.Error("expected Library cache to NOT exist when SkipCacheWriteBack is set")
+	}
+}
