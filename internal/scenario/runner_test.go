@@ -3,6 +3,7 @@ package scenario_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -264,4 +265,65 @@ func TestRunScenario_ContextCancellation_StopsWait(t *testing.T) {
 	result, _ := scenario.RunScenario(ctx, spec, run)
 	// key assertion: RunScenario returned (did not hang)
 	_ = result
+}
+
+func TestRunScenario_HostCrash_ErrorIncludesExitCode(t *testing.T) {
+	t.Parallel()
+	spec := &scenario.ScenarioFile{
+		Instances: []scenario.InstanceSpec{
+			{Role: "host", Config: "./host.json"},
+			{Role: "client", Config: "./client.json", DependsOn: "host", ReadyTimeoutMs: 10000},
+		},
+	}
+
+	run := func(_ context.Context, inst scenario.InstanceSpec, readyCh chan<- struct{}) (runsvc.Response, error) {
+		if inst.Role == "host" {
+			return fakeResult(2), nil
+		}
+		return fakeResult(0), nil
+	}
+
+	result, err := scenario.RunScenario(context.Background(), spec, run)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.OrchestratorErrors) == 0 {
+		t.Fatal("expected orchestrator errors for host crash")
+	}
+	msg := result.OrchestratorErrors[0]
+	if !strings.Contains(msg, "exit 2") {
+		t.Errorf("expected error to contain 'exit 2', got: %s", msg)
+	}
+	if !strings.Contains(msg, "compile error") {
+		t.Errorf("expected error to contain 'compile error', got: %s", msg)
+	}
+}
+
+func TestRunScenario_HostInfraError_ErrorIncludesDetail(t *testing.T) {
+	t.Parallel()
+	spec := &scenario.ScenarioFile{
+		Instances: []scenario.InstanceSpec{
+			{Role: "host", Config: "./host.json"},
+			{Role: "client", Config: "./client.json", DependsOn: "host", ReadyTimeoutMs: 10000},
+		},
+	}
+
+	run := func(_ context.Context, inst scenario.InstanceSpec, readyCh chan<- struct{}) (runsvc.Response, error) {
+		if inst.Role == "host" {
+			return runsvc.Response{}, fmt.Errorf("disk full")
+		}
+		return fakeResult(0), nil
+	}
+
+	result, err := scenario.RunScenario(context.Background(), spec, run)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.OrchestratorErrors) == 0 {
+		t.Fatal("expected orchestrator errors for host infra error")
+	}
+	msg := result.OrchestratorErrors[0]
+	if !strings.Contains(msg, "infrastructure error") {
+		t.Errorf("expected error to contain 'infrastructure error', got: %s", msg)
+	}
 }
