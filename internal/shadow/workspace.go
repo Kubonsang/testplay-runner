@@ -2,6 +2,7 @@ package shadow
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -24,15 +25,22 @@ func ShadowWorkspaceDir(sourcePath, runID string) string {
 	return filepath.Join(sourcePath, ".testplay-shadow-"+runID)
 }
 
+// PrepareOptions configures optional behavior for Prepare.
+type PrepareOptions struct {
+	// LibraryCacheDir, if non-empty, is the path to a cached Library directory.
+	// When set, Library/ is seeded by copying from this cache instead of starting empty.
+	LibraryCacheDir string
+}
+
 // Prepare creates an isolated shadow workspace for a single run.
 //   - Assets/ and ProjectSettings/ are always copied fresh from source.
 //   - Packages/ is linked (symlink on unix, junction on windows); linked once per workspace.
-//   - Library/ is created empty; Unity populates it during the run.
+//   - Library/ is seeded from opts.LibraryCacheDir if set and valid, otherwise created empty.
 //   - Temp/ is deleted before the run; Unity recreates it.
 //   - .gitignore is patched to exclude .testplay-shadow-*/ (non-fatal on failure).
 //
 // The caller must call ws.Cleanup() after the run to remove the per-run directory.
-func Prepare(ctx context.Context, sourcePath, runID string) (*Workspace, error) {
+func Prepare(ctx context.Context, sourcePath, runID string, opts PrepareOptions) (*Workspace, error) {
 	abs, err := filepath.Abs(sourcePath)
 	if err != nil {
 		return nil, err
@@ -68,9 +76,22 @@ func Prepare(ctx context.Context, sourcePath, runID string) (*Workspace, error) 
 		}
 	}
 
-	// Ensure Library/ exists (Unity will populate during the run; starts empty each run).
-	if err := os.MkdirAll(filepath.Join(shadowPath, "Library"), 0755); err != nil {
-		return nil, err
+	// Seed Library/ from cache if available, otherwise create empty.
+	libDst := filepath.Join(shadowPath, "Library")
+	if opts.LibraryCacheDir != "" {
+		if _, err := os.Stat(opts.LibraryCacheDir); err == nil {
+			if err := copyDir(ctx, opts.LibraryCacheDir, libDst); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := os.MkdirAll(libDst, 0755); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		if err := os.MkdirAll(libDst, 0755); err != nil {
+			return nil, err
+		}
 	}
 
 	// Clean Temp/ so Unity starts fresh each run.
@@ -86,7 +107,24 @@ func Prepare(ctx context.Context, sourcePath, runID string) (*Workspace, error) 
 // Reset is equivalent to Prepare with per-run isolation — each run already
 // starts with a fresh workspace. Kept for API stability.
 func Reset(ctx context.Context, sourcePath, runID string) (*Workspace, error) {
-	return Prepare(ctx, sourcePath, runID)
+	return Prepare(ctx, sourcePath, runID, PrepareOptions{})
+}
+
+// UpdateLibraryCache copies the shadow workspace's Library/ directory to
+// the project-local cache at .testplay/cache/Library/ and saves the cache key.
+func (w *Workspace) UpdateLibraryCache(ctx context.Context) error {
+	srcLib := filepath.Join(w.ShadowPath, "Library")
+	if _, err := os.Stat(srcLib); err != nil {
+		return nil
+	}
+	dstLib := CacheLibraryDir(w.SourcePath)
+	if err := copyDir(ctx, srcLib, dstLib); err != nil {
+		return fmt.Errorf("update library cache: %w", err)
+	}
+	if err := SaveCacheKey(w.SourcePath); err != nil {
+		return fmt.Errorf("update library cache key: %w", err)
+	}
+	return nil
 }
 
 // Cleanup removes the per-run shadow workspace directory.

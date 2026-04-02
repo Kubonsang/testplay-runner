@@ -1,6 +1,7 @@
 package shadow_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -134,6 +135,43 @@ func TestValidateCache_ReturnsFalseAfterFileChange(t *testing.T) {
 
 	if shadow.ValidateCache(dir) {
 		t.Error("expected ValidateCache to return false after manifest change")
+	}
+}
+
+func TestUpdateLibraryCache_CopiesToCacheDir(t *testing.T) {
+	t.Parallel()
+	src := makeProject(t)
+	must(t, os.WriteFile(filepath.Join(src, "Packages", "manifest.json"),
+		[]byte(`{"dependencies":{}}`), 0644))
+
+	ws, err := shadow.Prepare(context.Background(), src, "update-cache-run",
+		shadow.PrepareOptions{})
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	defer ws.Cleanup()
+
+	libDir := filepath.Join(ws.ShadowPath, "Library")
+	must(t, os.MkdirAll(filepath.Join(libDir, "PackageCache"), 0755))
+	must(t, os.WriteFile(filepath.Join(libDir, "PackageCache", "pkg.dat"),
+		[]byte("pkg-data"), 0644))
+	must(t, os.WriteFile(filepath.Join(libDir, "ArtifactDB"), []byte("db"), 0644))
+
+	if err := ws.UpdateLibraryCache(context.Background()); err != nil {
+		t.Fatalf("UpdateLibraryCache: %v", err)
+	}
+
+	cacheLib := shadow.CacheLibraryDir(src)
+	data, err := os.ReadFile(filepath.Join(cacheLib, "PackageCache", "pkg.dat"))
+	if err != nil {
+		t.Fatalf("cached file missing: %v", err)
+	}
+	if string(data) != "pkg-data" {
+		t.Errorf("cached content: got %q, want %q", data, "pkg-data")
+	}
+
+	if !shadow.ValidateCache(src) {
+		t.Error("ValidateCache should return true after UpdateLibraryCache")
 	}
 }
 

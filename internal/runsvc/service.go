@@ -131,7 +131,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	if req.ForceShadow || req.ResetShadow || shadow.IsLocked(req.Config.ProjectPath) {
 		// ResetShadow and ForceShadow behave identically — per-run dirs are always fresh.
 		var wsErr error
-		ws, wsErr = shadow.Prepare(ctx, req.Config.ProjectPath, runID)
+		ws, wsErr = shadow.Prepare(ctx, req.Config.ProjectPath, runID, shadow.PrepareOptions{})
 		if wsErr != nil {
 			return Response{}, fmt.Errorf("runsvc: prepare shadow workspace: %w", wsErr)
 		}
