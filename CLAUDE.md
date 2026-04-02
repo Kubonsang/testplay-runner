@@ -169,7 +169,7 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 | Shadow — editor-open detection is best-effort | Shadow mode activates when `Temp/UnityLockfile` exists. A stale lockfile after an unclean Unity exit causes unnecessary shadow overhead. The lockfile check is a heuristic, not a guaranteed signal. | Low |
 | Shadow — Library cold-start per run | `Library/` is seeded from a project-local cache (`.testplay/cache/Library/`) when available. First run after a cache miss still cold-starts. Cache is invalidated when `ProjectVersion.txt` or `Packages/manifest.json` changes. Use `--clear-cache` to force a cold start. In `--scenario` mode each instance pays this cost independently. | Low |
 | Scenario — status polling (per-instance) | `testplay-status-<role>.json` is written for each instance in `--scenario` mode. No scenario-level aggregate status file exists; agents must poll per-role files. | Low |
-| Scenario — host crash causes full ready timeout | If a host instance exits without reaching its `ready_phase`, dependent clients wait the full `ready_timeout_ms` (default 30s) before receiving exit 4. There is no fast-fail on host crash. | Medium |
+| Scenario — host crash error detail | Dependent instances fast-fail immediately on host crash (v0.4.1+), but the error message does not include the host's exit code or failure details. | Low |
 
 ## Roadmap
 

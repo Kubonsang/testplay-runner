@@ -117,8 +117,9 @@ func runRun(w io.Writer, deps runDeps) int {
 // In production all fields are zero/nil; runScenario fills in real implementations.
 // In tests, run is set to a fake InstanceRunner.
 type scenarioDeps struct {
-	ctx context.Context
-	run scenario.InstanceRunner // nil = real runner constructed from each instance's config
+	ctx        context.Context
+	run        scenario.InstanceRunner // nil = real runner constructed from each instance's config
+	clearCache bool                    // passed through to each instance's runsvc.Request
 }
 
 // runScenario loads a scenario file, runs all instances concurrently, and writes
@@ -165,7 +166,7 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 				Artifacts:    artifacts.NewStore(artifactRoot),
 				StatusWriter: sw,
 			}
-			return svc.Run(instanceCtx, runsvc.Request{Config: cfg})
+			return svc.Run(instanceCtx, runsvc.Request{Config: cfg, ClearCache: deps.clearCache})
 		}
 	}
 
@@ -247,7 +248,7 @@ var runCmd = &cobra.Command{
 
 		var code int
 		if scenarioPath != "" {
-			code = runScenario(cmd.OutOrStdout(), scenarioPath, scenarioDeps{ctx: ctx})
+			code = runScenario(cmd.OutOrStdout(), scenarioPath, scenarioDeps{ctx: ctx, clearCache: clearCache})
 		} else {
 			deps := runDeps{
 				ctx:        ctx,

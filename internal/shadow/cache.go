@@ -35,9 +35,13 @@ func cacheKeyFile(projectPath string) string {
 	return filepath.Join(projectPath, ".testplay", "cache", "cache.key")
 }
 
-// ValidateCache returns true if a cached Library exists and the stored cache key
-// matches the current project state.
+// ValidateCache returns true if the cached Library directory exists and
+// the stored cache key matches the current project state.
 func ValidateCache(projectPath string) bool {
+	// Check that the Library directory actually exists on disk.
+	if _, err := os.Stat(CacheLibraryDir(projectPath)); err != nil {
+		return false
+	}
 	stored, err := os.ReadFile(cacheKeyFile(projectPath))
 	if err != nil {
 		return false

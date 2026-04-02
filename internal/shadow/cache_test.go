@@ -116,6 +116,33 @@ func TestValidateCache_ReturnsTrueAfterSaveCacheKey(t *testing.T) {
 	}
 }
 
+func TestValidateCache_ReturnsFalseWhenLibraryDirMissing(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	must(t, os.MkdirAll(filepath.Join(dir, "ProjectSettings"), 0755))
+	must(t, os.MkdirAll(filepath.Join(dir, "Packages"), 0755))
+	must(t, os.WriteFile(filepath.Join(dir, "ProjectSettings", "ProjectVersion.txt"),
+		[]byte("m_EditorVersion: 6000.3.8f1"), 0644))
+	must(t, os.WriteFile(filepath.Join(dir, "Packages", "manifest.json"),
+		[]byte(`{"dependencies":{}}`), 0644))
+
+	// Create Library dir and save cache key, then remove Library dir.
+	cacheLib := shadow.CacheLibraryDir(dir)
+	must(t, os.MkdirAll(cacheLib, 0755))
+	must(t, shadow.SaveCacheKey(dir))
+
+	// Verify cache is valid before removing Library.
+	if !shadow.ValidateCache(dir) {
+		t.Fatal("expected ValidateCache true before removing Library dir")
+	}
+
+	must(t, os.RemoveAll(cacheLib))
+
+	if shadow.ValidateCache(dir) {
+		t.Error("expected ValidateCache to return false when Library dir is missing")
+	}
+}
+
 func TestValidateCache_ReturnsFalseAfterFileChange(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
