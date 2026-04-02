@@ -142,6 +142,10 @@ func exitCodeLabel(code int) string {
 		return "timeout"
 	case 5:
 		return "config error"
+	case 6:
+		return "build error"
+	case 7:
+		return "permission error"
 	case 8:
 		return "interrupted"
 	default:

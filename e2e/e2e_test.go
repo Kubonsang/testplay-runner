@@ -74,7 +74,7 @@ func TestE2E_EditModeTestsPass(t *testing.T) {
 		}
 	}
 	if !hasParamGroup {
-		t.Log("WARNING: no parameterized_group detected — ensure SampleEditModeTest has [TestCase] tests")
+		t.Error("parameterized_group not detected — SampleEditModeTest.cs has [TestCase] tests, so the parser should populate this field")
 	}
 
 	t.Logf("E2E result: exit=%d total=%d passed=%d failed=%d tests=%d",
@@ -110,13 +110,16 @@ func TestE2E_ShadowWorkspace_PathRemapping(t *testing.T) {
 		t.Fatalf("unexpected exit code %d — cannot verify path remapping", resp.ExitCode)
 	}
 
-	// All absolute_path fields must point to the source project, not the shadow
+	// All absolute_path fields must point to the source project, not the shadow.
+	// Use filepath.Rel instead of strings.HasPrefix for cross-platform safety
+	// (Windows drive letter casing, slash direction differences).
 	for i, tc := range resp.Result.Tests {
 		if tc.AbsolutePath == "" {
 			continue
 		}
-		if !strings.HasPrefix(tc.AbsolutePath, projectPath) {
-			t.Errorf("Tests[%d].AbsolutePath %q does not start with project path %q",
+		rel, err := filepath.Rel(projectPath, tc.AbsolutePath)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			t.Errorf("Tests[%d].AbsolutePath %q is not under project path %q",
 				i, tc.AbsolutePath, projectPath)
 		}
 	}
