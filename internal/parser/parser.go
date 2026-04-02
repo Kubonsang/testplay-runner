@@ -115,6 +115,9 @@ func collectCases(out *[]TestCase, suite xmlTestSuite, paramGroup string) {
 		group = suite.FullName
 	}
 
+	// Recurse into sub-suites before processing direct test-cases.
+	// This preserves NUnit document order: ParameterizedMethod sub-suites
+	// appear before sibling non-parameterized test-cases in Unity's XML output.
 	for _, sub := range suite.TestSuites {
 		collectCases(out, sub, group)
 	}

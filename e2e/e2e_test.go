@@ -40,14 +40,24 @@ func TestE2E_EditModeTestsPass(t *testing.T) {
 		t.Fatalf("Service.Run infrastructure error: %v", err)
 	}
 
-	// Exit code must be 0 (all tests pass) or 3 (some fail)
-	if resp.ExitCode != 0 && resp.ExitCode != 3 {
-		t.Errorf("unexpected exit code %d; expected 0 or 3", resp.ExitCode)
-	}
-
 	if resp.Result == nil {
 		t.Fatal("Result is nil")
 	}
+
+	// Exit code must be consistent with test result counts
+	switch resp.ExitCode {
+	case 0:
+		if resp.Result.Failed != 0 {
+			t.Errorf("exit 0 but %d failures", resp.Result.Failed)
+		}
+	case 3:
+		if resp.Result.Failed == 0 {
+			t.Errorf("exit 3 but 0 failures")
+		}
+	default:
+		t.Fatalf("unexpected exit code %d; expected 0 or 3", resp.ExitCode)
+	}
+
 	if resp.Result.Total == 0 {
 		t.Error("Total must be > 0 — Unity should have found test cases")
 	}
@@ -69,43 +79,6 @@ func TestE2E_EditModeTestsPass(t *testing.T) {
 
 	t.Logf("E2E result: exit=%d total=%d passed=%d failed=%d tests=%d",
 		resp.ExitCode, resp.Result.Total, resp.Result.Passed, resp.Result.Failed, len(resp.Result.Tests))
-}
-
-func TestE2E_ExitCodeMapping(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping E2E test in short mode")
-	}
-
-	resultDir := t.TempDir()
-	cfg := buildConfig(t, resultDir)
-	artifactRoot := filepath.Join(t.TempDir(), ".testplay", "runs")
-
-	svc := &runsvc.Service{
-		Runner:       &unity.ProcessRunner{UnityPath: cfg.UnityPath},
-		Store:        history.NewStore(resultDir),
-		Artifacts:    artifacts.NewStore(artifactRoot),
-		StatusWriter: status.NewWriter(filepath.Join(t.TempDir(), "status.json")),
-	}
-
-	resp, err := svc.Run(context.Background(), runsvc.Request{
-		Config: cfg,
-	})
-	if err != nil {
-		t.Fatalf("infrastructure error: %v", err)
-	}
-
-	switch resp.ExitCode {
-	case 0:
-		if resp.Result.Failed != 0 {
-			t.Errorf("exit 0 but %d failures", resp.Result.Failed)
-		}
-	case 3:
-		if resp.Result.Failed == 0 {
-			t.Errorf("exit 3 but 0 failures")
-		}
-	default:
-		t.Errorf("unexpected exit code %d", resp.ExitCode)
-	}
 }
 
 func TestE2E_ShadowWorkspace_PathRemapping(t *testing.T) {
@@ -155,6 +128,10 @@ func TestE2E_LibraryCacheSeeding(t *testing.T) {
 	}
 
 	projectPath := testProjectPath(t)
+
+	// Clean up cache artifacts created in the real project tree after test completes.
+	testplayDir := filepath.Join(projectPath, ".testplay")
+	t.Cleanup(func() { os.RemoveAll(testplayDir) })
 
 	// First run: populates Library cache (may be slow — cold start)
 	resultDir1 := t.TempDir()
