@@ -10,7 +10,7 @@ Agents interact via five commands: `version`, `check`, `list`, `run`, `result`. 
 
 **Supported test platforms:** `"edit_mode"` (default) and `"play_mode"` — set via `test_platform` in `testplay.json`. The platform is passed as `-testPlatform EditMode|PlayMode` to Unity.
 
-**Current version:** `v0.4.0-beta` (main). Host/Client orchestration shipped. Next: AI contract stabilization (v0.5.0-beta).
+**Current version:** `v0.4.2-beta` (main). Library warm cache for shadow workspace. Next: AI contract stabilization (v0.5.0-beta).
 
 **Ultimate goal:** PlayMode + network environment testing.
 
@@ -57,10 +57,12 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 | `testplay version` | Print current version as JSON |
 | `testplay check` | Validate Unity path, project path, and testplay.json before running |
 | `testplay list` | Static source scan returning candidate test names (not guaranteed complete) |
-| `testplay run [--filter <name>] [--category <cat>] [--compare-run <run_id>] [--shadow] [--reset-shadow] [--scenario <file>]` | Execute tests; streams progress to `testplay-status.json` (single mode) or `testplay-status-<role>.json` (scenario mode) |
+| `testplay run [--filter <name>] [--category <cat>] [--compare-run <run_id>] [--shadow] [--reset-shadow] [--clear-cache] [--scenario <file>]` | Execute tests; streams progress to `testplay-status.json` (single mode) or `testplay-status-<role>.json` (scenario mode) |
 | `testplay result [--last N]` | Re-read stored results; returns run_id history |
 
 **`--reset-shadow`**: Activates shadow workspace mode. With per-run isolation (v0.3+), equivalent to `--shadow` — every run already starts with a fresh workspace. Kept for API compatibility.
+
+**`--clear-cache`**: Removes the cached Library (`.testplay/cache/`) before shadow workspace creation, forcing Unity to reimport from scratch. Use when the cache might be corrupted or when troubleshooting import-related failures.
 
 ## Exit Code Semantics
 
@@ -165,9 +167,9 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 | Unimplemented exit codes | Exit 6 (build failure), exit 7 (permission) are documented but never returned | Low |
 | Shadow — `Packages/` not fully isolated | `Packages/` is linked (symlink on macOS/Linux, junction on Windows) rather than copied. If Unity or a package tool writes to the `Packages/` tree during batch execution (e.g. embedded packages), those changes propagate back to the original project. This is best-effort isolation. | Low |
 | Shadow — editor-open detection is best-effort | Shadow mode activates when `Temp/UnityLockfile` exists. A stale lockfile after an unclean Unity exit causes unnecessary shadow overhead. The lockfile check is a heuristic, not a guaranteed signal. | Low |
-| Shadow — Library cold-start per run | `Library/` starts empty each run (no cross-run cache reuse). Unity reimports on every invocation, which adds latency for sequential agent-driven runs. In `--scenario` mode each instance pays this cost; expect clean-build-equivalent startup time per instance. Accepted tradeoff for parallel correctness. | Low |
+| Shadow — Library cold-start per run | `Library/` is seeded from a project-local cache (`.testplay/cache/Library/`) when available. First run after a cache miss still cold-starts. Cache is invalidated when `ProjectVersion.txt` or `Packages/manifest.json` changes. Use `--clear-cache` to force a cold start. In `--scenario` mode, cache seeding (read) works per instance but cache write-back is skipped to avoid concurrent writes; a single-mode run is needed to populate the cache. | Low |
 | Scenario — status polling (per-instance) | `testplay-status-<role>.json` is written for each instance in `--scenario` mode. No scenario-level aggregate status file exists; agents must poll per-role files. | Low |
-| Scenario — host crash causes full ready timeout | If a host instance exits without reaching its `ready_phase`, dependent clients wait the full `ready_timeout_ms` (default 30s) before receiving exit 4. There is no fast-fail on host crash. | Medium |
+| Scenario — host crash error detail | Dependent instances fast-fail immediately on host crash (v0.4.1+), but the error message does not include the host's exit code or failure details. | Low |
 
 ## Roadmap
 
@@ -202,6 +204,14 @@ Host/Client startup ordering via Go channels (no disk polling).
 - **Per-instance status polling** — `testplay-status-<role>.json` written per instance in scenario mode
 - **Host ready gating** — `depends_on`/`ready_phase`/`ready_timeout_ms` fields in scenario JSON; clients wait for host's ready phase before starting
 - **`orchestrator_errors`** — structured field in scenario output for dependency timeout/cancellation failures
+
+### v0.4.2-beta ✅ — Library Warm Cache (shipped)
+Shadow workspace Library/ seeded from project-local cache to eliminate cold-start latency.
+- **Parallel copy** — `copyDir` parallelized with 8-goroutine worker pool
+- **Cache infrastructure** — `.testplay/cache/Library/` with SHA256-based invalidation key
+- **Cache lifecycle** — first run cold-starts → cache on success (exit 0/3) → seed subsequent runs → invalidate on project change
+- **Scenario safety** — cache write-back skipped in `--scenario` mode to prevent concurrent write corruption
+- **`--clear-cache` flag** — force cache removal before shadow workspace creation
 
 ### Remaining items (v0.5+)
 

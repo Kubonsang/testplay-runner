@@ -33,7 +33,7 @@ func makeProject(t *testing.T) string {
 
 func TestPrepare_CreatesShadowStructure(t *testing.T) {
 	src := makeProject(t)
-	ws, err := shadow.Prepare(context.Background(), src, "test-run-001")
+	ws, err := shadow.Prepare(context.Background(), src, "test-run-001", shadow.PrepareOptions{})
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestPrepare_CreatesShadowStructure(t *testing.T) {
 func TestPrepare_ShadowPathUnderSource(t *testing.T) {
 	src := makeProject(t)
 	const runID = "test-run-002"
-	ws, err := shadow.Prepare(context.Background(), src, runID)
+	ws, err := shadow.Prepare(context.Background(), src, runID, shadow.PrepareOptions{})
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestPrepare_IsIdempotent(t *testing.T) {
 	src := makeProject(t)
 	// Per-run dirs are always new, so use the same runID to test same-dir idempotency.
 	const runID = "test-run-003"
-	ws, err := shadow.Prepare(context.Background(), src, runID)
+	ws, err := shadow.Prepare(context.Background(), src, runID, shadow.PrepareOptions{})
 	if err != nil {
 		t.Fatalf("first Prepare failed: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestPrepare_IsIdempotent(t *testing.T) {
 		t.Fatalf("could not write sentinel: %v", err)
 	}
 	// Second prepare with the same runID should succeed and preserve Library/
-	if _, err := shadow.Prepare(context.Background(), src, runID); err != nil {
+	if _, err := shadow.Prepare(context.Background(), src, runID, shadow.PrepareOptions{}); err != nil {
 		t.Fatalf("second Prepare failed: %v", err)
 	}
 	if _, err := os.Stat(sentinel); err != nil {
@@ -88,11 +88,11 @@ func TestPrepare_IsIdempotent(t *testing.T) {
 func TestPrepare_ReflectsChangedSources(t *testing.T) {
 	src := makeProject(t)
 	const runID = "test-run-004"
-	if _, err := shadow.Prepare(context.Background(), src, runID); err != nil {
+	if _, err := shadow.Prepare(context.Background(), src, runID, shadow.PrepareOptions{}); err != nil {
 		t.Fatalf("first Prepare failed: %v", err)
 	}
 	_ = os.WriteFile(filepath.Join(src, "Assets", "Scripts", "Player.cs"), []byte("// updated"), 0644)
-	ws, err := shadow.Prepare(context.Background(), src, runID)
+	ws, err := shadow.Prepare(context.Background(), src, runID, shadow.PrepareOptions{})
 	if err != nil {
 		t.Fatalf("second Prepare failed: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestPrepare_ReflectsChangedSources(t *testing.T) {
 func TestReset_DeletesLibraryCache(t *testing.T) {
 	src := makeProject(t)
 	const runID = "test-run-005"
-	ws, err := shadow.Prepare(context.Background(), src, runID)
+	ws, err := shadow.Prepare(context.Background(), src, runID, shadow.PrepareOptions{})
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
@@ -303,7 +303,7 @@ func TestCopyDir_PreservesExecutableBit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	w, err := shadow.Prepare(context.Background(), projectDir, "test-run-006")
+	w, err := shadow.Prepare(context.Background(), projectDir, "test-run-006", shadow.PrepareOptions{})
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
@@ -324,7 +324,7 @@ func TestCopyDir_CopiesFileContents(t *testing.T) {
 	content := []byte("// source content")
 	_ = os.WriteFile(filepath.Join(projectDir, "Assets", "Script.cs"), content, 0644)
 
-	w, err := shadow.Prepare(context.Background(), projectDir, "test-run-007")
+	w, err := shadow.Prepare(context.Background(), projectDir, "test-run-007", shadow.PrepareOptions{})
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestCopyDir_PreservesSymlink(t *testing.T) {
 		t.Skipf("symlinks not supported on this platform: %v", err)
 	}
 
-	w, err := shadow.Prepare(context.Background(), projectDir, "test-run-008")
+	w, err := shadow.Prepare(context.Background(), projectDir, "test-run-008", shadow.PrepareOptions{})
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
@@ -377,7 +377,7 @@ func TestPrepare_RespectsContextCancellation(t *testing.T) {
 	// copyDir checks ctx.Err() on every WalkDir entry, including the root
 	// directory itself, so an already-cancelled context is detected on the
 	// very first iteration regardless of how many files are present.
-	_, err := shadow.Prepare(ctx, src, "test-run-009")
+	_, err := shadow.Prepare(ctx, src, "test-run-009", shadow.PrepareOptions{})
 	if err == nil {
 		t.Fatal("expected error from cancelled context, got nil")
 	}
@@ -403,7 +403,7 @@ func TestPrepare_CleansUpOnFirstCreateFailure(t *testing.T) {
 		t.Fatalf("shadow should not exist before Prepare")
 	}
 
-	_, err := shadow.Prepare(context.Background(), src, runID)
+	_, err := shadow.Prepare(context.Background(), src, runID, shadow.PrepareOptions{})
 	if err == nil {
 		t.Fatal("expected error from unreadable ProjectSettings, got nil")
 	}
@@ -430,7 +430,7 @@ func TestPrepare_RollsBackOnFailure(t *testing.T) {
 	t.Cleanup(func() { os.Chmod(psDir, 0755) })
 
 	// Prepare should fail and roll back the shadow directory.
-	_, err := shadow.Prepare(context.Background(), src, runID)
+	_, err := shadow.Prepare(context.Background(), src, runID, shadow.PrepareOptions{})
 	if err == nil {
 		t.Fatal("expected error from unreadable ProjectSettings, got nil")
 	}
@@ -456,7 +456,7 @@ func TestPrepare_CancelsInsideLargeFileCopy(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		_, err := shadow.Prepare(ctx, projectDir, "cancel-test-run")
+		_, err := shadow.Prepare(ctx, projectDir, "cancel-test-run", shadow.PrepareOptions{})
 		errCh <- err
 	}()
 
@@ -482,11 +482,11 @@ func TestPrepare_PerRunIsolation(t *testing.T) {
 	must(t, os.MkdirAll(filepath.Join(src, "Packages"), 0755))
 	must(t, os.WriteFile(filepath.Join(src, "Assets", "a.txt"), []byte("hello"), 0644))
 
-	ws1, err := shadow.Prepare(context.Background(), src, "run-aaa")
+	ws1, err := shadow.Prepare(context.Background(), src, "run-aaa", shadow.PrepareOptions{})
 	if err != nil {
 		t.Fatalf("Prepare run-aaa: %v", err)
 	}
-	ws2, err := shadow.Prepare(context.Background(), src, "run-bbb")
+	ws2, err := shadow.Prepare(context.Background(), src, "run-bbb", shadow.PrepareOptions{})
 	if err != nil {
 		t.Fatalf("Prepare run-bbb: %v", err)
 	}
@@ -520,7 +520,7 @@ func TestPrepare_ShadowDirNameContainsRunID(t *testing.T) {
 	must(t, os.MkdirAll(filepath.Join(src, "Packages"), 0755))
 
 	const runID = "20260326-143055-a3f8b2c1"
-	ws, err := shadow.Prepare(context.Background(), src, runID)
+	ws, err := shadow.Prepare(context.Background(), src, runID, shadow.PrepareOptions{})
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
@@ -528,5 +528,52 @@ func TestPrepare_ShadowDirNameContainsRunID(t *testing.T) {
 
 	if !strings.HasSuffix(ws.ShadowPath, ".testplay-shadow-"+runID) {
 		t.Errorf("ShadowPath %q does not end with '.testplay-shadow-%s'", ws.ShadowPath, runID)
+	}
+}
+
+func TestPrepare_SeedsLibraryFromCache(t *testing.T) {
+	t.Parallel()
+	src := makeProject(t)
+
+	cacheLib := shadow.CacheLibraryDir(src)
+	must(t, os.MkdirAll(filepath.Join(cacheLib, "PackageCache"), 0755))
+	must(t, os.WriteFile(filepath.Join(cacheLib, "PackageCache", "cached.dat"),
+		[]byte("cached-content"), 0644))
+	must(t, os.WriteFile(filepath.Join(src, "Packages", "manifest.json"),
+		[]byte(`{"dependencies":{}}`), 0644))
+	must(t, shadow.SaveCacheKey(src))
+
+	ws, err := shadow.Prepare(context.Background(), src, "cache-seed-run",
+		shadow.PrepareOptions{LibraryCacheDir: cacheLib})
+	if err != nil {
+		t.Fatalf("Prepare with cache: %v", err)
+	}
+	defer ws.Cleanup()
+
+	data, err := os.ReadFile(filepath.Join(ws.ShadowPath, "Library", "PackageCache", "cached.dat"))
+	if err != nil {
+		t.Fatalf("cached file not seeded into shadow Library: %v", err)
+	}
+	if string(data) != "cached-content" {
+		t.Errorf("cached file content: got %q, want %q", data, "cached-content")
+	}
+}
+
+func TestPrepare_EmptyOptionsBackwardCompatible(t *testing.T) {
+	t.Parallel()
+	src := makeProject(t)
+	must(t, os.WriteFile(filepath.Join(src, "Packages", "manifest.json"),
+		[]byte(`{"dependencies":{}}`), 0644))
+
+	ws, err := shadow.Prepare(context.Background(), src, "compat-run",
+		shadow.PrepareOptions{})
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	defer ws.Cleanup()
+
+	entries, _ := os.ReadDir(filepath.Join(ws.ShadowPath, "Library"))
+	if len(entries) != 0 {
+		t.Errorf("expected empty Library/ without cache, got %d entries", len(entries))
 	}
 }

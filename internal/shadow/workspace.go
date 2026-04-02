@@ -2,11 +2,14 @@ package shadow
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/Kubonsang/testplay-runner/internal/history"
 )
@@ -22,15 +25,22 @@ func ShadowWorkspaceDir(sourcePath, runID string) string {
 	return filepath.Join(sourcePath, ".testplay-shadow-"+runID)
 }
 
+// PrepareOptions configures optional behavior for Prepare.
+type PrepareOptions struct {
+	// LibraryCacheDir, if non-empty, is the path to a cached Library directory.
+	// When set, Library/ is seeded by copying from this cache instead of starting empty.
+	LibraryCacheDir string
+}
+
 // Prepare creates an isolated shadow workspace for a single run.
 //   - Assets/ and ProjectSettings/ are always copied fresh from source.
 //   - Packages/ is linked (symlink on unix, junction on windows); linked once per workspace.
-//   - Library/ is created empty; Unity populates it during the run.
+//   - Library/ is seeded from opts.LibraryCacheDir if set and valid, otherwise created empty.
 //   - Temp/ is deleted before the run; Unity recreates it.
 //   - .gitignore is patched to exclude .testplay-shadow-*/ (non-fatal on failure).
 //
 // The caller must call ws.Cleanup() after the run to remove the per-run directory.
-func Prepare(ctx context.Context, sourcePath, runID string) (*Workspace, error) {
+func Prepare(ctx context.Context, sourcePath, runID string, opts PrepareOptions) (*Workspace, error) {
 	abs, err := filepath.Abs(sourcePath)
 	if err != nil {
 		return nil, err
@@ -66,9 +76,22 @@ func Prepare(ctx context.Context, sourcePath, runID string) (*Workspace, error) 
 		}
 	}
 
-	// Ensure Library/ exists (Unity will populate during the run; starts empty each run).
-	if err := os.MkdirAll(filepath.Join(shadowPath, "Library"), 0755); err != nil {
-		return nil, err
+	// Seed Library/ from cache if available, otherwise create empty.
+	libDst := filepath.Join(shadowPath, "Library")
+	if opts.LibraryCacheDir != "" {
+		if _, err := os.Stat(opts.LibraryCacheDir); err == nil {
+			if err := copyDir(ctx, opts.LibraryCacheDir, libDst); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := os.MkdirAll(libDst, 0755); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		if err := os.MkdirAll(libDst, 0755); err != nil {
+			return nil, err
+		}
 	}
 
 	// Clean Temp/ so Unity starts fresh each run.
@@ -84,7 +107,24 @@ func Prepare(ctx context.Context, sourcePath, runID string) (*Workspace, error) 
 // Reset is equivalent to Prepare with per-run isolation — each run already
 // starts with a fresh workspace. Kept for API stability.
 func Reset(ctx context.Context, sourcePath, runID string) (*Workspace, error) {
-	return Prepare(ctx, sourcePath, runID)
+	return Prepare(ctx, sourcePath, runID, PrepareOptions{})
+}
+
+// UpdateLibraryCache copies the shadow workspace's Library/ directory to
+// the project-local cache at .testplay/cache/Library/ and saves the cache key.
+func (w *Workspace) UpdateLibraryCache(ctx context.Context) error {
+	srcLib := filepath.Join(w.ShadowPath, "Library")
+	if _, err := os.Stat(srcLib); err != nil {
+		return nil
+	}
+	dstLib := CacheLibraryDir(w.SourcePath)
+	if err := copyDir(ctx, srcLib, dstLib); err != nil {
+		return fmt.Errorf("update library cache: %w", err)
+	}
+	if err := SaveCacheKey(w.SourcePath); err != nil {
+		return fmt.Errorf("update library cache key: %w", err)
+	}
+	return nil
 }
 
 // Cleanup removes the per-run shadow workspace directory.
@@ -193,21 +233,61 @@ func (r *ctxReader) Read(p []byte) (n int, err error) {
 	return r.r.Read(p)
 }
 
-// copyDir removes dst and recursively copies all files from src to dst.
-// It checks ctx.Err() at every WalkDir iteration so cancellation returns immediately.
-func copyDir(ctx context.Context, src, dst string) error {
+const copyDirWorkers = 8
+
+// CopyDirParallel removes dst and recursively copies all files from src to dst
+// using a bounded pool of worker goroutines for file copies. Directories and
+// symlinks are handled inline by the WalkDir goroutine. workers <= 0 defaults
+// to copyDirWorkers.
+func CopyDirParallel(ctx context.Context, src, dst string, workers int) error {
+	if workers <= 0 {
+		workers = copyDirWorkers
+	}
 	if err := os.RemoveAll(dst); err != nil {
 		return err
 	}
-	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+
+	type copyJob struct {
+		src, dst string
+	}
+
+	jobs := make(chan copyJob, workers*2)
+	var wg sync.WaitGroup
+	var copyErr atomic.Value
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				if copyErr.Load() != nil {
+					return
+				}
+				if err := copyFile(ctx, job.src, job.dst); err != nil {
+					copyErr.CompareAndSwap(nil, err)
+					return
+				}
+			}
+		}()
+	}
+
+	walkErr := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		if copyErr.Load() != nil {
+			return copyErr.Load().(error)
+		}
+
 		rel, _ := filepath.Rel(src, path)
 		target := filepath.Join(dst, rel)
+
 		if d.IsDir() {
 			return os.MkdirAll(target, 0755)
 		}
@@ -218,8 +298,31 @@ func copyDir(ctx context.Context, src, dst string) error {
 			}
 			return os.Symlink(linkTarget, target)
 		}
-		return copyFile(ctx, path, target)
+
+		select {
+		case jobs <- copyJob{src: path, dst: target}:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	})
+
+	close(jobs)
+	wg.Wait()
+
+	if walkErr != nil {
+		return walkErr
+	}
+	if v := copyErr.Load(); v != nil {
+		return v.(error)
+	}
+	return nil
+}
+
+// copyDir removes dst and recursively copies all files from src to dst.
+// Delegates to CopyDirParallel with the default worker count.
+func copyDir(ctx context.Context, src, dst string) error {
+	return CopyDirParallel(ctx, src, dst, copyDirWorkers)
 }
 
 func copyFile(ctx context.Context, src, dst string) error {
