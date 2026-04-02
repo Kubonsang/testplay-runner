@@ -46,6 +46,7 @@ type Request struct {
 	CompareRun  string
 	ResetShadow bool // activates shadow workspace; equivalent to ForceShadow with per-run isolation
 	ForceShadow bool // activate shadow workspace without resetting Library cache
+	ClearCache  bool // remove cached Library before preparing shadow workspace
 }
 
 // Response carries all outputs of a single testplay run.
@@ -126,12 +127,22 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		}()
 	}
 
+	// Clear cache if requested.
+	if req.ClearCache {
+		_ = shadow.ClearCache(req.Config.ProjectPath)
+	}
+
 	// Determine execution backend: shadow if editor has the project open.
 	var ws *shadow.Workspace
 	if req.ForceShadow || req.ResetShadow || shadow.IsLocked(req.Config.ProjectPath) {
 		// ResetShadow and ForceShadow behave identically — per-run dirs are always fresh.
+		var opts shadow.PrepareOptions
+		if !req.ClearCache && shadow.ValidateCache(req.Config.ProjectPath) {
+			opts.LibraryCacheDir = shadow.CacheLibraryDir(req.Config.ProjectPath)
+		}
+
 		var wsErr error
-		ws, wsErr = shadow.Prepare(ctx, req.Config.ProjectPath, runID, shadow.PrepareOptions{})
+		ws, wsErr = shadow.Prepare(ctx, req.Config.ProjectPath, runID, opts)
 		if wsErr != nil {
 			return Response{}, fmt.Errorf("runsvc: prepare shadow workspace: %w", wsErr)
 		}
@@ -232,6 +243,13 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	}
 	if err := s.Artifacts.SaveManifest(runID, manifest); err != nil {
 		warnings = append(warnings, fmt.Sprintf("manifest not written: %v", err))
+	}
+
+	// Write Library cache back on successful runs (exit 0 or 3).
+	if ws != nil && (exitCode == 0 || exitCode == 3) {
+		if cacheErr := ws.UpdateLibraryCache(ctx); cacheErr != nil {
+			warnings = append(warnings, fmt.Sprintf("library cache not updated: %v", cacheErr))
+		}
 	}
 
 	return Response{
