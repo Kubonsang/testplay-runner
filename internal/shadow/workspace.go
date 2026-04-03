@@ -112,15 +112,35 @@ func Reset(ctx context.Context, sourcePath, runID string) (*Workspace, error) {
 
 // UpdateLibraryCache copies the shadow workspace's Library/ directory to
 // the project-local cache at .testplay/cache/Library/ and saves the cache key.
+//
+// The copy targets a temporary sibling directory (Library.tmp) first, then
+// atomically swaps it into place. This prevents cache corruption when the
+// copy is interrupted: the old cache remains intact until the new copy is
+// fully written.
 func (w *Workspace) UpdateLibraryCache(ctx context.Context) error {
 	srcLib := filepath.Join(w.ShadowPath, "Library")
 	if _, err := os.Stat(srcLib); err != nil {
 		return nil
 	}
 	dstLib := CacheLibraryDir(w.SourcePath)
-	if err := copyDir(ctx, srcLib, dstLib); err != nil {
+	tmpLib := dstLib + ".tmp"
+
+	// Copy to temp directory; clean up on failure.
+	if err := copyDir(ctx, srcLib, tmpLib); err != nil {
+		_ = os.RemoveAll(tmpLib)
 		return fmt.Errorf("update library cache: %w", err)
 	}
+
+	// Atomic swap: remove old cache, rename temp into place.
+	if err := os.RemoveAll(dstLib); err != nil {
+		_ = os.RemoveAll(tmpLib)
+		return fmt.Errorf("update library cache: remove old: %w", err)
+	}
+	if err := os.Rename(tmpLib, dstLib); err != nil {
+		_ = os.RemoveAll(tmpLib)
+		return fmt.Errorf("update library cache: rename: %w", err)
+	}
+
 	if err := SaveCacheKey(w.SourcePath); err != nil {
 		return fmt.Errorf("update library cache key: %w", err)
 	}

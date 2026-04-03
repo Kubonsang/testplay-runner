@@ -75,15 +75,11 @@ func (w *Writer) Write(s Status) error {
 		return err
 	}
 
-	// On Windows, os.Rename fails if the destination exists.
-	// Remove first, then rename for cross-platform atomicity.
+	// Go 1.22+ uses MoveFileExW(MOVEFILE_REPLACE_EXISTING) on Windows,
+	// so os.Rename atomically replaces an existing destination on all platforms.
 	if err := os.Rename(tmp, w.path); err != nil {
-		// Fallback: remove destination and retry
-		_ = os.Remove(w.path)
-		if err2 := os.Rename(tmp, w.path); err2 != nil {
-			_ = os.Remove(tmp)
-			return err2
-		}
+		_ = os.Remove(tmp)
+		return err
 	}
 
 	return nil
