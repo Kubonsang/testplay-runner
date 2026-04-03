@@ -239,3 +239,92 @@ public class Mixed {
 		t.Errorf("expected 2 tests ([Test] + [UnityTest]), got %d: %v", len(out.Tests), out.Tests)
 	}
 }
+
+func TestListCmd_FindsParameterizedTestMethods(t *testing.T) {
+	dir := t.TempDir()
+	testFile := filepath.Join(dir, "ParamTests.cs")
+	content := `using NUnit.Framework;
+public class ParamTests {
+    [TestCase(1, 2, 3)]
+    [TestCase(0, 0, 0)]
+    public void AddTest(int a, int b, int expected) {}
+
+    [TestCaseSource(nameof(DivisionCases))]
+    public void DivideTest(int a, int b, int expected) {}
+
+    [Theory]
+    public void TheoryTest(int value) {}
+
+    public void NotATest() {}
+}
+`
+	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	code := runList(&buf, listDeps{projectPath: dir})
+	if code != 0 {
+		t.Errorf("expected exit 0, got %d", code)
+	}
+
+	var out struct {
+		Tests []string `json:"tests"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v\noutput: %s", err, buf.String())
+	}
+	if len(out.Tests) != 3 {
+		t.Fatalf("expected 3 tests (AddTest, DivideTest, TheoryTest), got %d: %v", len(out.Tests), out.Tests)
+	}
+
+	expected := map[string]bool{
+		"ParamTests.AddTest":    true,
+		"ParamTests.DivideTest": true,
+		"ParamTests.TheoryTest": true,
+	}
+	for _, name := range out.Tests {
+		if !expected[name] {
+			t.Errorf("unexpected test name: %q", name)
+		}
+		delete(expected, name)
+	}
+	for name := range expected {
+		t.Errorf("missing expected test: %q", name)
+	}
+}
+
+func TestListCmd_ParameterizedWithMultipleAttributes(t *testing.T) {
+	dir := t.TempDir()
+	testFile := filepath.Join(dir, "Complex.cs")
+	content := `using NUnit.Framework;
+public class Complex {
+    [TestCase(1, 2)]
+    [TestCase(3, 4)]
+    [Category("Math")]
+    public void ParamWithCategory(int a, int b) {}
+
+    [Test]
+    public void RegularTest() {}
+}
+`
+	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	code := runList(&buf, listDeps{projectPath: dir})
+	if code != 0 {
+		t.Errorf("expected exit 0, got %d", code)
+	}
+
+	var out struct {
+		Tests []string `json:"tests"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v\noutput: %s", err, buf.String())
+	}
+	if len(out.Tests) != 2 {
+		t.Fatalf("expected 2 tests, got %d: %v", len(out.Tests), out.Tests)
+	}
+}
