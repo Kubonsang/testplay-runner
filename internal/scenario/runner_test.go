@@ -299,6 +299,38 @@ func TestRunScenario_HostCrash_ErrorIncludesExitCode(t *testing.T) {
 	}
 }
 
+func TestRunScenario_HostCrash_UnknownExitCode(t *testing.T) {
+	t.Parallel()
+	spec := &scenario.ScenarioFile{
+		Instances: []scenario.InstanceSpec{
+			{Role: "host", Config: "./host.json"},
+			{Role: "client", Config: "./client.json", DependsOn: "host", ReadyTimeoutMs: 10000},
+		},
+	}
+
+	run := func(_ context.Context, inst scenario.InstanceSpec, readyCh chan<- struct{}) (runsvc.Response, error) {
+		if inst.Role == "host" {
+			return fakeResult(99), nil // undocumented exit code
+		}
+		return fakeResult(0), nil
+	}
+
+	result, err := scenario.RunScenario(context.Background(), spec, run)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.OrchestratorErrors) == 0 {
+		t.Fatal("expected orchestrator errors for host crash")
+	}
+	msg := result.OrchestratorErrors[0]
+	if !strings.Contains(msg, "exit 99") {
+		t.Errorf("expected error to contain 'exit 99', got: %s", msg)
+	}
+	if !strings.Contains(msg, "unknown") {
+		t.Errorf("expected error to contain 'unknown' for undocumented exit code, got: %s", msg)
+	}
+}
+
 func TestRunScenario_HostInfraError_ErrorIncludesDetail(t *testing.T) {
 	t.Parallel()
 	spec := &scenario.ScenarioFile{
