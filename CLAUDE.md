@@ -6,11 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 TestPlay Runner (`testplay`) is a thin Go CLI wrapper around Unity's test runner. It solves eight specific problems that make Unity's raw CLI unusable for AI agents: unreliable exit codes, XML-only results, ambiguous compile vs. test failures, no progress visibility, no pre-validation, and platform path differences.
 
-Agents interact via five commands: `version`, `check`, `list`, `run`, `result`. All stdout is JSON; all human-readable logs go to stderr.
+Agents interact via six commands: `version`, `check`, `list`, `run`, `result`, `init`. All stdout is JSON; all human-readable logs go to stderr.
 
 **Supported test platforms:** `"edit_mode"` (default) and `"play_mode"` — set via `test_platform` in `testplay.json`. The platform is passed as `-testPlatform EditMode|PlayMode` to Unity.
 
-**Current version:** `v0.6.0-beta` (main). Network-ready hardening — env injection for scenario instances, artifact retention, Windows process kill, failure excerpts, phase accuracy.
+**Current version:** `v0.7.0-rc` (main). Release candidate — `testplay init` onboarding, GoReleaser pre-built binaries, cross-platform CI, scenario-mode artifact retention.
 
 **Ultimate goal:** PlayMode + network environment testing.
 
@@ -68,6 +68,7 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 | Command | Purpose |
 |---|---|
 | `testplay version` | Print current version as JSON |
+| `testplay init [--unity-path <path>] [--test-platform <platform>] [--force]` | Generate testplay.json with sensible defaults |
 | `testplay check` | Validate Unity path, project path, and testplay.json before running |
 | `testplay list` | Static source scan returning candidate test names (not guaranteed complete) |
 | `testplay run [--filter <name>] [--category <cat>] [--compare-run <run_id>] [--shadow] [--reset-shadow] [--clear-cache] [--scenario <file>]` | Execute tests; streams progress to `testplay-status.json` (single mode) or `testplay-status-<role>.json` (scenario mode) |
@@ -137,7 +138,7 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 }
 ```
 
-**Retention:** `retention.max_runs` controls how many recent run results and artifact directories to keep. After each single-mode run, older entries are pruned automatically. Defaults to 30 if omitted. Set to `0` to disable pruning entirely. Scenario mode does not auto-prune (deferred to v0.7+).
+**Retention:** `retention.max_runs` controls how many recent run results and artifact directories to keep. After each run (single-mode and scenario mode), older entries are pruned automatically. In scenario mode, prune targets are deduplicated across instances sharing the same project. Defaults to 30 if omitted. Set to `0` to disable pruning entirely.
 
 `test_platform` accepts `"edit_mode"` (default) or `"play_mode"`.
 
@@ -165,6 +166,9 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 
 Standard flow for agents using TestPlay Runner:
 
+**Step 0 — init (first time only)**
+Run `testplay init --unity-path <path>` to generate `testplay.json`. Skip if config already exists.
+
 **Step 1 — check**
 Run `testplay check` to validate the environment. If `ready: false`, fix the environment per the `hint` field and re-check.
 
@@ -183,7 +187,7 @@ If exit 2, go to `errors[].absolute_path` + `line` to fix source. If exit 3, go 
 **Step 6 — result**
 Run `testplay result` to review the `run_id` list and decide the `--compare-run` value for the next run.
 
-> `version → check → list → run → result` — this five-command interface is the agent's entire surface. If this flow breaks, the project breaks.
+> `init → version → check → list → run → result` — this six-command interface is the agent's entire surface. If this flow breaks, the project breaks.
 
 **Shadow mode is transparent to agents.** When `Temp/UnityLockfile` is present, `testplay run` automatically uses a per-run `.testplay-shadow-<run_id>/` workspace and remaps all `absolute_path` fields in the JSON output back to source project paths. Agents do not need to detect or handle shadow mode explicitly.
 
@@ -275,7 +279,13 @@ Production readiness for network test scenarios.
 - **Windows process kill** — `taskkill /F /T /PID` with `CREATE_NEW_PROCESS_GROUP` ensures Unity child processes are terminated on cancel
 - **Artifact retention** — `retention.max_runs` config (default 30) auto-prunes old result files and artifact directories after each single-mode run
 
-### Remaining items (v0.7+)
+### v0.7.0-rc ✅ — Release Candidate (shipped)
+Production readiness — onboarding and distribution.
+- **`testplay init`** — generates `testplay.json` with sensible defaults; discovers Unity path from `UNITY_PATH` env var
+- **GoReleaser** — cross-platform pre-built binaries (darwin/linux/windows, amd64/arm64) published to GitHub Releases on tag push
+- **Cross-platform CI** — `go test ./...` on ubuntu, macos, and windows for every push/PR
+- **Scenario-mode artifact retention** — auto-prune after multi-instance runs, deduplicating shared project paths
+
+### Remaining items (v1.0+)
 
 - **Network test configuration** — NGO/Mirror harness integration
-- **Scenario-mode artifact retention** — auto-prune in multi-instance mode
