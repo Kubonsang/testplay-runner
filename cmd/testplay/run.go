@@ -110,6 +110,13 @@ func runRun(w io.Writer, deps runDeps) int {
 	}
 
 	writeJSON(w, output)
+
+	// Best-effort prune of old results and artifacts.
+	if cfg.Retention.MaxRuns > 0 {
+		_, _ = deps.resultStore.Prune(cfg.Retention.MaxRuns)
+		_, _ = svc.Artifacts.Prune(cfg.Retention.MaxRuns)
+	}
+
 	return resp.ExitCode
 }
 
