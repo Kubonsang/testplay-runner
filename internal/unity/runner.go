@@ -3,7 +3,9 @@ package unity
 import (
 	"context"
 	"io"
+	"os"
 	"os/exec"
+	"strings"
 )
 
 // Runner abstracts the Unity subprocess, allowing tests to inject a fake.
@@ -24,6 +26,7 @@ type Runner interface {
 // ProcessRunner is the real implementation backed by exec.Cmd.
 type ProcessRunner struct {
 	UnityPath string
+	Env       map[string]string // extra env vars merged with os.Environ(); nil = inherit
 }
 
 // Run executes the Unity binary with the provided args, streaming output to
@@ -32,6 +35,9 @@ func (r *ProcessRunner) Run(ctx context.Context, args []string, stdout, stderr i
 	cmd := exec.CommandContext(ctx, r.UnityPath, args...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	if len(r.Env) > 0 {
+		cmd.Env = MergeEnv(os.Environ(), r.Env)
+	}
 	setSysProcAttr(cmd)
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
@@ -40,6 +46,26 @@ func (r *ProcessRunner) Run(ctx context.Context, args []string, stdout, stderr i
 		return -1, err
 	}
 	return 0, nil
+}
+
+// MergeEnv returns base with extra vars added or overridden.
+// Keys in extra replace matching keys in base (case-sensitive).
+// If extra is nil or empty, base is returned as-is.
+func MergeEnv(base []string, extra map[string]string) []string {
+	if len(extra) == 0 {
+		return base
+	}
+	env := make([]string, 0, len(base)+len(extra))
+	for _, e := range base {
+		k, _, _ := strings.Cut(e, "=")
+		if _, override := extra[k]; !override {
+			env = append(env, e)
+		}
+	}
+	for k, v := range extra {
+		env = append(env, k+"="+v)
+	}
+	return env
 }
 
 // BuildCompileArgs constructs the Unity CLI arguments for a compile-only run
