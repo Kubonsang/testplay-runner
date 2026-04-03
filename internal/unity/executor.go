@@ -167,9 +167,6 @@ func executeSinglePhase(ctx context.Context, runner Runner, opts ExecuteOptions)
 		return handleContextErr(ctx, err, opts)
 	}
 
-	// Phase: running (Unity finished compilation, now checking results)
-	_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseRunning})
-
 	return parseResults(opts, tail.Bytes())
 }
 
