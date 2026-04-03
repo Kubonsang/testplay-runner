@@ -10,7 +10,7 @@ Agents interact via five commands: `version`, `check`, `list`, `run`, `result`. 
 
 **Supported test platforms:** `"edit_mode"` (default) and `"play_mode"` — set via `test_platform` in `testplay.json`. The platform is passed as `-testPlatform EditMode|PlayMode` to Unity.
 
-**Current version:** `v0.5.1-beta` (main). Hardening — exit 9 for runner system errors, list scanner expansion for parameterized test attributes.
+**Current version:** `v0.6.0-beta` (main). Network-ready hardening — env injection for scenario instances, artifact retention, Windows process kill, failure excerpts, phase accuracy.
 
 **Ultimate goal:** PlayMode + network environment testing.
 
@@ -67,6 +67,26 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 
 **`--clear-cache`**: Removes the cached Library (`.testplay/cache/`) before shadow workspace creation, forcing Unity to reimport from scratch. Use when the cache might be corrupted or when troubleshooting import-related failures.
 
+**Scenario JSON `env` field:** Each instance in a scenario file can specify an `env` map of environment variables injected into the Unity process. Keys must be non-empty and must not contain `=`. Values override inherited environment variables.
+
+```json
+{
+  "instances": [
+    {
+      "role": "host",
+      "config": "host/testplay.json",
+      "env": { "NETWORK_ROLE": "server", "PORT": "7777" }
+    },
+    {
+      "role": "client",
+      "config": "client/testplay.json",
+      "depends_on": "host",
+      "env": { "NETWORK_ROLE": "client", "SERVER_PORT": "7777" }
+    }
+  ]
+}
+```
+
 ## Exit Code Semantics
 
 | Code | Meaning | Agent action | Implemented |
@@ -100,9 +120,14 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
   "timeout": {
     "total_ms": 300000
   },
-  "result_dir": ".testplay/results"
+  "result_dir": ".testplay/results",
+  "retention": {
+    "max_runs": 30
+  }
 }
 ```
+
+**Retention:** `retention.max_runs` controls how many recent run results and artifact directories to keep. After each single-mode run, older entries are pruned automatically. Defaults to 30 if omitted. Scenario mode does not auto-prune (deferred to v0.7+).
 
 `test_platform` accepts `"edit_mode"` (default) or `"play_mode"`.
 
@@ -116,10 +141,11 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 
 - `testplay-status.json` — written atomically during `run`; poll this to observe progress.
   - **Path:** hardcoded to `"testplay-status.json"` in cwd. No config option.
-  - **Phase values actually emitted:** `compiling → running → done | timeout_compile | timeout_test | timeout_total | interrupted`
+  - **Phase values actually emitted (single-phase):** `compiling → done | timeout_total | interrupted`
+  - **Phase values actually emitted (two-phase):** `compiling → running → done | timeout_compile | timeout_test | timeout_total | interrupted`
   - `waiting` — defined but never written by the runner (pre-run initial state)
   - `timeout_compile`, `timeout_test` — written in two-phase mode when the respective phase deadline fires
-  - `running` — written *after* Unity exits, not when tests actually start (phase detection is approximate)
+  - `running` — written only in two-phase mode when compile phase completes and test phase begins. Not emitted in single-phase mode (v0.6.0+: removed misleading post-exit write)
   - `interrupted` — best-effort write on SIGINT/SIGTERM before context cancel; process exits 8
 - `testplay-status-<role>.json` — written per instance in `--scenario` mode. Same schema as `testplay-status.json`. Path is in cwd, named after the instance's `role` field (e.g. `testplay-status-host.json`). Absent for instances that have not yet started.
 - `.testplay/results/<run_id>.json` — one file per run, never overwritten. `run_id` format: `YYYYMMDD-HHMMSS-xxxxxxxx` where the 8-char hex suffix is 4 crypto-random bytes (e.g. `20250301-102200-a3f8b2c1`). Collision probability is negligible even under parallel runs.
@@ -162,13 +188,14 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 7. `warnings` (string array) is included only when non-fatal infrastructure issues occur (e.g. result save failed, summary write failed). Absent when no warnings.
 8. `orchestrator_errors` (string array) is included in scenario mode output only when a dependency wait fails (ready timeout or context cancellation). Absent when no orchestration errors occurred.
 9. `parameterized_group` (string) on test entries is present only when the test-case is inside an NUnit `ParameterizedMethod` suite. Absent for non-parameterized tests.
+10. `excerpt` (string) on test entries is present only when the test failed. Format: `"message (at filename.cs:line)"` or just `"message"` when no file info available. Absent for passing/skipped tests.
 
 ## Known Limitations & Risks
 
 | Area | Issue | Severity |
 |---|---|---|
 | `list` scanner | Detects `[Test]`, `[UnityTest]`, `[TestCase]`, `[TestCaseSource]`, and `[Theory]` but may miss custom test attributes — list output may be incomplete. NUnit XML parsing (v0.5.0+) correctly handles parameterized test results with `parameterized_group` field. | Low |
-| Phase detection | `running` phase written after Unity exits, not when tests start — polling agents see misleading phase | Medium |
+| Phase detection (single-phase) | `running` phase not emitted in single-phase mode — agents see `compiling → done` only. Two-phase mode emits accurate `compiling → running → done` sequence. | Low |
 | Unimplemented exit codes | Exit 6 (build failure), exit 7 (permission) are documented but never returned | Low |
 | Shadow — `Packages/` not fully isolated | `Packages/` is linked (symlink on macOS/Linux, junction on Windows) rather than copied. If Unity or a package tool writes to the `Packages/` tree during batch execution (e.g. embedded packages), those changes propagate back to the original project. This is best-effort isolation. | Low |
 | Shadow — editor-open detection is best-effort | Shadow mode activates when `Temp/UnityLockfile` exists. A stale lockfile after an unclean Unity exit causes unnecessary shadow overhead. The lockfile check is a heuristic, not a guaranteed signal. | Low |
@@ -229,6 +256,15 @@ Security and contract completeness fixes.
 - **Exit 9 (runner system error)** — result save, summary write, or manifest write failure overrides exit code to 9; distinguishes runner infrastructure failure from test results
 - **List scanner expansion** — `[TestCase]`, `[TestCaseSource]`, `[Theory]` attributes now detected by `testplay list`
 
-### Remaining items (v0.6+)
+### v0.6.0-beta ✅ — The Network Ready (shipped)
+Production readiness for network test scenarios.
+- **Failure excerpt** — `excerpt` field on failed test entries: `"message (at filename.cs:line)"` for immediate agent triage
+- **Phase accuracy** — single-phase mode no longer emits misleading `running` phase after Unity exits; emits `compiling → done` honestly
+- **Env injection** — scenario instances support `env` map for per-instance environment variables (e.g., network role, port assignments)
+- **Windows process kill** — `taskkill /F /T /PID` with `CREATE_NEW_PROCESS_GROUP` ensures Unity child processes are terminated on cancel
+- **Artifact retention** — `retention.max_runs` config (default 30) auto-prunes old result files and artifact directories after each single-mode run
+
+### Remaining items (v0.7+)
 
 - **Network test configuration** — NGO/Mirror harness integration
+- **Scenario-mode artifact retention** — auto-prune in multi-instance mode
