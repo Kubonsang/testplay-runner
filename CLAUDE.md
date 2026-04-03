@@ -48,7 +48,7 @@ External dependencies are kept minimal — `cobra` for CLI parsing, everything e
 ## Package Structure
 
 ```
-cmd/testplay/        # CLI entry points for version, check, list, run, result subcommands
+cmd/testplay/        # CLI entry points for init, version, check, list, run, result subcommands
 internal/
   unity/             # Unity process execution and path discovery
   parser/            # NUnit XML → Go struct → JSON conversion
@@ -57,6 +57,7 @@ internal/
   runsvc/            # Run orchestration service (backend selection, path remap)
   shadow/            # Shadow Workspace — lockfile detection, copy/link, path remap
   artifacts/         # Per-run artifact directory and file management
+  scenario/          # Scenario JSON loading, validation, and multi-instance spec
   config/            # testplay.json loading and validation
   runid/             # Shared run-ID format validation (regex pattern)
 ```

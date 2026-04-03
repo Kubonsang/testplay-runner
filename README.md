@@ -6,7 +6,7 @@
 
 ---
 
-Unity's raw CLI is broken for automation: exit code 0 even on compile failure, XML-only output, no progress visibility, ambiguous error types. `testplay` fixes all of that with a five-command interface designed for AI agents and CI pipelines.
+Unity's raw CLI is broken for automation: exit code 0 even on compile failure, XML-only output, no progress visibility, ambiguous error types. `testplay` fixes all of that with a six-command interface designed for AI agents and CI pipelines.
 
 ## Problems Solved
 
@@ -19,10 +19,16 @@ Unity's raw CLI is broken for automation: exit code 0 even on compile failure, X
 | Ambiguous timeout | `timeout_type: compile / test / total` in JSON; two-phase execution separates compile and test deadlines |
 | No regression tracking | `--compare-run` populates `new_failures` |
 | Platform path differences | Absolute + relative paths in every response |
-| No test discovery without running | `testplay list` static-scans `[Test]` and `[UnityTest]` attributes |
+| No test discovery without running | `testplay list` static-scans `[Test]`, `[UnityTest]`, `[TestCase]`, `[TestCaseSource]`, and `[Theory]` attributes |
 | Unity Editor holds project lock | Shadow Workspace runs tests in `.testplay-shadow/` while editor stays open |
 
 ## Installation
+
+**Pre-built binaries (recommended):**
+
+Download from [GitHub Releases](https://github.com/Kubonsang/testplay-runner/releases) — darwin/linux/windows, amd64/arm64.
+
+**From source:**
 
 ```bash
 git clone https://github.com/Kubonsang/testplay-runner.git
@@ -38,7 +44,13 @@ GOOS=windows GOARCH=amd64 go build -o testplay.exe ./cmd/testplay
 
 ## Configuration
 
-Create `testplay.json` in your project root:
+Generate `testplay.json` with `testplay init`:
+
+```bash
+testplay init --unity-path /path/to/Unity
+```
+
+Or create it manually in your project root:
 
 ```json
 {
@@ -87,9 +99,32 @@ testplay version
 ```json
 {
   "schema_version": "1",
-  "version": "v0.6.0-beta"
+  "version": "v0.7.0-rc"
 }
 ```
+
+---
+
+### `testplay init`
+
+Generates a `testplay.json` configuration file with sensible defaults. Run this once to bootstrap a new project.
+
+```bash
+testplay init --unity-path /path/to/Unity
+testplay init --test-platform play_mode
+testplay init --force  # overwrite existing testplay.json
+```
+
+```json
+{
+  "created": "testplay.json",
+  "unity_path": "/path/to/Unity",
+  "project_path": "/current/directory"
+}
+```
+
+Unity path resolution: `--unity-path` flag > `UNITY_PATH` env var > empty (with warning).
+Exit 5 if `testplay.json` already exists (use `--force` to overwrite) or if `--test-platform` is invalid.
 
 ---
 
@@ -338,6 +373,7 @@ Failure phases: `timeout_compile`, `timeout_test`, `timeout_total`, `interrupted
 ## Recommended Agent Flow
 
 ```
+0. testplay init           # Generate testplay.json (first time only)
 1. testplay check          # Validate environment
 2. testplay list           # Discover test names
 3. testplay run            # Execute (poll testplay-status.json for progress)
