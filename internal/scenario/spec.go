@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ErrScenarioInvalid is returned when a scenario file fails validation.
@@ -108,6 +109,9 @@ func Load(path string) (*ScenarioFile, error) {
 		for k := range inst.Env {
 			if k == "" {
 				return nil, fmt.Errorf("%w: instances[%d].env contains empty key", ErrScenarioInvalid, i)
+			}
+			if strings.Contains(k, "=") {
+				return nil, fmt.Errorf("%w: instances[%d].env key %q must not contain '='", ErrScenarioInvalid, i, k)
 			}
 		}
 	}

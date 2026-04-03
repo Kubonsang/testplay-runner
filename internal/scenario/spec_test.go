@@ -326,3 +326,22 @@ func TestLoad_NoEnvField_Valid(t *testing.T) {
 		t.Errorf("expected nil env, got %v", sf.Instances[0].Env)
 	}
 }
+
+func TestLoad_EnvKeyWithEquals_Rejected(t *testing.T) {
+	dir := t.TempDir()
+	content := `{
+		"schema_version": "1",
+		"instances": [
+			{"role": "host", "config": "host.json", "env": {"KEY=BAD": "value"}}
+		]
+	}`
+	path := filepath.Join(dir, "scenario.json")
+	os.WriteFile(path, []byte(content), 0644)
+	_, err := scenario.Load(path)
+	if err == nil {
+		t.Fatal("expected error for env key containing '='")
+	}
+	if !errors.Is(err, scenario.ErrScenarioInvalid) {
+		t.Errorf("expected ErrScenarioInvalid, got %v", err)
+	}
+}
