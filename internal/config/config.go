@@ -14,14 +14,20 @@ var (
 	ErrUnityPathMissing = errors.New("unity_path not set and UNITY_PATH env var not found")
 )
 
+// RetentionConfig controls automatic cleanup of old run results and artifacts.
+type RetentionConfig struct {
+	MaxRuns int `json:"max_runs"` // max recent runs to keep; default 30
+}
+
 type Config struct {
-	SchemaVersion string   `json:"schema_version"`
-	UnityPath     string   `json:"unity_path"`
-	ProjectPath   string   `json:"project_path"`
-	Timeout       Timeouts `json:"timeout"`
-	ResultDir     string   `json:"result_dir"`
-	TestPlatform  string   `json:"test_platform"` // "edit_mode" (default) | "play_mode"
-	configDir     string   // unexported: directory containing testplay.json
+	SchemaVersion string          `json:"schema_version"`
+	UnityPath     string          `json:"unity_path"`
+	ProjectPath   string          `json:"project_path"`
+	Timeout       Timeouts        `json:"timeout"`
+	ResultDir     string          `json:"result_dir"`
+	TestPlatform  string          `json:"test_platform"` // "edit_mode" (default) | "play_mode"
+	Retention     RetentionConfig `json:"retention"`
+	configDir     string          // unexported: directory containing testplay.json
 }
 
 // Timeouts holds timeout configuration for a testplay run.
@@ -91,6 +97,14 @@ func (c *Config) Validate(requireUnity bool) error {
 		// valid
 	default:
 		return fmt.Errorf("%w: test_platform must be \"edit_mode\" or \"play_mode\"", ErrConfigInvalid)
+	}
+
+	// Default retention
+	if c.Retention.MaxRuns == 0 {
+		c.Retention.MaxRuns = 30
+	}
+	if c.Retention.MaxRuns < 0 {
+		return fmt.Errorf("%w: retention.max_runs must be non-negative", ErrConfigInvalid)
 	}
 
 	return nil

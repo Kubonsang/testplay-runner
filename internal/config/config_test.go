@@ -214,3 +214,45 @@ func TestValidate_InvalidTestPlatform_ReturnsError(t *testing.T) {
 		t.Errorf("got %v, want ErrConfigInvalid for invalid test_platform", err)
 	}
 }
+
+func TestValidate_RetentionDefaults(t *testing.T) {
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		UnityPath:     "/fake/unity",
+	}
+	if err := cfg.Validate(true); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Retention.MaxRuns != 30 {
+		t.Errorf("Retention.MaxRuns = %d, want 30", cfg.Retention.MaxRuns)
+	}
+}
+
+func TestValidate_RetentionExplicit(t *testing.T) {
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		UnityPath:     "/fake/unity",
+		Retention:     config.RetentionConfig{MaxRuns: 50},
+	}
+	if err := cfg.Validate(true); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Retention.MaxRuns != 50 {
+		t.Errorf("Retention.MaxRuns = %d, want 50", cfg.Retention.MaxRuns)
+	}
+}
+
+func TestValidate_RetentionNegative_Rejected(t *testing.T) {
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		UnityPath:     "/fake/unity",
+		Retention:     config.RetentionConfig{MaxRuns: -1},
+	}
+	err := cfg.Validate(true)
+	if err == nil {
+		t.Fatal("expected error for negative max_runs")
+	}
+	if !errors.Is(err, config.ErrConfigInvalid) {
+		t.Errorf("expected ErrConfigInvalid, got %v", err)
+	}
+}
