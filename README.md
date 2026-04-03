@@ -51,7 +51,10 @@ Create `testplay.json` in your project root:
     "compile_ms": 60000,
     "test_ms": 240000
   },
-  "result_dir": ".testplay/results"
+  "result_dir": ".testplay/results",
+  "retention": {
+    "max_runs": 30
+  }
 }
 ```
 
@@ -62,6 +65,7 @@ Create `testplay.json` in your project root:
 Per-run artifacts (`results.xml`, `summary.json`, `manifest.json`, `stdout.log`,
 `stderr.log`, `events.ndjson`) are always written under
 `<project_path>/.testplay/runs/<run_id>/`.
+`retention.max_runs` controls automatic cleanup of old runs (default 30). Set to `0` to disable pruning.
 
 **Timeout configuration:**
 - `total_ms` (default 300000): outer safety-net deadline for the entire run.
@@ -83,7 +87,7 @@ testplay version
 ```json
 {
   "schema_version": "1",
-  "version": "v0.2.0-beta"
+  "version": "v0.6.0-beta"
 }
 ```
 
@@ -120,7 +124,7 @@ Exit 0 = ready. Exit 1 = dependency missing (fix per `hint`). Exit 5 = config in
 
 ### `testplay list`
 
-Static scan of `*.cs` files for `[Test]` and `[UnityTest]` attributes. Returns candidate test names without running Unity. The list may be incomplete (e.g. `[TestCase]`, `[Theory]` are not detected).
+Static scan of `*.cs` files for `[Test]`, `[UnityTest]`, `[TestCase]`, `[TestCaseSource]`, and `[Theory]` attributes. Returns candidate test names without running Unity. The list may be incomplete for custom test attributes.
 
 ```bash
 testplay list
@@ -143,9 +147,11 @@ Runs Unity tests using the configured `test_platform` (`edit_mode` or `play_mode
 testplay run
 testplay run --filter TestJump
 testplay run --category Smoke
-testplay run --compare-run 20250301-102200
+testplay run --compare-run 20250301-102200-a3f8b2c1
+testplay run --config path/to/testplay.json
 testplay run --shadow              # force shadow workspace even without editor lock
-testplay run --reset-shadow        # destroy and rebuild shadow Library cache, then run
+testplay run --clear-cache         # remove cached Library before shadow workspace creation
+testplay run --scenario scenario.json  # multi-instance concurrent execution
 ```
 
 **All tests pass (exit 0):**
@@ -153,7 +159,7 @@ testplay run --reset-shadow        # destroy and rebuild shadow Library cache, t
 ```json
 {
   "schema_version": "1",
-  "run_id": "20250325-143000",
+  "run_id": "20250325-143000-a3f8b2c1",
   "exit_code": 0,
   "total": 2,
   "passed": 2,
@@ -180,7 +186,7 @@ testplay run --reset-shadow        # destroy and rebuild shadow Library cache, t
 ```json
 {
   "schema_version": "1",
-  "run_id": "20250325-143000",
+  "run_id": "20250325-143000-a3f8b2c1",
   "total": 10,
   "passed": 9,
   "failed": 1,
@@ -190,6 +196,7 @@ testplay run --reset-shadow        # destroy and rebuild shadow Library cache, t
       "name": "MyTests.PlayerTests.TestJump",
       "result": "Failed",
       "message": "Expected 1 but was 0",
+      "excerpt": "Expected 1 but was 0 (at PlayerTests.cs:42)",
       "file": "Assets/Tests/PlayerTests.cs",
       "absolute_path": "/path/to/UnityProject/Assets/Tests/PlayerTests.cs",
       "line": 42
@@ -204,7 +211,7 @@ testplay run --reset-shadow        # destroy and rebuild shadow Library cache, t
 ```json
 {
   "schema_version": "1",
-  "run_id": "20250325-143000",
+  "run_id": "20250325-143000-a3f8b2c1",
   "exit_code": 2,
   "total": 0,
   "passed": 0,
@@ -238,33 +245,36 @@ testplay result --last 3
 {
   "schema_version": "1",
   "runs": [
-    {"run_id": "20250325-143000", "exit_code": 0, "total": 10, "passed": 10, "failed": 0},
-    {"run_id": "20250324-091500", "exit_code": 3, "total": 10, "passed": 9, "failed": 1}
+    {"run_id": "20250325-143000-a3f8b2c1", "exit_code": 0, "total": 10, "passed": 10, "failed": 0},
+    {"run_id": "20250324-091500-b7d2e4f0", "exit_code": 3, "total": 10, "passed": 9, "failed": 1}
   ]
 }
 ```
 
 ## Shadow Workspace
 
-When the Unity Editor has the project open, `Temp/UnityLockfile` exists and Unity's batch mode cannot run against the same project directory. `testplay run` detects this automatically and creates a shadow workspace at `.testplay-shadow/` inside your project root:
+When the Unity Editor has the project open, `Temp/UnityLockfile` exists and Unity's batch mode cannot run against the same project directory. `testplay run` detects this automatically and creates a per-run shadow workspace at `.testplay-shadow-<run_id>/` inside your project root:
 
 | Directory | Strategy |
 |---|---|
 | `Assets/` | Copied fresh on every run |
 | `ProjectSettings/` | Copied fresh on every run |
-| `Packages/` | Symlinked (junction on Windows) — linked once, never re-linked |
-| `Library/` | Created empty on first run; preserved across runs for Unity import cache reuse |
+| `Packages/` | Symlinked (junction on Windows) |
+| `Library/` | Seeded from `.testplay/cache/Library/` when available; cold-starts otherwise |
 | `Temp/` | Deleted before each run; Unity recreates it |
 
-**Shadow mode is transparent to agents.** All `absolute_path` fields in the JSON output are remapped to source project paths — agents never see `.testplay-shadow/` paths.
+Each run gets its own isolated shadow directory, making parallel `testplay run` invocations safe. The shadow directory is removed automatically after the run via `ws.Cleanup()`.
+
+**Library warm cache:** The first successful run populates `.testplay/cache/Library/`. Subsequent shadow runs seed `Library/` from this cache, avoiding cold-start reimport. The cache is invalidated when `ProjectVersion.txt` or `Packages/manifest.json` changes. Use `--clear-cache` to force a cold start.
+
+**Shadow mode is transparent to agents.** All `absolute_path` fields in the JSON output are remapped to source project paths — agents never see shadow paths.
 
 **Flags:**
 - `--shadow` — force shadow workspace even when the editor is not open (useful for testing shadow behaviour)
-- `--reset-shadow` — destroy `.testplay-shadow/` and rebuild from scratch before running (use after a Unity version upgrade or when the Library cache is stale)
+- `--reset-shadow` — equivalent to `--shadow` (with per-run isolation every run already starts fresh; kept for API compatibility)
+- `--clear-cache` — remove `.testplay/cache/` before shadow workspace creation, forcing Unity to reimport from scratch
 
-**`.gitignore` is patched automatically** to exclude `.testplay-shadow/` on first use.
-
-**When to use `--reset-shadow`:** If Unity version was upgraded, or if tests fail with import errors that don't appear in the source project, the Library cache may be stale. Delete and rebuild it with `testplay run --reset-shadow`.
+**`.gitignore` is patched automatically** to exclude `.testplay-shadow-*/` on first use.
 
 ## Exit Codes
 
@@ -274,10 +284,12 @@ When the Unity Editor has the project open, `Temp/UnityLockfile` exists and Unit
 | 1 | Unity / project not found | Fix env, check `hint` field |
 | 2 | Compile failure | Fix source, see `errors[].absolute_path` + `line` |
 | 3 | Test failure | Fix test, see `tests[].absolute_path` + `line` |
-| 4 | Timeout or signal interruption | Check `timeout_type` in the JSON result — see table below |
+| 4 | Timeout | Check `timeout_type` in the JSON result — see table below |
 | 5 | Config error | Fix or create `testplay.json` |
 | 6 | Build failure (not yet returned) | Check Unity license / build target |
 | 7 | Permission error (not yet returned) | Fix path permissions |
+| 8 | Interrupted by signal | SIGINT/SIGTERM received — retry without code changes |
+| 9 | Runner system error | Result/artifact save failed — check disk space/permissions, see `warnings` field |
 
 ### Exit 4 — timeout_type values
 
@@ -286,7 +298,6 @@ When the Unity Editor has the project open, `Temp/UnityLockfile` exists and Unit
 | `"compile"` | `timeout_compile` | Compile-only phase exceeded `compile_ms` deadline |
 | `"test"` | `timeout_test` | Test phase exceeded `test_ms` deadline |
 | `"total"` | `timeout_total` | Outer `total_ms` deadline expired (fires in either phase) |
-| *(absent)* | `interrupted` | SIGINT / SIGTERM — retry without code changes |
 
 Example JSON for a compile-phase timeout:
 
@@ -308,19 +319,20 @@ During `testplay run`, poll `testplay-status.json` to track progress:
 {
   "schema_version": "1",
   "phase": "running",
-  "run_id": "20250325-143000",
+  "run_id": "20250325-143000-a3f8b2c1",
   "total": 10,
   "passed": 3,
   "failed": 0,
   "updated_at": "2025-03-25T14:30:05Z",
   "started_at": "2025-03-25T14:29:58Z",
   "last_heartbeat_at": "2025-03-25T14:30:03Z",
-  "artifact_root": "/Users/user/MyProject/.testplay/runs/20250325-143000",
+  "artifact_root": "/Users/user/MyProject/.testplay/runs/20250325-143000-a3f8b2c1",
   "pid": 12345
 }
 ```
 
-Phase progression: `compiling → running → done`
+Phase progression (single-phase): `compiling → done`
+Phase progression (two-phase): `compiling → running → done`
 Failure phases: `timeout_compile`, `timeout_test`, `timeout_total`, `interrupted`
 
 ## Recommended Agent Flow
@@ -365,7 +377,7 @@ The script:
 3. Verifies all 6 run artifacts are present in `.testplay/runs/<run_id>/`:
    `results.xml`, `summary.json`, `manifest.json`, `stdout.log`, `stderr.log`, `events.ndjson`
 4. Verifies `testplay-status.json` exists in the project root (status snapshot, outside the run artifact directory)
-5. Runs a shadow-mode smoke stage using `--shadow` and verifies `.testplay-shadow/` workspace is created with expected subdirectories
+5. Runs a shadow-mode smoke stage using `--shadow` and verifies the shadow workspace is created with expected subdirectories
 
 **CI (opt-in):**
 
