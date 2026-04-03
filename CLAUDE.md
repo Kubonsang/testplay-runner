@@ -36,6 +36,15 @@ UNITY_PATH=/path/to/Unity go test -tags e2e ./e2e/...
 
 External dependencies are kept minimal — `cobra` for CLI parsing, everything else uses stdlib.
 
+## Release Rules
+
+**절대로 원격에 푸시된 태그를 덮어쓰지 않는다 (`git tag -f` + `git push --force`).**
+
+- **Go Module Proxy 캐싱:** `proxy.golang.org`에 이전 해시가 캐싱되면, 태그 덮어쓰기 후 다른 사용자가 `go get` 시 Checksum Mismatch 보안 에러로 빌드가 깨진다.
+- **팀 싱크:** 로컬과 원격 태그 불일치로 혼란 발생.
+- **올바른 방법:** 코드 수정 후에는 `v0.6.1-beta` (패치 버전업) 또는 `v0.6.0-beta.2` (프리릴리즈 증분) 등 새 버전을 발행한다.
+- SemVer 원칙: 한 번 발행된 버전은 불변(immutable). 내용이 바뀌면 버전도 바뀌어야 한다.
+
 ## Package Structure
 
 ```
