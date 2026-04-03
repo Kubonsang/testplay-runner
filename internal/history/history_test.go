@@ -324,6 +324,29 @@ func TestStore_Prune_EmptyDir(t *testing.T) {
 	}
 }
 
+func TestStore_List_IgnoresNonRunIDFiles(t *testing.T) {
+	dir := t.TempDir()
+	store := history.NewStore(dir)
+
+	// Create a valid run-ID result
+	_ = store.Save("20260401-100000-aaaaaaaa", &history.RunResult{
+		SchemaVersion: "1", RunID: "20260401-100000-aaaaaaaa", Tests: []parser.TestCase{},
+	})
+	// Drop a non-run-ID .json file
+	os.WriteFile(filepath.Join(dir, "metadata.json"), []byte("{}"), 0644)
+
+	results, err := store.List(0)
+	if err != nil {
+		t.Fatalf("List() returned error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("expected 1 result, got %d", len(results))
+	}
+	if results[0].RunID != "20260401-100000-aaaaaaaa" {
+		t.Errorf("unexpected run_id %q", results[0].RunID)
+	}
+}
+
 func TestLoad_InvalidRunID_NewFormatVariants(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

@@ -145,15 +145,31 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 
 	run := deps.run
 	if run == nil {
-		run = func(ctx context.Context, instSpec scenario.InstanceSpec, readyCh chan<- struct{}) (runsvc.Response, error) {
-			cfgPath := spec.ConfigPath(instSpec)
+		// Pre-load all instance configs for early validation and scenario-level timeout.
+		configs := make(map[string]*config.Config, len(spec.Instances))
+		var totalMs int64
+		for _, inst := range spec.Instances {
+			cfgPath := spec.ConfigPath(inst)
 			cfg, loadErr := config.Load(cfgPath)
 			if loadErr != nil {
-				return runsvc.Response{}, loadErr
+				writeJSON(w, map[string]any{"schema_version": "1", "error": loadErr.Error()})
+				return 5
 			}
 			if valErr := cfg.Validate(true); valErr != nil {
-				return runsvc.Response{}, valErr
+				writeJSON(w, map[string]any{"schema_version": "1", "error": valErr.Error()})
+				return 5
 			}
+			configs[inst.Role] = cfg
+			totalMs += cfg.Timeout.TotalMs
+		}
+
+		// Outer safety-net: sum of all instance timeouts bounds the entire scenario.
+		var scenarioCancel context.CancelFunc
+		ctx, scenarioCancel = context.WithTimeout(ctx, time.Duration(totalMs)*time.Millisecond)
+		defer scenarioCancel()
+
+		run = func(ctx context.Context, instSpec scenario.InstanceSpec, readyCh chan<- struct{}) (runsvc.Response, error) {
+			cfg := configs[instSpec.Role]
 
 			instanceCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.Timeout.TotalMs)*time.Millisecond)
 			defer cancel()

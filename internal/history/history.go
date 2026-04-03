@@ -80,7 +80,30 @@ func (s *Store) Save(runID string, result *RunResult) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0644)
+	return atomicWrite(path, data)
+}
+
+// atomicWrite writes data to path via a temp file + rename to prevent partial files.
+func atomicWrite(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "run-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	_, writeErr := tmp.Write(data)
+	closeErr := tmp.Close()
+	if writeErr != nil || closeErr != nil {
+		_ = os.Remove(tmpName)
+		if writeErr != nil {
+			return writeErr
+		}
+		return closeErr
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 // Load reads and parses <dir>/<runID>.json.
@@ -123,7 +146,10 @@ func (s *Store) List(last int) ([]*RunResult, error) {
 	var ids []string
 	for _, e := range entries {
 		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
-			ids = append(ids, strings.TrimSuffix(e.Name(), ".json"))
+			id := strings.TrimSuffix(e.Name(), ".json")
+			if runid.IsValid(id) {
+				ids = append(ids, id)
+			}
 		}
 	}
 

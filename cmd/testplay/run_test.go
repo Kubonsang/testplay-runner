@@ -714,6 +714,40 @@ func TestRunScenario_EnvPassedToInstances(t *testing.T) {
 	}
 }
 
+func TestRunScenario_OuterContextDeadline_CancelsInstances(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "scenario.json")
+	_ = os.WriteFile(specPath, []byte(`{
+		"schema_version": "1",
+		"instances": [
+			{"role": "host",   "config": "./h.json"},
+			{"role": "client", "config": "./c.json"}
+		]
+	}`), 0644)
+
+	// Outer context with a very short deadline — simulates scenario-level timeout.
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	fakeRun := func(ctx context.Context, inst scenario.InstanceSpec, _ chan<- struct{}) (runsvc.Response, error) {
+		// Block until context is cancelled — should be cancelled by outer deadline.
+		<-ctx.Done()
+		return runsvc.Response{ExitCode: 4, Result: &history.RunResult{
+			SchemaVersion: "1", ExitCode: 4, TimeoutType: "total",
+			Tests: []parser.TestCase{}, Errors: []history.CompileError{},
+		}}, nil
+	}
+
+	var buf bytes.Buffer
+	code := runScenario(&buf, specPath, scenarioDeps{ctx: ctx, run: fakeRun})
+
+	// Instances should have been cancelled by the outer deadline.
+	if code == 0 {
+		t.Error("expected non-zero exit code when outer context deadline fires")
+	}
+}
+
 func TestRunScenario_OrchestratorErrorsInOutput(t *testing.T) {
 	t.Parallel()
 
