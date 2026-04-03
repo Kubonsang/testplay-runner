@@ -202,6 +202,8 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 | Shadow — Library cold-start per run | `Library/` is seeded from a project-local cache (`.testplay/cache/Library/`) when available. First run after a cache miss still cold-starts. Cache is invalidated when `ProjectVersion.txt` or `Packages/manifest.json` changes. Use `--clear-cache` to force a cold start. In `--scenario` mode, cache seeding (read) works per instance but cache write-back is skipped to avoid concurrent writes; a single-mode run is needed to populate the cache. | Low |
 | Scenario — status polling (per-instance) | `testplay-status-<role>.json` is written for each instance in `--scenario` mode. No scenario-level aggregate status file exists; agents must poll per-role files. | Low |
 | Scenario — host crash error detail | ~~Resolved in v0.5.0~~ — dependent instance error messages now include the dependency's exit code and failure type (e.g., "exited with exit 2 (compile error)"). | Resolved |
+| Scenario — env key case on Windows | `MergeEnv` uses case-sensitive key matching. On Windows, env vars are case-insensitive (`Path` vs `PATH`). If an agent overrides a system env var with different casing, both entries may appear. Use exact-case matching for now. | Low |
+| Retention — cannot disable pruning | `retention.max_runs: 0` defaults to 30 (same as omitted). To keep all runs, set a high value like `999999`. | Low |
 
 ## Roadmap
 
