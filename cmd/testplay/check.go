@@ -18,16 +18,11 @@ type checkDeps struct {
 
 func runCheck(w io.Writer, deps checkDeps) int {
 	cfg, err := deps.loadConfig(deps.configPath)
-	if err != nil {
-		writeJSON(w, map[string]any{
-			"ready": false,
-			"error": err.Error(),
-		})
-		return 5
+	if err == nil {
+		// Validate config (fills defaults, checks unity path)
+		err = cfg.Validate(true)
 	}
-
-	// Validate config (fills defaults, checks unity path)
-	if err := cfg.Validate(true); err != nil {
+	if err != nil {
 		writeJSON(w, map[string]any{
 			"ready": false,
 			"error": err.Error(),
