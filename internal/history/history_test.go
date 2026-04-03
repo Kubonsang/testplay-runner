@@ -285,6 +285,33 @@ func TestStore_Prune_NothingToRemove(t *testing.T) {
 	}
 }
 
+func TestStore_Prune_IgnoresNonRunIDFiles(t *testing.T) {
+	dir := t.TempDir()
+	store := history.NewStore(dir)
+
+	// Create 2 run-ID files
+	for _, id := range []string{"20260401-100000-aaaaaaaa", "20260401-110000-bbbbbbbb"} {
+		_ = store.Save(id, &history.RunResult{
+			SchemaVersion: "1", RunID: id, Tests: []parser.TestCase{},
+		})
+	}
+	// Create a non-run-ID .json file that must NOT be pruned
+	os.WriteFile(filepath.Join(dir, "metadata.json"), []byte("{}"), 0644)
+
+	removed, err := store.Prune(1)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if removed != 1 {
+		t.Errorf("removed = %d, want 1 (only run-ID files)", removed)
+	}
+
+	// metadata.json must survive
+	if _, err := os.Stat(filepath.Join(dir, "metadata.json")); err != nil {
+		t.Error("non-run-ID file 'metadata.json' was incorrectly pruned")
+	}
+}
+
 func TestStore_Prune_EmptyDir(t *testing.T) {
 	dir := t.TempDir()
 	store := history.NewStore(dir)

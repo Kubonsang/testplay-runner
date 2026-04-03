@@ -215,6 +215,8 @@ func TestValidate_InvalidTestPlatform_ReturnsError(t *testing.T) {
 	}
 }
 
+func intPtr(v int) *int { return &v }
+
 func TestValidate_RetentionDefaults(t *testing.T) {
 	cfg := &config.Config{
 		SchemaVersion: "1",
@@ -223,8 +225,8 @@ func TestValidate_RetentionDefaults(t *testing.T) {
 	if err := cfg.Validate(true); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Retention.MaxRuns != 30 {
-		t.Errorf("Retention.MaxRuns = %d, want 30", cfg.Retention.MaxRuns)
+	if cfg.Retention.MaxRuns == nil || *cfg.Retention.MaxRuns != 30 {
+		t.Errorf("Retention.MaxRuns = %v, want 30 (default)", cfg.Retention.MaxRuns)
 	}
 }
 
@@ -232,13 +234,27 @@ func TestValidate_RetentionExplicit(t *testing.T) {
 	cfg := &config.Config{
 		SchemaVersion: "1",
 		UnityPath:     "/fake/unity",
-		Retention:     config.RetentionConfig{MaxRuns: 50},
+		Retention:     config.RetentionConfig{MaxRuns: intPtr(50)},
 	}
 	if err := cfg.Validate(true); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Retention.MaxRuns != 50 {
-		t.Errorf("Retention.MaxRuns = %d, want 50", cfg.Retention.MaxRuns)
+	if *cfg.Retention.MaxRuns != 50 {
+		t.Errorf("Retention.MaxRuns = %d, want 50", *cfg.Retention.MaxRuns)
+	}
+}
+
+func TestValidate_RetentionZero_DisablesPruning(t *testing.T) {
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		UnityPath:     "/fake/unity",
+		Retention:     config.RetentionConfig{MaxRuns: intPtr(0)},
+	}
+	if err := cfg.Validate(true); err != nil {
+		t.Fatal(err)
+	}
+	if *cfg.Retention.MaxRuns != 0 {
+		t.Errorf("Retention.MaxRuns = %d, want 0 (pruning disabled)", *cfg.Retention.MaxRuns)
 	}
 }
 
@@ -246,7 +262,7 @@ func TestValidate_RetentionNegative_Rejected(t *testing.T) {
 	cfg := &config.Config{
 		SchemaVersion: "1",
 		UnityPath:     "/fake/unity",
-		Retention:     config.RetentionConfig{MaxRuns: -1},
+		Retention:     config.RetentionConfig{MaxRuns: intPtr(-1)},
 	}
 	err := cfg.Validate(true)
 	if err == nil {

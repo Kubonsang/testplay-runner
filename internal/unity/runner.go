@@ -55,7 +55,8 @@ func (r *ProcessRunner) Run(ctx context.Context, args []string, stdout, stderr i
 }
 
 // MergeEnv returns base with extra vars added or overridden.
-// Keys in extra replace matching keys in base (case-sensitive).
+// Key comparison is platform-aware: case-sensitive on Unix, case-insensitive
+// on Windows (matching OS env semantics via envKeysEqual).
 // If extra is nil or empty, base is returned as-is.
 func MergeEnv(base []string, extra map[string]string) []string {
 	if len(extra) == 0 {
@@ -64,7 +65,14 @@ func MergeEnv(base []string, extra map[string]string) []string {
 	env := make([]string, 0, len(base)+len(extra))
 	for _, e := range base {
 		k, _, _ := strings.Cut(e, "=")
-		if _, override := extra[k]; !override {
+		overridden := false
+		for ek := range extra {
+			if envKeysEqual(k, ek) {
+				overridden = true
+				break
+			}
+		}
+		if !overridden {
 			env = append(env, e)
 		}
 	}

@@ -6,8 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 )
+
+// runIDPattern matches run-ID directory names (YYYYMMDD-HHMMSS or YYYYMMDD-HHMMSS-xxxxxxxx).
+var runIDPattern = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}(-[0-9a-f]{8})?$`)
 
 // Store manages the per-run artifact directory tree.
 // Phase B layout:
@@ -155,7 +159,7 @@ func (s *Store) Prune(keep int) (int, error) {
 
 	var dirs []string
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() && runIDPattern.MatchString(e.Name()) {
 			dirs = append(dirs, e.Name())
 		}
 	}

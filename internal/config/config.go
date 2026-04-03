@@ -16,7 +16,7 @@ var (
 
 // RetentionConfig controls automatic cleanup of old run results and artifacts.
 type RetentionConfig struct {
-	MaxRuns int `json:"max_runs"` // max recent runs to keep; default 30
+	MaxRuns *int `json:"max_runs,omitempty"` // max recent runs to keep; nil → default 30; 0 = disable pruning
 }
 
 type Config struct {
@@ -99,11 +99,12 @@ func (c *Config) Validate(requireUnity bool) error {
 		return fmt.Errorf("%w: test_platform must be \"edit_mode\" or \"play_mode\"", ErrConfigInvalid)
 	}
 
-	// Default retention
-	if c.Retention.MaxRuns == 0 {
-		c.Retention.MaxRuns = 30
+	// Default retention: nil (omitted) → 30; explicit 0 → disable pruning
+	if c.Retention.MaxRuns == nil {
+		defaultRuns := 30
+		c.Retention.MaxRuns = &defaultRuns
 	}
-	if c.Retention.MaxRuns < 0 {
+	if *c.Retention.MaxRuns < 0 {
 		return fmt.Errorf("%w: retention.max_runs must be non-negative", ErrConfigInvalid)
 	}
 

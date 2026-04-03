@@ -170,3 +170,21 @@ func TestMergeEnv_EmptyExtra_ReturnsBase(t *testing.T) {
 		t.Errorf("expected base unchanged, got %v", result)
 	}
 }
+
+func TestMergeEnv_NoDuplicateKeys(t *testing.T) {
+	// Regardless of platform, overriding an exact-case key must not produce duplicates.
+	base := []string{"PORT=80", "HOME=/home/user"}
+	extra := map[string]string{"PORT": "7777"}
+	result := unity.MergeEnv(base, extra)
+
+	count := 0
+	for _, e := range result {
+		k, _, _ := strings.Cut(e, "=")
+		if k == "PORT" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("PORT appears %d times, want exactly 1 (no duplicates)", count)
+	}
+}

@@ -141,6 +141,46 @@ func TestStore_Prune_RemovesOldestDirs(t *testing.T) {
 	}
 }
 
+func TestStore_Prune_IgnoresNonRunIDDirs(t *testing.T) {
+	root := t.TempDir()
+	store := artifacts.NewStore(root)
+
+	// Create 3 run-ID dirs and 1 non-run-ID dir
+	runIDs := []string{
+		"20260401-100000-aaaaaaaa",
+		"20260401-110000-bbbbbbbb",
+		"20260401-120000-cccccccc",
+	}
+	for _, id := range runIDs {
+		if _, err := store.PrepareRunDir(id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Create a non-run-ID directory that must NOT be pruned
+	os.MkdirAll(filepath.Join(root, "cache"), 0755)
+
+	removed, err := store.Prune(1)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if removed != 2 {
+		t.Errorf("removed = %d, want 2 (only run-ID dirs)", removed)
+	}
+
+	// The non-run-ID dir must survive
+	entries, _ := os.ReadDir(root)
+	names := make(map[string]bool)
+	for _, e := range entries {
+		names[e.Name()] = true
+	}
+	if !names["cache"] {
+		t.Error("non-run-ID dir 'cache' was incorrectly pruned")
+	}
+	if !names["20260401-120000-cccccccc"] {
+		t.Error("newest run-ID dir was incorrectly pruned")
+	}
+}
+
 func TestStore_Prune_EmptyRoot(t *testing.T) {
 	root := t.TempDir()
 	store := artifacts.NewStore(root)

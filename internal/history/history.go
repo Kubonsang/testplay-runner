@@ -163,7 +163,10 @@ func (s *Store) Prune(keep int) (int, error) {
 	var ids []string
 	for _, e := range entries {
 		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
-			ids = append(ids, strings.TrimSuffix(e.Name(), ".json"))
+			id := strings.TrimSuffix(e.Name(), ".json")
+			if runIDPattern.MatchString(id) {
+				ids = append(ids, id)
+			}
 		}
 	}
 
