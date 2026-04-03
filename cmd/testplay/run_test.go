@@ -675,6 +675,45 @@ func TestRunScenario_ExitCodeMaxPropagated(t *testing.T) {
 	}
 }
 
+func TestRunScenario_EnvPassedToInstances(t *testing.T) {
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "scenario.json")
+	_ = os.WriteFile(specPath, []byte(`{
+		"schema_version": "1",
+		"instances": [
+			{"role": "host",   "config": "./h.json", "env": {"PORT": "7777", "ROLE": "HOST"}},
+			{"role": "client", "config": "./c.json", "env": {"PORT": "7778", "ROLE": "CLIENT"}}
+		]
+	}`), 0644)
+
+	envCapture := make(map[string]map[string]string)
+	var mu sync.Mutex
+	fakeRun := func(_ context.Context, inst scenario.InstanceSpec, _ chan<- struct{}) (runsvc.Response, error) {
+		mu.Lock()
+		envCapture[inst.Role] = inst.Env
+		mu.Unlock()
+		return runsvc.Response{
+			RunID:    "20260403-100000-aabbccdd",
+			ExitCode: 0,
+			Result: &history.RunResult{
+				SchemaVersion: "1", Tests: []parser.TestCase{}, Errors: []history.CompileError{},
+			},
+		}, nil
+	}
+
+	var buf bytes.Buffer
+	runScenario(&buf, specPath, scenarioDeps{run: fakeRun})
+
+	mu.Lock()
+	defer mu.Unlock()
+	if envCapture["host"]["PORT"] != "7777" {
+		t.Errorf("host PORT = %q, want 7777", envCapture["host"]["PORT"])
+	}
+	if envCapture["client"]["ROLE"] != "CLIENT" {
+		t.Errorf("client ROLE = %q, want CLIENT", envCapture["client"]["ROLE"])
+	}
+}
+
 func TestRunScenario_OrchestratorErrorsInOutput(t *testing.T) {
 	t.Parallel()
 

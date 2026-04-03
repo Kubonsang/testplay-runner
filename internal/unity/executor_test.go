@@ -121,7 +121,8 @@ func TestExecute_WritesStatusPhases(t *testing.T) {
 		StatusWriter: spy,
 	})
 
-	expected := []status.Phase{status.PhaseCompiling, status.PhaseRunning, status.PhaseDone}
+	// Single-phase: compiling → done (no misleading "running" phase)
+	expected := []status.Phase{status.PhaseCompiling, status.PhaseDone}
 	if !reflect.DeepEqual(spy.phases, expected) {
 		t.Errorf("expected phase sequence %v, got %v", expected, spy.phases)
 	}

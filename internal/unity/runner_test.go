@@ -1,6 +1,7 @@
 package unity_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Kubonsang/testplay-runner/internal/unity"
@@ -135,5 +136,55 @@ func TestBuildRunArgs_EmptyTestPlatform_DefaultsToEditMode(t *testing.T) {
 	}
 	if args[idx+1] != "EditMode" {
 		t.Errorf("expected EditMode default, got %q", args[idx+1])
+	}
+}
+
+func TestMergeEnv_OverridesExisting(t *testing.T) {
+	base := []string{"PATH=/usr/bin", "HOME=/home/user", "PORT=80"}
+	extra := map[string]string{"PORT": "7777", "ROLE": "HOST"}
+	result := unity.MergeEnv(base, extra)
+
+	got := make(map[string]string)
+	for _, e := range result {
+		k, v, _ := strings.Cut(e, "=")
+		got[k] = v
+	}
+	if got["PATH"] != "/usr/bin" {
+		t.Errorf("PATH = %q, want /usr/bin (preserved)", got["PATH"])
+	}
+	if got["HOME"] != "/home/user" {
+		t.Errorf("HOME = %q, want /home/user (preserved)", got["HOME"])
+	}
+	if got["PORT"] != "7777" {
+		t.Errorf("PORT = %q, want 7777 (overridden)", got["PORT"])
+	}
+	if got["ROLE"] != "HOST" {
+		t.Errorf("ROLE = %q, want HOST (added)", got["ROLE"])
+	}
+}
+
+func TestMergeEnv_EmptyExtra_ReturnsBase(t *testing.T) {
+	base := []string{"PATH=/usr/bin"}
+	result := unity.MergeEnv(base, nil)
+	if len(result) != 1 || result[0] != "PATH=/usr/bin" {
+		t.Errorf("expected base unchanged, got %v", result)
+	}
+}
+
+func TestMergeEnv_NoDuplicateKeys(t *testing.T) {
+	// Regardless of platform, overriding an exact-case key must not produce duplicates.
+	base := []string{"PORT=80", "HOME=/home/user"}
+	extra := map[string]string{"PORT": "7777"}
+	result := unity.MergeEnv(base, extra)
+
+	count := 0
+	for _, e := range result {
+		k, _, _ := strings.Cut(e, "=")
+		if k == "PORT" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("PORT appears %d times, want exactly 1 (no duplicates)", count)
 	}
 }

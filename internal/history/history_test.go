@@ -223,6 +223,107 @@ func TestStore_SaveAndLoad_NewFormatRunID(t *testing.T) {
 	}
 }
 
+func TestStore_Prune_KeepsNewest(t *testing.T) {
+	dir := t.TempDir()
+	store := history.NewStore(dir)
+
+	ids := []string{
+		"20260401-100000-aaaaaaaa",
+		"20260401-110000-bbbbbbbb",
+		"20260401-120000-cccccccc",
+		"20260401-130000-dddddddd",
+		"20260401-140000-eeeeeeee",
+	}
+	for _, id := range ids {
+		err := store.Save(id, &history.RunResult{
+			SchemaVersion: "1",
+			RunID:         id,
+			Tests:         []parser.TestCase{},
+		})
+		if err != nil {
+			t.Fatalf("Save(%s): %v", id, err)
+		}
+	}
+
+	removed, err := store.Prune(3)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if removed != 2 {
+		t.Errorf("removed = %d, want 2", removed)
+	}
+
+	remaining, _ := store.List(0)
+	if len(remaining) != 3 {
+		t.Fatalf("remaining = %d, want 3", len(remaining))
+	}
+	if remaining[0].RunID != "20260401-140000-eeeeeeee" {
+		t.Errorf("newest = %q", remaining[0].RunID)
+	}
+	if remaining[2].RunID != "20260401-120000-cccccccc" {
+		t.Errorf("oldest kept = %q", remaining[2].RunID)
+	}
+
+	_, err = store.Load("20260401-100000-aaaaaaaa")
+	if !errors.Is(err, history.ErrRunNotFound) {
+		t.Errorf("expected ErrRunNotFound for pruned run, got %v", err)
+	}
+}
+
+func TestStore_Prune_NothingToRemove(t *testing.T) {
+	dir := t.TempDir()
+	store := history.NewStore(dir)
+	_ = store.Save("20260401-100000-aaaaaaaa", &history.RunResult{
+		SchemaVersion: "1", Tests: []parser.TestCase{},
+	})
+	removed, err := store.Prune(10)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("removed = %d, want 0", removed)
+	}
+}
+
+func TestStore_Prune_IgnoresNonRunIDFiles(t *testing.T) {
+	dir := t.TempDir()
+	store := history.NewStore(dir)
+
+	// Create 2 run-ID files
+	for _, id := range []string{"20260401-100000-aaaaaaaa", "20260401-110000-bbbbbbbb"} {
+		_ = store.Save(id, &history.RunResult{
+			SchemaVersion: "1", RunID: id, Tests: []parser.TestCase{},
+		})
+	}
+	// Create a non-run-ID .json file that must NOT be pruned
+	os.WriteFile(filepath.Join(dir, "metadata.json"), []byte("{}"), 0644)
+
+	removed, err := store.Prune(1)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if removed != 1 {
+		t.Errorf("removed = %d, want 1 (only run-ID files)", removed)
+	}
+
+	// metadata.json must survive
+	if _, err := os.Stat(filepath.Join(dir, "metadata.json")); err != nil {
+		t.Error("non-run-ID file 'metadata.json' was incorrectly pruned")
+	}
+}
+
+func TestStore_Prune_EmptyDir(t *testing.T) {
+	dir := t.TempDir()
+	store := history.NewStore(dir)
+	removed, err := store.Prune(5)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("removed = %d, want 0", removed)
+	}
+}
+
 func TestLoad_InvalidRunID_NewFormatVariants(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

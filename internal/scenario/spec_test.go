@@ -1,6 +1,7 @@
 package scenario_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -259,5 +260,88 @@ func TestLoad_LinearDependency_NoCycle(t *testing.T) {
 	}
 	if len(sf.Instances) != 3 {
 		t.Errorf("expected 3 instances, got %d", len(sf.Instances))
+	}
+}
+
+func TestLoad_EnvField_Parsed(t *testing.T) {
+	dir := t.TempDir()
+	content := `{
+		"schema_version": "1",
+		"instances": [
+			{"role": "host", "config": "host.json", "env": {"PORT": "7777", "ROLE": "HOST"}},
+			{"role": "client", "config": "client.json", "env": {"PORT": "7778", "ROLE": "CLIENT"}}
+		]
+	}`
+	path := filepath.Join(dir, "scenario.json")
+	os.WriteFile(path, []byte(content), 0644)
+	sf, err := scenario.Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sf.Instances[0].Env) != 2 {
+		t.Errorf("host env: got %d entries, want 2", len(sf.Instances[0].Env))
+	}
+	if sf.Instances[0].Env["PORT"] != "7777" {
+		t.Errorf("host PORT = %q, want %q", sf.Instances[0].Env["PORT"], "7777")
+	}
+	if sf.Instances[1].Env["ROLE"] != "CLIENT" {
+		t.Errorf("client ROLE = %q, want %q", sf.Instances[1].Env["ROLE"], "CLIENT")
+	}
+}
+
+func TestLoad_EnvEmptyKey_Rejected(t *testing.T) {
+	dir := t.TempDir()
+	content := `{
+		"schema_version": "1",
+		"instances": [
+			{"role": "host", "config": "host.json", "env": {"": "value"}}
+		]
+	}`
+	path := filepath.Join(dir, "scenario.json")
+	os.WriteFile(path, []byte(content), 0644)
+	_, err := scenario.Load(path)
+	if err == nil {
+		t.Fatal("expected error for empty env key")
+	}
+	if !errors.Is(err, scenario.ErrScenarioInvalid) {
+		t.Errorf("expected ErrScenarioInvalid, got %v", err)
+	}
+}
+
+func TestLoad_NoEnvField_Valid(t *testing.T) {
+	dir := t.TempDir()
+	content := `{
+		"schema_version": "1",
+		"instances": [
+			{"role": "host", "config": "host.json"}
+		]
+	}`
+	path := filepath.Join(dir, "scenario.json")
+	os.WriteFile(path, []byte(content), 0644)
+	sf, err := scenario.Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sf.Instances[0].Env != nil {
+		t.Errorf("expected nil env, got %v", sf.Instances[0].Env)
+	}
+}
+
+func TestLoad_EnvKeyWithEquals_Rejected(t *testing.T) {
+	dir := t.TempDir()
+	content := `{
+		"schema_version": "1",
+		"instances": [
+			{"role": "host", "config": "host.json", "env": {"KEY=BAD": "value"}}
+		]
+	}`
+	path := filepath.Join(dir, "scenario.json")
+	os.WriteFile(path, []byte(content), 0644)
+	_, err := scenario.Load(path)
+	if err == nil {
+		t.Fatal("expected error for env key containing '='")
+	}
+	if !errors.Is(err, scenario.ErrScenarioInvalid) {
+		t.Errorf("expected ErrScenarioInvalid, got %v", err)
 	}
 }
