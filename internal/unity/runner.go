@@ -6,7 +6,13 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
+
+// waitDelayAfterKill is how long cmd.Run waits for the process to exit
+// after cancellation before giving up. Used by both Unix and Windows
+// implementations of setSysProcAttr.
+const waitDelayAfterKill = 5 * time.Second
 
 // Runner abstracts the Unity subprocess, allowing tests to inject a fake.
 //
