@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 // Store manages the per-run artifact directory tree.
@@ -139,6 +140,42 @@ func atomicWrite(finalPath string, data []byte) error {
 		return err
 	}
 	return nil
+}
+
+// Prune removes the oldest run directories, keeping the most recent `keep`.
+// Returns the number of directories removed. Non-existent root returns (0, nil).
+func (s *Store) Prune(keep int) (int, error) {
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+
+	var dirs []string
+	for _, e := range entries {
+		if e.IsDir() {
+			dirs = append(dirs, e.Name())
+		}
+	}
+
+	if len(dirs) <= keep {
+		return 0, nil
+	}
+
+	sort.Strings(dirs)
+
+	toRemove := dirs[:len(dirs)-keep]
+	removed := 0
+	for _, name := range toRemove {
+		dirPath := filepath.Join(s.root, name)
+		if err := os.RemoveAll(dirPath); err != nil {
+			return removed, fmt.Errorf("pruning artifact dir %s: %w", name, err)
+		}
+		removed++
+	}
+	return removed, nil
 }
 
 // SaveSummary marshals v as indented JSON and writes it to

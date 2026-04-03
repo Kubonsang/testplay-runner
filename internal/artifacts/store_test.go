@@ -109,6 +109,50 @@ func TestStore_SaveRawLogs_WritesStdoutAndStderr(t *testing.T) {
 	}
 }
 
+func TestStore_Prune_RemovesOldestDirs(t *testing.T) {
+	root := t.TempDir()
+	store := artifacts.NewStore(root)
+
+	ids := []string{
+		"20260401-100000-aaaaaaaa",
+		"20260401-110000-bbbbbbbb",
+		"20260401-120000-cccccccc",
+		"20260401-130000-dddddddd",
+	}
+	for _, id := range ids {
+		dir, err := store.PrepareRunDir(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(filepath.Join(dir, "summary.json"), []byte("{}"), 0644)
+	}
+
+	removed, err := store.Prune(2)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if removed != 2 {
+		t.Errorf("removed = %d, want 2", removed)
+	}
+
+	entries, _ := os.ReadDir(root)
+	if len(entries) != 2 {
+		t.Errorf("remaining dirs = %d, want 2", len(entries))
+	}
+}
+
+func TestStore_Prune_EmptyRoot(t *testing.T) {
+	root := t.TempDir()
+	store := artifacts.NewStore(root)
+	removed, err := store.Prune(5)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("removed = %d, want 0", removed)
+	}
+}
+
 func TestStore_SaveManifest_WritesManifestJSON(t *testing.T) {
 	root := t.TempDir()
 	store := artifacts.NewStore(filepath.Join(root, ".testplay", "runs"))
