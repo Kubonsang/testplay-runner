@@ -148,6 +148,44 @@ func (s *Store) List(last int) ([]*RunResult, error) {
 	return results, nil
 }
 
+// Prune removes the oldest run result files, keeping the most recent `keep` entries.
+// Returns the number of files removed. If the directory has <= keep entries, no files
+// are removed. If the directory doesn't exist, returns (0, nil).
+func (s *Store) Prune(keep int) (int, error) {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+
+	var ids []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+			ids = append(ids, strings.TrimSuffix(e.Name(), ".json"))
+		}
+	}
+
+	if len(ids) <= keep {
+		return 0, nil
+	}
+
+	// Sort ascending (oldest first)
+	sort.Strings(ids)
+
+	toRemove := ids[:len(ids)-keep]
+	removed := 0
+	for _, id := range toRemove {
+		path := filepath.Join(s.dir, id+".json")
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return removed, fmt.Errorf("pruning run %s: %w", id, err)
+		}
+		removed++
+	}
+	return removed, nil
+}
+
 // Compare returns tests that were NOT "Failed" in prev but ARE "Failed" in curr.
 // Returns nil (not an empty slice) when prev is nil — signals no --compare-run was specified.
 func Compare(prev, curr *RunResult) []parser.TestCase {
