@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/Kubonsang/testplay-runner/internal/parser"
+	"github.com/Kubonsang/testplay-runner/internal/runid"
 )
 
 var (
@@ -19,11 +19,8 @@ var (
 	ErrInvalidRunID = errors.New("invalid run ID format")
 )
 
-// runIDPattern accepts both legacy (YYYYMMDD-HHMMSS) and current (YYYYMMDD-HHMMSS-xxxxxxxx) formats.
-var runIDPattern = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}(-[0-9a-f]{8})?$`)
-
-func validateRunID(runID string) error {
-	if !runIDPattern.MatchString(runID) {
+func validateRunID(id string) error {
+	if !runid.IsValid(id) {
 		return ErrInvalidRunID
 	}
 	return nil
@@ -152,6 +149,9 @@ func (s *Store) List(last int) ([]*RunResult, error) {
 // Returns the number of files removed. If the directory has <= keep entries, no files
 // are removed. If the directory doesn't exist, returns (0, nil).
 func (s *Store) Prune(keep int) (int, error) {
+	if keep <= 0 {
+		return 0, nil
+	}
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -164,7 +164,7 @@ func (s *Store) Prune(keep int) (int, error) {
 	for _, e := range entries {
 		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
 			id := strings.TrimSuffix(e.Name(), ".json")
-			if runIDPattern.MatchString(id) {
+			if runid.IsValid(id) {
 				ids = append(ids, id)
 			}
 		}

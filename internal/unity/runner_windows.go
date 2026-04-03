@@ -4,6 +4,7 @@ package unity
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"syscall"
 )
@@ -21,7 +22,15 @@ func setSysProcAttr(cmd *exec.Cmd) {
 			return nil
 		}
 		// /F = force, /T = terminate child processes (tree kill)
-		return exec.Command("taskkill", "/F", "/T", "/PID",
+		err := exec.Command("taskkill", "/F", "/T", "/PID",
 			fmt.Sprintf("%d", cmd.Process.Pid)).Run()
+		if err != nil {
+			// taskkill fails when the process already exited (most common)
+			// or on access-denied (rare). Log for diagnostics and return
+			// os.ErrProcessDone — Go's exec will still reap via cmd.Wait.
+			fmt.Fprintf(os.Stderr, "taskkill PID %d: %v\n", cmd.Process.Pid, err)
+			return os.ErrProcessDone
+		}
+		return nil
 	}
 }

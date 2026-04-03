@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
-)
 
-// runIDPattern matches run-ID directory names (YYYYMMDD-HHMMSS or YYYYMMDD-HHMMSS-xxxxxxxx).
-var runIDPattern = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}(-[0-9a-f]{8})?$`)
+	"github.com/Kubonsang/testplay-runner/internal/runid"
+)
 
 // Store manages the per-run artifact directory tree.
 // Phase B layout:
@@ -149,6 +147,9 @@ func atomicWrite(finalPath string, data []byte) error {
 // Prune removes the oldest run directories, keeping the most recent `keep`.
 // Returns the number of directories removed. Non-existent root returns (0, nil).
 func (s *Store) Prune(keep int) (int, error) {
+	if keep <= 0 {
+		return 0, nil
+	}
 	entries, err := os.ReadDir(s.root)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -159,7 +160,7 @@ func (s *Store) Prune(keep int) (int, error) {
 
 	var dirs []string
 	for _, e := range entries {
-		if e.IsDir() && runIDPattern.MatchString(e.Name()) {
+		if e.IsDir() && runid.IsValid(e.Name()) {
 			dirs = append(dirs, e.Name())
 		}
 	}
