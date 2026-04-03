@@ -148,6 +148,8 @@ func exitCodeLabel(code int) string {
 		return "permission error"
 	case 8:
 		return "interrupted"
+	case 9:
+		return "runner system error"
 	default:
 		return "unknown"
 	}

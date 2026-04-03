@@ -181,6 +181,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	result.ExitCode = exitCode
 
 	var warnings []string
+	var hasSystemError bool
 
 	// Regression comparison.
 	if req.CompareRun != "" {
@@ -222,12 +223,14 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	// Persist to history store.
 	if err := s.Store.Save(runID, result); err != nil {
 		warnings = append(warnings, fmt.Sprintf("result not saved: %v", err))
+		hasSystemError = true
 	}
 
 	// Write summary.json to artifact dir.
 	summary := buildSummary(runID, result, exitCode)
 	if err := s.Artifacts.SaveSummary(runID, summary); err != nil {
 		warnings = append(warnings, fmt.Sprintf("summary not written: %v", err))
+		hasSystemError = true
 	}
 
 	// Write manifest.json.
@@ -244,6 +247,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	}
 	if err := s.Artifacts.SaveManifest(runID, manifest); err != nil {
 		warnings = append(warnings, fmt.Sprintf("manifest not written: %v", err))
+		hasSystemError = true
 	}
 
 	// Write Library cache back on successful runs (exit 0 or 3).
@@ -252,6 +256,13 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		if cacheErr := ws.UpdateLibraryCache(ctx); cacheErr != nil {
 			warnings = append(warnings, fmt.Sprintf("library cache not updated: %v", cacheErr))
 		}
+	}
+
+	// Override exit code for runner infrastructure failures.
+	// This distinguishes "tests passed but results lost" (exit 9)
+	// from "tests actually passed" (exit 0).
+	if hasSystemError {
+		exitCode = 9
 	}
 
 	return Response{

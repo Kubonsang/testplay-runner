@@ -233,7 +233,7 @@ func TestRunCmd_FilterForwarded(t *testing.T) {
 	}
 }
 
-func TestRunCmd_SaveFailure_IncludesWarning(t *testing.T) {
+func TestRunCmd_SaveFailure_ReturnsExit9WithWarning(t *testing.T) {
 	dir := t.TempDir()
 	xmlData := mustReadXMLFixture(t, "../../internal/parser/testdata/passing.xml")
 	fake := &fakeCmdRunner{resultsXML: xmlData, exitCode: 0}
@@ -256,9 +256,9 @@ func TestRunCmd_SaveFailure_IncludesWarning(t *testing.T) {
 		opts:        RunCmdOptions{},
 	})
 
-	// Exit code must not change due to save failure
-	if code != 0 {
-		t.Errorf("expected exit 0 (all tests passed), got %d\noutput: %s", code, buf.String())
+	// Exit code must be 9 (runner system error) when save fails
+	if code != 9 {
+		t.Errorf("expected exit 9 (runner system error), got %d\noutput: %s", code, buf.String())
 	}
 
 	var out map[string]any

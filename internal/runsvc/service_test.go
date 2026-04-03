@@ -634,7 +634,7 @@ func TestService_ShadowPrepareFailure_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestService_SaveFailure_ReturnsWarning(t *testing.T) {
+func TestService_SaveFailure_ReturnsExit9(t *testing.T) {
 	cfg, dir := baseConfig(t)
 	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
 	fake := &fakeRunner{resultsXML: xmlData}
@@ -650,11 +650,90 @@ func TestService_SaveFailure_ReturnsWarning(t *testing.T) {
 	}
 
 	resp, _ := svc.Run(context.Background(), runsvc.Request{Config: cfg})
-	if resp.ExitCode != 0 {
-		t.Errorf("save failure must not change exit code, got %d", resp.ExitCode)
+	if resp.ExitCode != 9 {
+		t.Errorf("save failure must return exit 9, got %d", resp.ExitCode)
 	}
 	if len(resp.Warnings) == 0 {
 		t.Error("expected at least one warning when save fails")
+	}
+}
+
+func TestService_ArtifactWriteFailure_ReturnsExit9(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
+	artifactRoot := filepath.Join(dir, ".testplay", "runs")
+
+	// Use a runnerFunc that makes the run directory read-only while Unity is
+	// "running". This happens after PrepareRunDir+OpenRunLogs (which need write
+	// access) but before SaveSummary/SaveManifest, so only the artifact write
+	// paths fail. The result store remains valid.
+	runner := runnerFunc(func(_ context.Context, args []string, stdout, stderr io.Writer) (int, error) {
+		// Write the fake XML to the results file so parsing succeeds.
+		for i, a := range args {
+			if a == "-testResults" && i+1 < len(args) {
+				_ = os.WriteFile(args[i+1], xmlData, 0644)
+			}
+		}
+		// Make the entire artifact root and all subdirs read-only so that
+		// the subsequent atomicWrite calls in SaveSummary/SaveManifest fail.
+		entries, _ := os.ReadDir(artifactRoot)
+		for _, e := range entries {
+			runDirPath := filepath.Join(artifactRoot, e.Name())
+			if err := os.Chmod(runDirPath, 0555); err == nil {
+				t.Cleanup(func() { os.Chmod(runDirPath, 0755) })
+			}
+		}
+		return 0, nil
+	})
+
+	svc := &runsvc.Service{
+		Runner:    runner,
+		Store:     history.NewStore(cfg.ResultDir),
+		Artifacts: artifacts.NewStore(artifactRoot),
+		Clock:     func() time.Time { return time.Now() },
+	}
+
+	resp, _ := svc.Run(context.Background(), runsvc.Request{Config: cfg})
+	if resp.ExitCode != 9 {
+		t.Errorf("artifact write failure must return exit 9, got %d", resp.ExitCode)
+	}
+
+	// Verify warnings mention artifact-related failures
+	hasArtifactWarning := false
+	for _, w := range resp.Warnings {
+		if strings.Contains(w, "summary not written") || strings.Contains(w, "manifest not written") {
+			hasArtifactWarning = true
+			break
+		}
+	}
+	if !hasArtifactWarning {
+		t.Errorf("expected artifact-related warning, got: %v", resp.Warnings)
+	}
+}
+
+func TestService_CacheWarning_DoesNotTriggerExit9(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+	svc := &runsvc.Service{
+		Runner:       fake,
+		Store:        history.NewStore(cfg.ResultDir),
+		Artifacts:    artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
+		StatusWriter: status.NewWriter(filepath.Join(dir, "status.json")),
+		Clock:        func() time.Time { return time.Now() },
+	}
+	resp, err := svc.Run(context.Background(), runsvc.Request{
+		Config:     cfg,
+		CompareRun: "99999999-999999-deadbeef",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.ExitCode == 9 {
+		t.Error("compare-run warning must not trigger exit 9")
+	}
+	if len(resp.Warnings) == 0 {
+		t.Error("expected warning for missing compare-run")
 	}
 }
 
