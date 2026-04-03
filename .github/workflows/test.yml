@@ -3,6 +3,7 @@ name: Go Tests
 on:
   push:
     branches: ["**"]
+    tags-ignore: ["v*"]
   pull_request:
     branches: ["**"]
 

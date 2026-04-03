@@ -62,6 +62,9 @@ func runInit(w io.Writer, deps initDeps) int {
 			"total_ms": 300000,
 		},
 		"result_dir": ".testplay/results",
+		"retention": map[string]any{
+			"max_runs": 30,
+		},
 	}
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
