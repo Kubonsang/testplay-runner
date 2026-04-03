@@ -127,7 +127,7 @@
   4. 음수 타임아웃 설정 시 exit 5 (config error)로 거부될 것
   5. `testplay list` 출력에 `[TestCase]` 테스트가 포함될 것
 
-## 🟠 v0.6.0-beta (The Network Ready)
+## ✅ v0.6.0-beta (The Network Ready) — shipped 2026-04-03
 **테마:** 시나리오 데이터 주입 + 운용 안전성 보강 + AI 디버깅 가속
 
 - **목표:** 네트워크 협력 테스트의 필수 전제인 인스턴스별 환경 설정 주입을 확보하고, 장기 운용 시 자원 누적 문제를 해결하며, AI 에이전트의 실패 분석 속도를 개선
@@ -162,11 +162,18 @@
   - 구현 시 두 전략의 트레이드오프를 평가 후 결정; 정확도를 위해 비계약 소스에 의존하는 것은 금지
 
 - **릴리즈 게이트:**
-  1. 시나리오 파일의 `env` 필드가 Unity 프로세스의 환경변수로 주입되고, 인스턴스별로 다른 값이 적용될 것
-  2. 보존 정책을 초과하는 과거 실행 결과가 자동으로 정리될 것
-  3. Windows에서도 context 취소 시 Unity 자식 프로세스가 남지 않을 것
-  4. 실패 테스트의 `excerpt` 필드에 NUnit `<message>` + 첫 번째 사용자 코드 프레임이 포함될 것
-  5. `running` 페이즈 전환이 비계약 소스(stdout 텍스트 매칭)에 의존하지 않을 것
+  1. ✅ 시나리오 파일의 `env` 필드가 Unity 프로세스의 환경변수로 주입되고, 인스턴스별로 다른 값이 적용될 것
+  2. ✅ 보존 정책을 초과하는 과거 실행 결과가 자동으로 정리될 것
+  3. ✅ Windows에서도 context 취소 시 Unity 자식 프로세스가 남지 않을 것
+  4. ✅ 실패 테스트의 `excerpt` 필드에 NUnit `<message>` + 소스 위치가 포함될 것
+  5. ✅ `running` 페이즈 전환이 비계약 소스(stdout 텍스트 매칭)에 의존하지 않을 것 — 전략 B 채택 (misleading phase 제거)
+
+- **추가 하드닝 (릴리즈 후):**
+  - `MergeEnv` Windows 대소문자 무시 (build-tagged `envKeysEqual`)
+  - `Prune` run-ID 형식 필터링 + `keep <= 0` 방어 가드
+  - `retention.max_runs` `*int` 포인터 (nil=기본 30, 0=비활성화)
+  - `internal/runid` 패키지로 정규식 중복 제거
+  - `taskkill` 실패 시 stderr 로그 + `os.ErrProcessDone` 반환
 
 ## 🟤 v0.7.0-RC (Release Candidate)
 **테마:** 배포 파이프라인 및 초기 셋업
