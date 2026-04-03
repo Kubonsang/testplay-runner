@@ -179,14 +179,16 @@ func (s *Store) Prune(keep int) (int, error) {
 
 	toRemove := ids[:len(ids)-keep]
 	removed := 0
+	var errs []error
 	for _, id := range toRemove {
 		path := filepath.Join(s.dir, id+".json")
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return removed, fmt.Errorf("pruning run %s: %w", id, err)
+			errs = append(errs, fmt.Errorf("pruning run %s: %w", id, err))
+			continue
 		}
 		removed++
 	}
-	return removed, nil
+	return removed, errors.Join(errs...)
 }
 
 // Compare returns tests that were NOT "Failed" in prev but ARE "Failed" in curr.

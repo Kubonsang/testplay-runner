@@ -3,6 +3,7 @@ package artifacts
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -173,14 +174,16 @@ func (s *Store) Prune(keep int) (int, error) {
 
 	toRemove := dirs[:len(dirs)-keep]
 	removed := 0
+	var errs []error
 	for _, name := range toRemove {
 		dirPath := filepath.Join(s.root, name)
 		if err := os.RemoveAll(dirPath); err != nil {
-			return removed, fmt.Errorf("pruning artifact dir %s: %w", name, err)
+			errs = append(errs, fmt.Errorf("pruning artifact dir %s: %w", name, err))
+			continue
 		}
 		removed++
 	}
-	return removed, nil
+	return removed, errors.Join(errs...)
 }
 
 // SaveSummary marshals v as indented JSON and writes it to
