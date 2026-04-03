@@ -10,7 +10,7 @@ Agents interact via five commands: `version`, `check`, `list`, `run`, `result`. 
 
 **Supported test platforms:** `"edit_mode"` (default) and `"play_mode"` — set via `test_platform` in `testplay.json`. The platform is passed as `-testPlatform EditMode|PlayMode` to Unity.
 
-**Current version:** `v0.4.2-beta` (main). Library warm cache for shadow workspace. Next: AI contract stabilization (v0.5.0-beta).
+**Current version:** `v0.5.0-beta` (main). AI contract stabilization — parameterized test parsing, host exit code propagation, E2E test infrastructure.
 
 **Ultimate goal:** PlayMode + network environment testing.
 
@@ -29,6 +29,9 @@ go test ./...
 
 # Run a single package's tests
 go test ./internal/parser/...
+
+# Run E2E tests (requires Unity; opt-in)
+UNITY_PATH=/path/to/Unity go test -tags e2e ./e2e/...
 ```
 
 External dependencies are kept minimal — `cobra` for CLI parsing, everything else uses stdlib.
@@ -157,19 +160,20 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 6. `new_failures` in exit 3 is only populated when `--compare-run` is specified; otherwise `null`.
 7. `warnings` (string array) is included only when non-fatal infrastructure issues occur (e.g. result save failed, summary write failed). Absent when no warnings.
 8. `orchestrator_errors` (string array) is included in scenario mode output only when a dependency wait fails (ready timeout or context cancellation). Absent when no orchestration errors occurred.
+9. `parameterized_group` (string) on test entries is present only when the test-case is inside an NUnit `ParameterizedMethod` suite. Absent for non-parameterized tests.
 
 ## Known Limitations & Risks
 
 | Area | Issue | Severity |
 |---|---|---|
-| `list` scanner | Detects `[Test]` and `[UnityTest]` but misses other attributes (`[TestCase]`, `[Theory]`) — list output may be incomplete | Low |
+| `list` scanner | Detects `[Test]` and `[UnityTest]` but misses other attributes (`[TestCase]`, `[Theory]`) — list output may be incomplete. NUnit XML parsing (v0.5.0+) correctly handles parameterized test results with `parameterized_group` field. | Low |
 | Phase detection | `running` phase written after Unity exits, not when tests start — polling agents see misleading phase | Medium |
 | Unimplemented exit codes | Exit 6 (build failure), exit 7 (permission) are documented but never returned | Low |
 | Shadow — `Packages/` not fully isolated | `Packages/` is linked (symlink on macOS/Linux, junction on Windows) rather than copied. If Unity or a package tool writes to the `Packages/` tree during batch execution (e.g. embedded packages), those changes propagate back to the original project. This is best-effort isolation. | Low |
 | Shadow — editor-open detection is best-effort | Shadow mode activates when `Temp/UnityLockfile` exists. A stale lockfile after an unclean Unity exit causes unnecessary shadow overhead. The lockfile check is a heuristic, not a guaranteed signal. | Low |
 | Shadow — Library cold-start per run | `Library/` is seeded from a project-local cache (`.testplay/cache/Library/`) when available. First run after a cache miss still cold-starts. Cache is invalidated when `ProjectVersion.txt` or `Packages/manifest.json` changes. Use `--clear-cache` to force a cold start. In `--scenario` mode, cache seeding (read) works per instance but cache write-back is skipped to avoid concurrent writes; a single-mode run is needed to populate the cache. | Low |
 | Scenario — status polling (per-instance) | `testplay-status-<role>.json` is written for each instance in `--scenario` mode. No scenario-level aggregate status file exists; agents must poll per-role files. | Low |
-| Scenario — host crash error detail | Dependent instances fast-fail immediately on host crash (v0.4.1+), but the error message does not include the host's exit code or failure details. | Low |
+| Scenario — host crash error detail | ~~Resolved in v0.5.0~~ — dependent instance error messages now include the dependency's exit code and failure type (e.g., "exited with exit 2 (compile error)"). | Resolved |
 
 ## Roadmap
 
@@ -213,7 +217,12 @@ Shadow workspace Library/ seeded from project-local cache to eliminate cold-star
 - **Scenario safety** — cache write-back skipped in `--scenario` mode to prevent concurrent write corruption
 - **`--clear-cache` flag** — force cache removal before shadow workspace creation
 
-### Remaining items (v0.5+)
+### v0.5.0-beta ✅ — The AI Contract (shipped)
+AI-facing output contract strengthening.
+- **Host exit code propagation** — fast-fail error messages include dependency exit code and failure label (e.g., "exited with exit 2 (compile error)")
+- **Parameterized test parsing** — `ParameterizedMethod` suite type → `parameterized_group` field on test entries
+- **E2E test infrastructure** — opt-in Unity-based integration tests (`//go:build e2e` + `UNITY_PATH`)
 
-- **Test parsing improvements** — `[TestCase]`, `[Theory]`, `[TestCaseSource]` parameterized test support
+### Remaining items (v0.6+)
+
 - **Network test configuration** — NGO/Mirror harness integration

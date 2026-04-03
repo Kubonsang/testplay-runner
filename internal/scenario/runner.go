@@ -48,6 +48,11 @@ func RunScenario(ctx context.Context, spec *ScenarioFile, run InstanceRunner) (S
 		doneChannels[inst.Role] = make(chan struct{})
 	}
 
+	roleIndex := make(map[string]int, len(spec.Instances))
+	for i, inst := range spec.Instances {
+		roleIndex[inst.Role] = i
+	}
+
 	results := make([]InstanceResult, len(spec.Instances))
 	var (
 		wg       sync.WaitGroup
@@ -71,8 +76,17 @@ func RunScenario(ctx context.Context, spec *ScenarioFile, run InstanceRunner) (S
 					// dependency reached ready phase — proceed
 				case <-depDoneCh:
 					// dependency exited without signaling ready — fast-fail
-					msg := fmt.Sprintf("instance %q: dependency %q exited before reaching phase %q",
-						inst.Role, inst.DependsOn, inst.EffectiveReadyPhase())
+					depIdx := roleIndex[inst.DependsOn]
+					depResult := results[depIdx]
+					var msg string
+					if depResult.Err != nil {
+						msg = fmt.Sprintf("instance %q: dependency %q failed with infrastructure error before reaching phase %q",
+							inst.Role, inst.DependsOn, inst.EffectiveReadyPhase())
+					} else {
+						depExit := depResult.Response.ExitCode
+						msg = fmt.Sprintf("instance %q: dependency %q exited with exit %d (%s) before reaching phase %q",
+							inst.Role, inst.DependsOn, depExit, exitCodeLabel(depExit), inst.EffectiveReadyPhase())
+					}
 					orchMu.Lock()
 					orchErrs = append(orchErrs, msg)
 					orchMu.Unlock()
@@ -111,6 +125,32 @@ func RunScenario(ctx context.Context, spec *ScenarioFile, run InstanceRunner) (S
 		Instances:          results,
 		OrchestratorErrors: orchErrs,
 	}, nil
+}
+
+// exitCodeLabel returns a human-readable label for a testplay exit code.
+func exitCodeLabel(code int) string {
+	switch code {
+	case 0:
+		return "all passed"
+	case 1:
+		return "dependency error"
+	case 2:
+		return "compile error"
+	case 3:
+		return "test failure"
+	case 4:
+		return "timeout"
+	case 5:
+		return "config error"
+	case 6:
+		return "build error"
+	case 7:
+		return "permission error"
+	case 8:
+		return "interrupted"
+	default:
+		return "unknown"
+	}
 }
 
 // aggregateExitCode returns the maximum exit code across all instance results.
