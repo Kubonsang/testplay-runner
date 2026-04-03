@@ -10,7 +10,7 @@ Agents interact via five commands: `version`, `check`, `list`, `run`, `result`. 
 
 **Supported test platforms:** `"edit_mode"` (default) and `"play_mode"` — set via `test_platform` in `testplay.json`. The platform is passed as `-testPlatform EditMode|PlayMode` to Unity.
 
-**Current version:** `v0.5.0-beta` (main). AI contract stabilization — parameterized test parsing, host exit code propagation, E2E test infrastructure.
+**Current version:** `v0.5.1-beta` (main). Hardening — exit 9 for runner system errors, list scanner expansion for parameterized test attributes.
 
 **Ultimate goal:** PlayMode + network environment testing.
 
@@ -80,6 +80,7 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 | 6 | Build failure (missing build target, license) | Fix build environment | ❌ not yet returned |
 | 7 | Permission error | Fix path/permissions | ❌ not yet returned |
 | 8 | Interrupted by signal | Retry without code changes | ✅ |
+| 9 | Runner system error (result/artifact save failed) | Check disk space/permissions; results may be lost, see `warnings` field | ✅ |
 
 **timeout_type values for exit 4:**
 - `"compile"` — compile-only phase exceeded `compile_ms` deadline (two-phase mode)
@@ -166,7 +167,7 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 
 | Area | Issue | Severity |
 |---|---|---|
-| `list` scanner | Detects `[Test]` and `[UnityTest]` but misses other attributes (`[TestCase]`, `[Theory]`) — list output may be incomplete. NUnit XML parsing (v0.5.0+) correctly handles parameterized test results with `parameterized_group` field. | Low |
+| `list` scanner | Detects `[Test]`, `[UnityTest]`, `[TestCase]`, `[TestCaseSource]`, and `[Theory]` but may miss custom test attributes — list output may be incomplete. NUnit XML parsing (v0.5.0+) correctly handles parameterized test results with `parameterized_group` field. | Low |
 | Phase detection | `running` phase written after Unity exits, not when tests start — polling agents see misleading phase | Medium |
 | Unimplemented exit codes | Exit 6 (build failure), exit 7 (permission) are documented but never returned | Low |
 | Shadow — `Packages/` not fully isolated | `Packages/` is linked (symlink on macOS/Linux, junction on Windows) rather than copied. If Unity or a package tool writes to the `Packages/` tree during batch execution (e.g. embedded packages), those changes propagate back to the original project. This is best-effort isolation. | Low |
@@ -222,6 +223,11 @@ AI-facing output contract strengthening.
 - **Host exit code propagation** — fast-fail error messages include dependency exit code and failure label (e.g., "exited with exit 2 (compile error)")
 - **Parameterized test parsing** — `ParameterizedMethod` suite type → `parameterized_group` field on test entries
 - **E2E test infrastructure** — opt-in Unity-based integration tests (`//go:build e2e` + `UNITY_PATH`)
+
+### v0.5.1-beta ✅ — Hardening (shipped)
+Security and contract completeness fixes.
+- **Exit 9 (runner system error)** — result save, summary write, or manifest write failure overrides exit code to 9; distinguishes runner infrastructure failure from test results
+- **List scanner expansion** — `[TestCase]`, `[TestCaseSource]`, `[Theory]` attributes now detected by `testplay list`
 
 ### Remaining items (v0.6+)
 
