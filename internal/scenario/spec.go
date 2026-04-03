@@ -13,11 +13,12 @@ var ErrScenarioInvalid = errors.New("scenario file is invalid")
 
 // InstanceSpec describes a single instance to run in the scenario.
 type InstanceSpec struct {
-	Role           string `json:"role"`
-	Config         string `json:"config"`                      // path to testplay.json, relative to scenario file or absolute
-	DependsOn      string `json:"depends_on,omitempty"`        // role this instance waits for before starting
-	ReadyPhase     string `json:"ready_phase,omitempty"`       // phase to wait for in the depended-on instance
-	ReadyTimeoutMs int    `json:"ready_timeout_ms,omitempty"`  // how long to wait for the dependency (ms)
+	Role           string            `json:"role"`
+	Config         string            `json:"config"`                      // path to testplay.json, relative to scenario file or absolute
+	DependsOn      string            `json:"depends_on,omitempty"`        // role this instance waits for before starting
+	ReadyPhase     string            `json:"ready_phase,omitempty"`       // phase to wait for in the depended-on instance
+	ReadyTimeoutMs int               `json:"ready_timeout_ms,omitempty"`  // how long to wait for the dependency (ms)
+	Env            map[string]string `json:"env,omitempty"`               // extra env vars merged with os.Environ() for this instance
 }
 
 // EffectiveReadyPhase returns the phase string to wait for, defaulting to "compiling".
@@ -99,6 +100,15 @@ func Load(path string) (*ScenarioFile, error) {
 		}
 		if inst.DependsOn == inst.Role {
 			return nil, fmt.Errorf("%w: instances[%d].depends_on %q cannot depend on itself", ErrScenarioInvalid, i, inst.Role)
+		}
+	}
+
+	// Validate env keys.
+	for i, inst := range sf.Instances {
+		for k := range inst.Env {
+			if k == "" {
+				return nil, fmt.Errorf("%w: instances[%d].env contains empty key", ErrScenarioInvalid, i)
+			}
 		}
 	}
 
