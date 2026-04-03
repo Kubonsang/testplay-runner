@@ -161,7 +161,7 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 			}
 
 			svc := &runsvc.Service{
-				Runner:       &unity.ProcessRunner{UnityPath: cfg.UnityPath},
+				Runner:       &unity.ProcessRunner{UnityPath: cfg.UnityPath, Env: instSpec.Env},
 				Store:        history.NewStore(cfg.ResultDir),
 				Artifacts:    artifacts.NewStore(artifactRoot),
 				StatusWriter: sw,
