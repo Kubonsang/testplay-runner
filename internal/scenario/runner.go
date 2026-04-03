@@ -75,26 +75,34 @@ func RunScenario(ctx context.Context, spec *ScenarioFile, run InstanceRunner) (S
 				case <-depReadyCh:
 					// dependency reached ready phase — proceed
 				case <-depDoneCh:
-					// dependency exited without signaling ready — fast-fail
-					depIdx := roleIndex[inst.DependsOn]
-					depResult := results[depIdx]
-					var msg string
-					if depResult.Err != nil {
-						msg = fmt.Sprintf("instance %q: dependency %q failed with infrastructure error before reaching phase %q",
-							inst.Role, inst.DependsOn, inst.EffectiveReadyPhase())
-					} else {
-						depExit := depResult.Response.ExitCode
-						msg = fmt.Sprintf("instance %q: dependency %q exited with exit %d (%s) before reaching phase %q",
-							inst.Role, inst.DependsOn, depExit, exitCodeLabel(depExit), inst.EffectiveReadyPhase())
+					// dependency goroutine finished — but it may have signaled
+					// ready before exiting. Go's select picks randomly when
+					// multiple cases are ready, so re-check readyCh.
+					select {
+					case <-depReadyCh:
+						// dependency was ready; proceed normally
+					default:
+						// dependency truly exited without signaling ready — fast-fail
+						depIdx := roleIndex[inst.DependsOn]
+						depResult := results[depIdx]
+						var msg string
+						if depResult.Err != nil {
+							msg = fmt.Sprintf("instance %q: dependency %q failed with infrastructure error before reaching phase %q",
+								inst.Role, inst.DependsOn, inst.EffectiveReadyPhase())
+						} else {
+							depExit := depResult.Response.ExitCode
+							msg = fmt.Sprintf("instance %q: dependency %q exited with exit %d (%s) before reaching phase %q",
+								inst.Role, inst.DependsOn, depExit, exitCodeLabel(depExit), inst.EffectiveReadyPhase())
+						}
+						orchMu.Lock()
+						orchErrs = append(orchErrs, msg)
+						orchMu.Unlock()
+						results[i] = InstanceResult{
+							Role:     inst.Role,
+							Response: runsvc.Response{ExitCode: 4},
+						}
+						return
 					}
-					orchMu.Lock()
-					orchErrs = append(orchErrs, msg)
-					orchMu.Unlock()
-					results[i] = InstanceResult{
-						Role:     inst.Role,
-						Response: runsvc.Response{ExitCode: 4},
-					}
-					return
 				case <-time.After(timeout):
 					msg := fmt.Sprintf("instance %q timed out waiting for %q to reach phase %q (%dms)",
 						inst.Role, inst.DependsOn, inst.EffectiveReadyPhase(), inst.EffectiveReadyTimeoutMs())
