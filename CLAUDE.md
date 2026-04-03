@@ -49,6 +49,7 @@ internal/
   shadow/            # Shadow Workspace — lockfile detection, copy/link, path remap
   artifacts/         # Per-run artifact directory and file management
   config/            # testplay.json loading and validation
+  runid/             # Shared run-ID format validation (regex pattern)
 ```
 
 ## CLI Contract (stdout = JSON only)
