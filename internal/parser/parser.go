@@ -36,6 +36,7 @@ type TestCase struct {
 	Result             string  `json:"result"`
 	Duration           float64 `json:"duration_s"`
 	Message            string  `json:"message,omitempty"`
+	Excerpt            string  `json:"excerpt,omitempty"`
 	File               string  `json:"file,omitempty"`
 	AbsolutePath       string  `json:"absolute_path,omitempty"`
 	Line               int     `json:"line,omitempty"`
@@ -136,6 +137,12 @@ func collectCases(out *[]TestCase, suite xmlTestSuite, paramGroup string) {
 			tc.AbsolutePath = absPath
 			tc.File = absPath // file = absolute_path for now; caller can make relative
 			tc.Line = line
+			// Build excerpt: assertion message + source location for quick scanning.
+			if absPath != "" && line > 0 {
+				tc.Excerpt = fmt.Sprintf("%s (at %s:%d)", tc.Message, filepath.Base(absPath), line)
+			} else {
+				tc.Excerpt = tc.Message
+			}
 		}
 		*out = append(*out, tc)
 	}

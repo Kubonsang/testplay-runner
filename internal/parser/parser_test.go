@@ -241,6 +241,62 @@ func TestParse_ParameterizedMethod_FailedTestHasFileInfo(t *testing.T) {
 	}
 }
 
+func TestParse_FailedTest_HasExcerpt(t *testing.T) {
+	data, _ := os.ReadFile("testdata/one_failure.xml")
+	result, err := parser.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := result.FailedTests()
+	if len(failed) != 1 {
+		t.Fatalf("expected 1 failure, got %d", len(failed))
+	}
+	tc := failed[0]
+	if tc.Excerpt == "" {
+		t.Error("excerpt must not be empty for failed test with file info")
+	}
+	// one_failure.xml: message="Expected 2 but was 3", file=MyTests.cs, line=42
+	want := "Expected 2 but was 3 (at MyTests.cs:42)"
+	if tc.Excerpt != want {
+		t.Errorf("excerpt = %q, want %q", tc.Excerpt, want)
+	}
+}
+
+func TestParse_FailedTest_ExcerptWithoutFileInfo(t *testing.T) {
+	raw := []byte(`<?xml version="1.0" encoding="utf-8"?>
+<test-run id="1" result="Failed" total="1" passed="0" failed="1" skipped="0" duration="0.1">
+  <test-suite type="Assembly" name="Foo.dll" result="Failed">
+    <test-case id="1" name="A.B" fullname="A.B" result="Failed" duration="0.1">
+      <failure>
+        <message>something broke</message>
+        <stack-trace>no file info here at all</stack-trace>
+      </failure>
+    </test-case>
+  </test-suite>
+</test-run>`)
+	result, err := parser.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tc := result.FailedTests()[0]
+	if tc.Excerpt != "something broke" {
+		t.Errorf("excerpt = %q, want %q", tc.Excerpt, "something broke")
+	}
+}
+
+func TestParse_PassingTest_NoExcerpt(t *testing.T) {
+	data, _ := os.ReadFile("testdata/passing.xml")
+	result, err := parser.Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, tc := range result.Tests {
+		if tc.Excerpt != "" {
+			t.Errorf("Tests[%d].Excerpt = %q, want empty for passing test", i, tc.Excerpt)
+		}
+	}
+}
+
 func TestParse_CommaDurationLocale(t *testing.T) {
 	// Unity on Windows with a non-English locale writes "1,5" instead of "1.5".
 	raw := []byte(`<?xml version="1.0" encoding="utf-8"?>
