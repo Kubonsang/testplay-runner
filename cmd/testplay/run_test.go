@@ -748,6 +748,118 @@ func TestRunScenario_OuterContextDeadline_CancelsInstances(t *testing.T) {
 	}
 }
 
+func TestRunScenario_PrunesAfterCompletion(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Create a project directory with the testplay.json config (max_runs = 2).
+	projectDir := filepath.Join(dir, "project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	resultDir := filepath.Join(projectDir, ".testplay", "results")
+	artifactRoot := filepath.Join(projectDir, ".testplay", "runs")
+
+	maxRuns := 2
+	cfgData, _ := json.Marshal(map[string]any{
+		"schema_version": "1",
+		"unity_path":     "/fake/unity",
+		"project_path":   projectDir,
+		"result_dir":     resultDir,
+		"timeout":        map[string]any{"total_ms": 300000},
+		"retention":      map[string]any{"max_runs": maxRuns},
+	})
+	cfgPath := filepath.Join(projectDir, "testplay.json")
+	if err := os.WriteFile(cfgPath, cfgData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pre-populate 4 result files and 4 artifact dirs.
+	if err := os.MkdirAll(resultDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(artifactRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	preExistingIDs := []string{
+		"20260401-100000-aaaaaaaa",
+		"20260401-100001-bbbbbbbb",
+		"20260401-100002-cccccccc",
+		"20260401-100003-dddddddd",
+	}
+	for _, id := range preExistingIDs {
+		// result file
+		if err := os.WriteFile(filepath.Join(resultDir, id+".json"), []byte(`{}`), 0644); err != nil {
+			t.Fatal(err)
+		}
+		// artifact dir
+		if err := os.MkdirAll(filepath.Join(artifactRoot, id), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Write the scenario file referencing the project config.
+	scenarioContent, _ := json.Marshal(map[string]any{
+		"schema_version": "1",
+		"instances": []map[string]any{
+			{"role": "host", "config": cfgPath},
+		},
+	})
+	specPath := filepath.Join(dir, "scenario.json")
+	if err := os.WriteFile(specPath, scenarioContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Inject a fake runner that returns a successful response.
+	fakeRun := func(_ context.Context, inst scenario.InstanceSpec, _ chan<- struct{}) (runsvc.Response, error) {
+		return runsvc.Response{
+			RunID:    "20260401-120000-eeeeffff",
+			ExitCode: 0,
+			Result: &history.RunResult{
+				SchemaVersion: "1",
+				Tests:         []parser.TestCase{},
+				Errors:        []history.CompileError{},
+			},
+		}, nil
+	}
+
+	var buf bytes.Buffer
+	code := runScenario(&buf, specPath, scenarioDeps{run: fakeRun})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput: %s", code, buf.String())
+	}
+
+	// Verify result files: only 2 should remain (pruned from 4).
+	resultEntries, err := os.ReadDir(resultDir)
+	if err != nil {
+		t.Fatalf("cannot read result dir: %v", err)
+	}
+	resultCount := 0
+	for _, e := range resultEntries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+			resultCount++
+		}
+	}
+	if resultCount != maxRuns {
+		t.Errorf("expected %d result files after prune, got %d", maxRuns, resultCount)
+	}
+
+	// Verify artifact dirs: only 2 should remain (pruned from 4).
+	artifactEntries, err := os.ReadDir(artifactRoot)
+	if err != nil {
+		t.Fatalf("cannot read artifact root: %v", err)
+	}
+	artifactCount := 0
+	for _, e := range artifactEntries {
+		if e.IsDir() {
+			artifactCount++
+		}
+	}
+	if artifactCount != maxRuns {
+		t.Errorf("expected %d artifact dirs after prune, got %d", maxRuns, artifactCount)
+	}
+}
+
 func TestRunScenario_OrchestratorErrorsInOutput(t *testing.T) {
 	t.Parallel()
 

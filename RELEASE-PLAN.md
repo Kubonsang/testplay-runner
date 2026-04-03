@@ -1,6 +1,6 @@
 # 📈 testplay Release Plan & Version History
 
-**현재 버전:** `v0.6.0-beta`
+**현재 버전:** `v0.7.0-rc`
 **목표:** 단순한 로컬 테스트 래퍼를 넘어, AI 에이전트에 최적화된 시나리오 기반 멀티 인스턴스 러너로 단계적으로 확장
 
 > 이 문서는 확정 약속이 아니라, 베타 진행 상황에 따라 조정될 수 있는 릴리즈 계획을 정리한 것입니다.  
@@ -175,15 +175,16 @@
   - `internal/runid` 패키지로 정규식 중복 제거
   - `taskkill` 실패 시 stderr 로그 + `os.ErrProcessDone` 반환
 
-## 🟤 v0.7.0-RC (Release Candidate)
+## ✅ v0.7.0-rc (Release Candidate) — shipped 2026-04-03
 **테마:** 배포 파이프라인 및 초기 셋업
 
 - **목표:** 정식 릴리즈를 앞두고 사용자 진입 장벽 낮추기 및 DX 향상
 - **포함 기능:**
-  - `testplay init` 명령어 도입
-  - GoReleaser 연동을 통한 Windows/macOS/Linux Pre-built 바이너리 배포 체계 구축
-  - 공식 문서(README, Docs) 전면 개편
-- **릴리즈 게이트:** 설치 경로가 단순해지고, 빈 프로젝트에서도 `init`과 기본 설정만으로 첫 실행 흐름을 재현할 수 있을 것
+  - **`testplay init`** — testplay.json 생성 (Unity 경로 자동 탐색, 기본값 주입, `--force` 덮어쓰기)
+  - **GoReleaser 연동** — `v*` 태그 푸시 시 darwin/linux/windows (amd64+arm64) 바이너리 자동 빌드·배포
+  - **Cross-platform CI** — `go test ./...`를 ubuntu/macos/windows에서 push/PR마다 실행
+  - **시나리오 모드 아티팩트 정리** — 멀티 인스턴스 실행 후에도 retention 정책에 따라 자동 정리; 같은 프로젝트를 공유하는 인스턴스는 중복 정리 방지
+- **릴리즈 게이트:** ✅ 설치 경로가 단순해지고, 빈 프로젝트에서도 `init`과 기본 설정만으로 첫 실행 흐름을 재현할 수 있음
 
 ## 🚀 v1.0.0 (Official Release)
 **테마:** Scenario-Driven Host/Client 멀티 인스턴스 러너

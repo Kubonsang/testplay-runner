@@ -144,9 +144,10 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 	}
 
 	run := deps.run
+	var configs map[string]*config.Config
 	if run == nil {
 		// Pre-load all instance configs for early validation and scenario-level timeout.
-		configs := make(map[string]*config.Config, len(spec.Instances))
+		configs = make(map[string]*config.Config, len(spec.Instances))
 		var totalMs int64
 		for _, inst := range spec.Instances {
 			cfgPath := spec.ConfigPath(inst)
@@ -249,6 +250,45 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 	}
 
 	writeJSON(w, output)
+
+	// Best-effort prune of old results and artifacts for each instance.
+	// Uses configs loaded during the production run path when available; when a
+	// test-injected runner is in use (configs == nil), configs are loaded on demand
+	// (best-effort — load failures are silently skipped).
+	{
+		pruneConfigs := configs
+		if pruneConfigs == nil {
+			pruneConfigs = make(map[string]*config.Config, len(spec.Instances))
+			for _, inst := range spec.Instances {
+				cfgPath := spec.ConfigPath(inst)
+				cfg, loadErr := config.Load(cfgPath)
+				if loadErr != nil {
+					continue
+				}
+				if valErr := cfg.Validate(false); valErr != nil {
+					continue
+				}
+				pruneConfigs[inst.Role] = cfg
+			}
+		}
+		seen := make(map[string]struct{})
+		for _, inst := range spec.Instances {
+			cfg := pruneConfigs[inst.Role]
+			if cfg == nil || cfg.Retention.MaxRuns == nil || *cfg.Retention.MaxRuns <= 0 {
+				continue
+			}
+			maxRuns := *cfg.Retention.MaxRuns
+			artifactRoot := filepath.Join(cfg.ProjectPath, ".testplay", "runs")
+			key := cfg.ResultDir + "|" + artifactRoot
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			_, _ = history.NewStore(cfg.ResultDir).Prune(maxRuns)
+			_, _ = artifacts.NewStore(artifactRoot).Prune(maxRuns)
+		}
+	}
+
 	return scenarioResult.ExitCode
 }
 
