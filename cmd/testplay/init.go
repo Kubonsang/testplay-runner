@@ -38,10 +38,19 @@ func runInit(w io.Writer, deps initDeps) int {
 		unityPath = lookup("UNITY_PATH")
 	}
 
-	// Default test platform
+	// Default and validate test platform
 	testPlatform := deps.testPlatform
 	if testPlatform == "" {
 		testPlatform = "edit_mode"
+	}
+	switch testPlatform {
+	case "edit_mode", "play_mode":
+		// valid
+	default:
+		writeJSON(w, map[string]any{
+			"error": fmt.Sprintf("invalid test_platform %q: must be \"edit_mode\" or \"play_mode\"", testPlatform),
+		})
+		return 5
 	}
 
 	cfg := map[string]any{

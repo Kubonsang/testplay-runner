@@ -178,3 +178,20 @@ func TestInitCmd_TestPlatformFlag(t *testing.T) {
 		t.Errorf("expected test_platform play_mode, got %v", cfg["test_platform"])
 	}
 }
+
+func TestInitCmd_InvalidTestPlatform_Exit5(t *testing.T) {
+	dir := t.TempDir()
+	outPath := filepath.Join(dir, "testplay.json")
+
+	var buf bytes.Buffer
+	code := runInit(&buf, initDeps{
+		unityPath:    "/fake/unity",
+		projectDir:   dir,
+		outputPath:   outPath,
+		testPlatform: "invalid_mode",
+		fileExists:   func(string) bool { return false },
+	})
+	if code != 5 {
+		t.Errorf("expected exit 5 for invalid test_platform, got %d", code)
+	}
+}
