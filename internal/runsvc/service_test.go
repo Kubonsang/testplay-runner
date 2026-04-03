@@ -711,7 +711,7 @@ func TestService_ArtifactWriteFailure_ReturnsExit9(t *testing.T) {
 	}
 }
 
-func TestService_CacheWarning_DoesNotTriggerExit9(t *testing.T) {
+func TestService_CompareRunWarning_DoesNotTriggerExit9(t *testing.T) {
 	cfg, dir := baseConfig(t)
 	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
 	fake := &fakeRunner{resultsXML: xmlData}
