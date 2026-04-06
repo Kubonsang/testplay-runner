@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -602,6 +603,9 @@ func TestService_UsesSourceProjectPath_WhenNotLocked(t *testing.T) {
 }
 
 func TestService_ShadowPrepareFailure_ReturnsError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os.Chmod(0000) does not prevent reads on Windows/NTFS")
+	}
 	// Trigger shadow mode via UnityLockfile, then cause shadow.Prepare to fail
 	// by making Assets/ unreadable so copyDir returns an error.
 	projectDir := t.TempDir()
@@ -665,14 +669,10 @@ func TestService_ArtifactWriteFailure_ReturnsExit9(t *testing.T) {
 	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
 	artifactRoot := filepath.Join(dir, ".testplay", "runs")
 
-	// Use a runnerFunc that makes the run directory read-only while Unity is
-	// "running". This happens after PrepareRunDir+OpenRunLogs (which need write
-	// access) but before SaveSummary/SaveManifest, so only the artifact write
-	// paths fail. The result store remains valid.
-	//
-	// On Windows, os.Chmod(0555) does not prevent writes, so we remove the
-	// run directory entirely — SaveSummary/SaveManifest will fail when the
-	// target directory no longer exists.
+	// Use a runnerFunc that blocks artifact writes while keeping results.xml
+	// readable. After writing the XML, we create directories at the paths
+	// where summary.json and manifest.json will be written. os.Rename cannot
+	// overwrite a directory with a file on any OS, so atomicWrite fails.
 	runner := runnerFunc(func(_ context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 		// Write the fake XML to the results file so parsing succeeds.
 		for i, a := range args {
@@ -680,11 +680,13 @@ func TestService_ArtifactWriteFailure_ReturnsExit9(t *testing.T) {
 				_ = os.WriteFile(args[i+1], xmlData, 0644)
 			}
 		}
-		// Remove artifact subdirs so that SaveSummary/SaveManifest fail.
+		// Create directories at summary.json/manifest.json paths to block
+		// atomicWrite's rename. Works on all platforms.
 		entries, _ := os.ReadDir(artifactRoot)
 		for _, e := range entries {
-			runDirPath := filepath.Join(artifactRoot, e.Name())
-			_ = os.RemoveAll(runDirPath)
+			runDir := filepath.Join(artifactRoot, e.Name())
+			_ = os.MkdirAll(filepath.Join(runDir, "summary.json", "blocker"), 0755)
+			_ = os.MkdirAll(filepath.Join(runDir, "manifest.json", "blocker"), 0755)
 		}
 		return 0, nil
 	})

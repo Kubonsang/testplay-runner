@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -312,7 +313,7 @@ func TestCopyDir_PreservesExecutableBit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("shadow file missing: %v", err)
 	}
-	if info.Mode()&0111 == 0 {
+	if runtime.GOOS != "windows" && info.Mode()&0111 == 0 {
 		t.Errorf("executable bit lost in shadow copy: mode %v", info.Mode())
 	}
 }
@@ -387,6 +388,9 @@ func TestPrepare_RespectsContextCancellation(t *testing.T) {
 }
 
 func TestPrepare_CleansUpOnFirstCreateFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os.Chmod(0000) does not prevent reads on Windows/NTFS")
+	}
 	src := makeProject(t)
 	// Make ProjectSettings/ unreadable so copyDir fails on the second iteration.
 	psDir := filepath.Join(src, "ProjectSettings")
@@ -415,6 +419,9 @@ func TestPrepare_CleansUpOnFirstCreateFailure(t *testing.T) {
 }
 
 func TestPrepare_RollsBackOnFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("os.Chmod(0000) does not prevent reads on Windows/NTFS")
+	}
 	src := makeProject(t)
 
 	// With per-run isolation (unique runID per invocation), all Prepare calls
