@@ -10,7 +10,7 @@ Agents interact via six commands: `version`, `check`, `list`, `run`, `result`, `
 
 **Supported test platforms:** `"edit_mode"` (default) and `"play_mode"` — set via `test_platform` in `testplay.json`. The platform is passed as `-testPlatform EditMode|PlayMode` to Unity.
 
-**Current version:** `v0.7.0-rc` (main). Release candidate — `testplay init` onboarding, GoReleaser pre-built binaries, cross-platform CI, scenario-mode artifact retention.
+**Current version:** `v0.7.1` (main). Stable release — `testplay init` onboarding, GoReleaser pre-built binaries, cross-platform CI, scenario-mode artifact retention, dependency ready/done race fix.
 
 **Ultimate goal:** PlayMode + network environment testing.
 
