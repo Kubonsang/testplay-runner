@@ -4,22 +4,32 @@ package shadow
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
-// linkPackages creates a Directory Junction at dst pointing to src.
-// Junctions do not require elevated privileges on Windows (unlike symlinks).
+// linkPackages creates a directory link at dst pointing to src.
 //
-// The mklink command is passed as a single string argument to "cmd /c" rather
-// than as separate tokens. When Go passes individual arguments containing
-// spaces, cmd.exe strips the quotes it receives and misparses the paths.
-// Embedding the full command in one quoted string bypasses that behaviour.
-//
-// CombinedOutput is used instead of Run so that cmd.exe's error message
-// (written to stdout by mklink) is included in the returned error, making
-// Windows-specific failures diagnosable without a separate log capture.
+// Strategy:
+//  1. Try os.Symlink first — works when Developer Mode is enabled or the
+//     process has SeCreateSymbolicLinkPrivilege (e.g. GitHub Actions runners).
+//  2. Fall back to mklink /J (directory junction) which does not require
+//     elevated privileges. Paths are resolved via filepath.EvalSymlinks to
+//     expand 8.3 short names (e.g. RUNNER~1) that mklink /J may reject.
 func linkPackages(src, dst string) error {
+	if err := os.Symlink(src, dst); err == nil {
+		return nil
+	}
+	// Resolve 8.3 short names in src (must exist).
+	if long, err := filepath.EvalSymlinks(src); err == nil {
+		src = long
+	}
+	// Resolve 8.3 short names in dst's parent (dst itself does not exist yet).
+	if long, err := filepath.EvalSymlinks(filepath.Dir(dst)); err == nil {
+		dst = filepath.Join(long, filepath.Base(dst))
+	}
 	cmd := exec.Command("cmd", "/c", fmt.Sprintf(`mklink /J "%s" "%s"`, dst, src))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("mklink /J %q %q: %w: %s", dst, src, err, strings.TrimSpace(string(out)))

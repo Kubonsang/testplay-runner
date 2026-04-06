@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/Kubonsang/testplay-runner/internal/shadow"
@@ -80,7 +81,7 @@ func TestParallelCopy_PreservesFileMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("missing file: %v", err)
 	}
-	if info.Mode()&0111 == 0 {
+	if runtime.GOOS != "windows" && info.Mode()&0111 == 0 {
 		t.Errorf("executable bit lost: mode %v", info.Mode())
 	}
 }

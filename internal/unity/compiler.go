@@ -35,7 +35,7 @@ func ParseCompileErrorsWithProject(stderr []byte, projectPath string) []history.
 
 		absPath := file
 		if projectPath != "" {
-			absPath = filepath.Join(projectPath, filepath.FromSlash(file))
+			absPath = filepath.ToSlash(filepath.Join(projectPath, filepath.FromSlash(file)))
 		}
 
 		errs = append(errs, history.CompileError{

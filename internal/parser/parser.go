@@ -159,7 +159,7 @@ func MakeRelative(projectPath, absPath string) string {
 	if strings.HasPrefix(rel, "..") {
 		return absPath
 	}
-	return rel
+	return filepath.ToSlash(rel)
 }
 
 // parseDuration parses an NUnit duration string to float64.

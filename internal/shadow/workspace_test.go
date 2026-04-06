@@ -140,11 +140,11 @@ func TestRemapPaths_TestAndErrorPaths(t *testing.T) {
 	}
 	ws.RemapPaths(result)
 
-	wantTest := filepath.Join(src, "Assets", "Tests", "Player.cs")
+	wantTest := filepath.ToSlash(filepath.Join(src, "Assets", "Tests", "Player.cs"))
 	if result.Tests[0].AbsolutePath != wantTest {
 		t.Errorf("test path: got %q, want %q", result.Tests[0].AbsolutePath, wantTest)
 	}
-	wantErr := filepath.Join(src, "Assets", "Scripts", "Bad.cs")
+	wantErr := filepath.ToSlash(filepath.Join(src, "Assets", "Scripts", "Bad.cs"))
 	if result.Errors[0].AbsolutePath != wantErr {
 		t.Errorf("error path: got %q, want %q", result.Errors[0].AbsolutePath, wantErr)
 	}
@@ -159,7 +159,7 @@ func TestRemapPaths_NoopWhenNoShadowPaths(t *testing.T) {
 		},
 	}
 	ws.RemapPaths(result)
-	if result.Tests[0].AbsolutePath != filepath.Join(src, "Assets", "Tests", "Player.cs") {
+	if result.Tests[0].AbsolutePath != filepath.ToSlash(filepath.Join(src, "Assets", "Tests", "Player.cs")) {
 		t.Error("path was unexpectedly modified")
 	}
 }
@@ -176,7 +176,7 @@ func TestRemapPaths_NewFailurePaths(t *testing.T) {
 		},
 	}
 	ws.RemapPaths(result)
-	want := filepath.Join(src, "Assets", "Tests", "NewTest.cs")
+	want := filepath.ToSlash(filepath.Join(src, "Assets", "Tests", "NewTest.cs"))
 	if result.NewFailures[0].AbsolutePath != want {
 		t.Errorf("new_failures path: got %q, want %q", result.NewFailures[0].AbsolutePath, want)
 	}
@@ -235,7 +235,7 @@ func TestRemapPaths_MessageFieldReplaced(t *testing.T) {
 		SourcePath: src,
 		ShadowPath: filepath.Join(src, ".testplay-shadow"),
 	}
-	shadowMsg := "error in file " + filepath.Join(ws.ShadowPath, "Assets", "Scripts", "Foo.cs") + " at line 5"
+	shadowMsg := "error in file " + filepath.ToSlash(filepath.Join(ws.ShadowPath, "Assets", "Scripts", "Foo.cs")) + " at line 5"
 	result := &history.RunResult{
 		Tests: []parser.TestCase{
 			{
@@ -252,7 +252,7 @@ func TestRemapPaths_MessageFieldReplaced(t *testing.T) {
 	}
 	ws.RemapPaths(result)
 
-	wantMsg := "error in file " + filepath.Join(src, "Assets", "Scripts", "Foo.cs") + " at line 5"
+	wantMsg := "error in file " + filepath.ToSlash(filepath.Join(src, "Assets", "Scripts", "Foo.cs")) + " at line 5"
 	if result.Tests[0].Message != wantMsg {
 		t.Errorf("test Message: got %q, want %q", result.Tests[0].Message, wantMsg)
 	}

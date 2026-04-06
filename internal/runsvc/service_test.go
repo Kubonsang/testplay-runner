@@ -639,8 +639,10 @@ func TestService_SaveFailure_ReturnsExit9(t *testing.T) {
 	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
 	fake := &fakeRunner{resultsXML: xmlData}
 
-	// Point result dir at a read-only path to force save error
-	cfg.ResultDir = "/dev/null/impossible"
+	// Point result dir at a path inside a file to force save error on all OSes.
+	blocker := filepath.Join(dir, "blocker")
+	_ = os.WriteFile(blocker, []byte("x"), 0644)
+	cfg.ResultDir = filepath.Join(blocker, "impossible")
 
 	svc := &runsvc.Service{
 		Runner:    fake,
@@ -667,6 +669,10 @@ func TestService_ArtifactWriteFailure_ReturnsExit9(t *testing.T) {
 	// "running". This happens after PrepareRunDir+OpenRunLogs (which need write
 	// access) but before SaveSummary/SaveManifest, so only the artifact write
 	// paths fail. The result store remains valid.
+	//
+	// On Windows, os.Chmod(0555) does not prevent writes, so we remove the
+	// run directory entirely — SaveSummary/SaveManifest will fail when the
+	// target directory no longer exists.
 	runner := runnerFunc(func(_ context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 		// Write the fake XML to the results file so parsing succeeds.
 		for i, a := range args {
@@ -674,14 +680,11 @@ func TestService_ArtifactWriteFailure_ReturnsExit9(t *testing.T) {
 				_ = os.WriteFile(args[i+1], xmlData, 0644)
 			}
 		}
-		// Make the entire artifact root and all subdirs read-only so that
-		// the subsequent atomicWrite calls in SaveSummary/SaveManifest fail.
+		// Remove artifact subdirs so that SaveSummary/SaveManifest fail.
 		entries, _ := os.ReadDir(artifactRoot)
 		for _, e := range entries {
 			runDirPath := filepath.Join(artifactRoot, e.Name())
-			if err := os.Chmod(runDirPath, 0555); err == nil {
-				t.Cleanup(func() { os.Chmod(runDirPath, 0755) })
-			}
+			_ = os.RemoveAll(runDirPath)
 		}
 		return 0, nil
 	})

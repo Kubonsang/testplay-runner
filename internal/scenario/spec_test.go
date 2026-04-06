@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Kubonsang/testplay-runner/internal/scenario"
@@ -90,7 +91,9 @@ func TestLoad_AbsoluteConfigPath(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	absConfig := filepath.Join(dir, "absolute", "testplay.json")
-	content := `{"schema_version":"1","instances":[{"role":"Host","config":"` + absConfig + `"}]}`
+	// Escape backslashes for valid JSON on Windows.
+	escapedConfig := strings.ReplaceAll(absConfig, `\`, `\\`)
+	content := `{"schema_version":"1","instances":[{"role":"Host","config":"` + escapedConfig + `"}]}`
 	path := filepath.Join(dir, "scenario.json")
 	_ = os.WriteFile(path, []byte(content), 0644)
 

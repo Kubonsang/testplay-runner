@@ -246,13 +246,17 @@ func TestRunCmd_SaveFailure_ReturnsExit9WithWarning(t *testing.T) {
 		Timeout:       config.Timeouts{CompileMs: 120000, TestMs: 30000, TotalMs: 300000},
 	}
 
+	// Create a file so that using it as a directory parent fails on all OSes.
+	blocker := filepath.Join(dir, "blocker")
+	os.WriteFile(blocker, []byte("x"), 0644)
+
 	var buf bytes.Buffer
 	code := runRun(&buf, runDeps{
 		loadConfig:  func(string) (*config.Config, error) { return cfg, nil },
 		runner:      fake,
 		statusPath:  filepath.Join(dir, "status.json"),
-		// Point store at an impossible path to force a save error.
-		resultStore: history.NewStore("/dev/null/impossible"),
+		// Point store at a path inside a file to force a save error.
+		resultStore: history.NewStore(filepath.Join(blocker, "impossible")),
 		opts:        RunCmdOptions{},
 	})
 
