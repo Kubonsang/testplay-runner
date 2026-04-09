@@ -186,6 +186,38 @@
   - **시나리오 모드 아티팩트 정리** — 멀티 인스턴스 실행 후에도 retention 정책에 따라 자동 정리; 같은 프로젝트를 공유하는 인스턴스는 중복 정리 방지
 - **릴리즈 게이트:** ✅ 설치 경로가 단순해지고, 빈 프로젝트에서도 `init`과 기본 설정만으로 첫 실행 흐름을 재현할 수 있음
 
+## 🎯 v0.8.0 (The Honest Contract)
+**테마:** 문서화된 계약과 실제 동작의 일치
+
+- **목표:** README에 솔직하게 기록한 세 가지 한계를 실제로 해소. 에이전트가 `list` 결과를 신뢰하지 못하고, exit code를 오독하며, 진행 상태를 stale하게 읽는 문제를 제거한다.
+- **포함 기능:**
+
+  ### 8-1. `testplay list` — run cache 기반 완전한 목록
+  - `testplay run` 완료 후(exit 0 또는 3), NUnit XML에서 추출한 전체 테스트 목록을 `.testplay/list-cache.json`에 저장
+  - `testplay list`는 cache가 있으면 `complete: true, source: "run_cache"`로 반환; 없으면 `complete: false, source: "static_scan"`으로 정적 스캔 결과 반환
+  - 에이전트는 `complete` 필드 하나로 목록 신뢰도를 즉시 판단 가능
+  - 출력 스키마 변경: `{"schema_version":"1", "complete": true, "source": "run_cache", "cached_run_id": "...", "tests": [...]}`
+  - 시나리오 모드에서는 Library 캐시와 동일한 이유로 cache write-back 건너뜀
+
+  ### 8-2. Exit code 6/7 — 예약에서 실제 반환으로
+  - **Exit 6 구현:** Unity 종료 후 XML 없음 + 컴파일 에러 없음 경로에서 stderr를 패턴 매칭하여 라이선스 오류·빌드 타겟 미설치를 exit 2와 구분. 현재 이 케이스는 exit 2(컴파일 실패)로 잘못 반환되어 에이전트가 소스를 고치려 시도함
+  - **Exit 7 구현:** shadow.Prepare, 결과 디렉토리 생성 등 Unity 실행 이전 파일 시스템 작업에서 `os.ErrPermission`이 확인되면 exit 7 반환. 현재는 exit 1 또는 exit 9로 혼입됨
+  - README와 CLAUDE.md의 exit code 표에서 "reserved, never returned" 표기 제거
+
+  ### 8-3. `testplay-status.json` — `seq` 필드 추가
+  - `status.Writer`가 내부적으로 단조 증가하는 시퀀스 번호를 관리하고, 매 Write 시 `seq` 필드를 자동 주입
+  - 에이전트는 이전 `seq`와 현재 `seq`를 비교해 stale 읽기를 즉시 감지 가능; `updated_at` 파싱 없이도 "아직 변화 없음"을 판단할 수 있음
+  - 출력 스키마 변경: `{"schema_version":"1", "seq": 7, "phase": "running", ...}`
+  - 기존 폴링 에이전트와 완전 하위 호환 (seq 무시하면 동일하게 동작)
+
+- **릴리즈 게이트:**
+  1. `testplay run` 후 `testplay list`가 `complete: true, source: "run_cache"`를 반환할 것
+  2. Unity 라이선스 오류 시 exit 6, Unity 실행 이전 권한 오류 시 exit 7이 반환될 것
+  3. `testplay-status.json`의 모든 쓰기에 `seq`가 포함되고, 호출마다 단조 증가할 것
+  4. 위 세 변경이 기존 에이전트 동작을 깨지 않을 것 (기존 필드 유지, 새 필드만 추가)
+
+> **Note:** SSE 기반 실시간 push는 별도 설계가 필요하며, PlayMode 네트워크 테스트 도입(v1.0 이후) 시점에 함께 설계한다.
+
 ## 🚀 v1.0.0 (Official Release)
 **테마:** Scenario-Driven Host/Client 멀티 인스턴스 러너
 
