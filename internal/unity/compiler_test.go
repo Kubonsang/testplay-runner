@@ -58,3 +58,29 @@ func TestParseCompileErrors_NonErrorLinesIgnored(t *testing.T) {
 		t.Errorf("expected 1 error, got %d", len(errs))
 	}
 }
+
+func TestParseBuildFailure_LicenseErrors(t *testing.T) {
+	cases := []struct {
+		name   string
+		stderr string
+		want   bool
+	}{
+		{"license lowercase", "No valid Unity license found. Please activate Unity.", true},
+		{"license mixed case", "ERROR: No Valid Unity License found", true},
+		{"failed to acquire", "Failed to acquire Unity license", true},
+		{"license prefix", "License: No valid Unity License for this machine.", true},
+		{"build target not installed", "BuildTarget 'Android' is not installed", true},
+		{"module missing", "Module 'Unity.Android.Toolchain' is missing", true},
+		{"normal compile error", "Assets/Foo.cs(1,1): error CS0001: msg", false},
+		{"empty stderr", "", false},
+		{"unrelated output", "Loading project settings...\nDone.", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := unity.ParseBuildFailure([]byte(tc.stderr))
+			if got != tc.want {
+				t.Errorf("ParseBuildFailure(%q) = %v, want %v", tc.stderr, got, tc.want)
+			}
+		})
+	}
+}

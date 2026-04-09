@@ -208,9 +208,18 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 		}, 2
 	}
 
-	// Non-zero exit with no recognisable compile errors (e.g. license failure, bad args).
+	// Non-zero exit with no recognisable compile errors.
 	if exitCode != 0 {
 		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
+		// Distinguish license / build-target failures (exit 6) from generic compile failures (exit 2).
+		if ParseBuildFailure(compileTail.Bytes()) {
+			return &history.RunResult{
+				SchemaVersion: "1",
+				ExitCode:      6,
+				Tests:         []parser.TestCase{},
+				Errors:        []history.CompileError{},
+			}, 6
+		}
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      2,
@@ -354,9 +363,18 @@ func parseResults(opts ExecuteOptions, stderrTail []byte) (*history.RunResult, i
 	// Check for results XML
 	xmlData, xmlErr := os.ReadFile(opts.ResultsFile)
 	if xmlErr != nil {
-		// No XML file — compile failure
+		// No XML file — determine cause from stderr.
 		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
 		compileErrors := ParseCompileErrorsWithProject(stderrTail, opts.ProjectPath)
+		// License or build-target failures produce no XML and no C# errors.
+		if len(compileErrors) == 0 && ParseBuildFailure(stderrTail) {
+			return &history.RunResult{
+				SchemaVersion: "1",
+				ExitCode:      6,
+				Tests:         []parser.TestCase{},
+				Errors:        []history.CompileError{},
+			}, 6
+		}
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      2,

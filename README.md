@@ -172,9 +172,25 @@ Practical guidance:
 testplay list
 ```
 
+After a successful `testplay run` (exit 0 or 3), the complete test list is cached. Subsequent `list` calls return `complete: true` from that cache:
+
 ```json
 {
   "schema_version": "1",
+  "complete": true,
+  "source": "run_cache",
+  "cached_run_id": "20250325-143000-a3f8b2c1",
+  "tests": ["MyTests.PlayerTests.TestJump", "MyTests.PlayerTests.TestRun"]
+}
+```
+
+Before the first successful run, `list` falls back to a static scan:
+
+```json
+{
+  "schema_version": "1",
+  "complete": false,
+  "source": "static_scan",
   "tests": ["MyTests.PlayerTests.TestJump", "MyTests.PlayerTests.TestRun"]
 }
 ```
@@ -328,8 +344,8 @@ Each run gets its own isolated shadow directory, making parallel `testplay run` 
 | 3 | Test failure | Fix test, see `tests[].absolute_path` + `line` |
 | 4 | Timeout | Check `timeout_type` in the JSON result — see table below |
 | 5 | Config error | Fix or create `testplay.json` |
-| 6 | Build failure — **reserved, never returned.** License and build-target failures currently surface as exit 1. | — |
-| 7 | Permission error — **reserved, never returned.** Permission failures currently surface as exit 1 or exit 9. | — |
+| 6 | Build failure (license / build target) | Check Unity license activation and installed build modules |
+| 7 | Permission error (shadow workspace) | Fix permissions on project directory |
 | 8 | Interrupted by signal | SIGINT/SIGTERM received — retry without code changes |
 | 9 | Runner system error | Result/artifact save failed — check disk space/permissions, see `warnings` field |
 
@@ -355,7 +371,7 @@ Example JSON for a compile-phase timeout:
 
 ## Progress Monitoring
 
-**Polling is the only mechanism.** There is no push notification, webhook, or SSE endpoint. Your agent must read `testplay-status.json` on an interval and check `updated_at` to detect stale reads.
+**Polling is the only mechanism.** There is no push notification, webhook, or SSE endpoint. Your agent must read `testplay-status.json` on an interval. Use the `seq` field (increments on every write) to detect whether the file changed since the last read — no need to parse `updated_at` for change detection.
 
 During `testplay run`, poll `testplay-status.json` to track progress:
 
@@ -442,14 +458,11 @@ cleanly through `testplay run`.
 
 These are current gaps, documented honestly. Each has a planned fix.
 
-**`testplay list` is incomplete by design.**
-The static scanner only detects `[Test]`, `[UnityTest]`, `[TestCase]`, `[TestCaseSource]`, and `[Theory]`. Tests using custom attributes or abstract base-class patterns are invisible to it. There is no `complete: true/false` signal in the output — you cannot tell from the JSON alone whether the list is exhaustive. Planned fix: cache the full test list from post-run NUnit XML so subsequent `list` calls return Unity's actual inventory.
-
-**Exit codes 6 and 7 are never returned.**
-Both are documented and reserved but the runner never emits them. A Unity license failure, a missing build target, and a missing Unity binary all currently surface as exit 1 with the same `hint` field. Planned fix: stderr pattern matching for license and build-target errors (exit 6); `os.IsPermission` checks on all file operations (exit 7).
+**`testplay list` static scan may be incomplete.**
+The static scanner only detects `[Test]`, `[UnityTest]`, `[TestCase]`, `[TestCaseSource]`, and `[Theory]`. Tests using custom attributes or abstract base-class patterns are invisible to it. The output includes `complete` and `source` fields so agents can tell whether the list is exhaustive. After the first `testplay run` completes (exit 0 or 3), a run cache is written to `.testplay/cache/list.json` and subsequent `testplay list` calls return `complete: true, source: "run_cache"` with the full inventory from the actual run.
 
 **Progress monitoring requires polling.**
-`testplay-status.json` is the only channel for in-flight status. No SSE, no websocket, no named pipe. An agent that polls too slowly will miss rapid phase transitions; one that polls too fast wastes cycles. Use `updated_at` to detect reads that predate the last write. Planned fix: `seq` field for change detection; optional SSE endpoint when PlayMode network testing is introduced.
+`testplay-status.json` is the only channel for in-flight status. No SSE, no websocket, no named pipe. An agent that polls too slowly will miss rapid phase transitions; one that polls too fast wastes cycles. Use `seq` (increments on every write) to detect whether the file changed since the last read, and `updated_at` as a human-readable timestamp. Planned fix: optional SSE endpoint when PlayMode network testing is introduced.
 
 ## License
 

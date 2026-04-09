@@ -68,3 +68,59 @@ func TestWrite_ContainsSchemaVersion(t *testing.T) {
 		t.Error("status JSON must contain schema_version")
 	}
 }
+
+func TestWrite_SeqStartsAtOne(t *testing.T) {
+	dir := t.TempDir()
+	w := status.NewWriter(filepath.Join(dir, "status.json"))
+	_ = w.Write(status.Status{Phase: status.PhaseCompiling})
+
+	data, _ := os.ReadFile(filepath.Join(dir, "status.json"))
+	var s status.Status
+	if err := json.Unmarshal(data, &s); err != nil {
+		t.Fatalf("not valid JSON: %v", err)
+	}
+	if s.Seq != 1 {
+		t.Errorf("first Write: seq = %d, want 1", s.Seq)
+	}
+}
+
+func TestWrite_SeqIncrementsOnEachWrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "status.json")
+	w := status.NewWriter(path)
+
+	for want := 1; want <= 3; want++ {
+		_ = w.Write(status.Status{Phase: status.PhaseCompiling})
+		data, _ := os.ReadFile(path)
+		var s status.Status
+		if err := json.Unmarshal(data, &s); err != nil {
+			t.Fatalf("write %d: not valid JSON: %v", want, err)
+		}
+		if s.Seq != want {
+			t.Errorf("write %d: seq = %d, want %d", want, s.Seq, want)
+		}
+	}
+}
+
+func TestWrite_NewWriterHasIndependentSeq(t *testing.T) {
+	dir := t.TempDir()
+	w1 := status.NewWriter(filepath.Join(dir, "a.json"))
+	w2 := status.NewWriter(filepath.Join(dir, "b.json"))
+
+	_ = w1.Write(status.Status{Phase: status.PhaseCompiling})
+	_ = w1.Write(status.Status{Phase: status.PhaseCompiling})
+	_ = w2.Write(status.Status{Phase: status.PhaseCompiling})
+
+	read := func(path string) status.Status {
+		data, _ := os.ReadFile(path)
+		var s status.Status
+		_ = json.Unmarshal(data, &s)
+		return s
+	}
+	if got := read(filepath.Join(dir, "a.json")).Seq; got != 2 {
+		t.Errorf("w1 seq = %d, want 2", got)
+	}
+	if got := read(filepath.Join(dir, "b.json")).Seq; got != 1 {
+		t.Errorf("w2 seq = %d, want 1", got)
+	}
+}

@@ -613,7 +613,7 @@ func TestService_ShadowPrepareFailure_ReturnsError(t *testing.T) {
 		_ = os.MkdirAll(filepath.Join(projectDir, d), 0755)
 	}
 	_ = os.WriteFile(filepath.Join(projectDir, "Temp", "UnityLockfile"), []byte{}, 0644)
-	// Make Assets/ unreadable so copyDir fails inside Prepare.
+	// Make Assets/ unreadable so copyDir fails inside Prepare with EPERM.
 	assetsDir := filepath.Join(projectDir, "Assets")
 	if err := os.Chmod(assetsDir, 0000); err != nil {
 		t.Skipf("cannot chmod on this platform: %v", err)
@@ -632,9 +632,12 @@ func TestService_ShadowPrepareFailure_ReturnsError(t *testing.T) {
 		TestPlatform: "edit_mode",
 		Timeout:      config.Timeouts{TotalMs: 5000},
 	}
-	_, err := svc.Run(context.Background(), runsvc.Request{Config: cfg})
+	resp, err := svc.Run(context.Background(), runsvc.Request{Config: cfg})
 	if err == nil {
 		t.Error("expected infrastructure error when shadow workspace cannot be created")
+	}
+	if resp.ExitCode != 7 {
+		t.Errorf("permission error in shadow.Prepare must return exit 7, got %d", resp.ExitCode)
 	}
 }
 

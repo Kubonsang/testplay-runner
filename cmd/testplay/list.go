@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Kubonsang/testplay-runner/internal/config"
+	"github.com/Kubonsang/testplay-runner/internal/listcache"
 )
 
 type listDeps struct {
@@ -17,8 +18,19 @@ type listDeps struct {
 }
 
 func runList(w io.Writer, deps listDeps) int {
-	tests := make([]string, 0)
+	// Try run cache first — produced by `testplay run` after a successful execution.
+	if cache, err := listcache.Read(deps.projectPath); err == nil {
+		writeJSON(w, map[string]any{
+			"tests":         cache.Tests,
+			"complete":      true,
+			"source":        "run_cache",
+			"cached_run_id": cache.CachedRunID,
+		})
+		return 0
+	}
 
+	// Fall back to static scan — may miss custom test attributes.
+	tests := make([]string, 0)
 	err := filepath.WalkDir(deps.projectPath, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip unreadable dirs
@@ -39,14 +51,14 @@ func runList(w io.Writer, deps listDeps) int {
 	})
 	if err != nil {
 		if os.IsNotExist(err) {
-			writeJSON(w, map[string]any{"tests": tests})
+			writeJSON(w, map[string]any{"tests": tests, "complete": false, "source": "static_scan"})
 			return 0
 		}
-		writeJSON(w, map[string]any{"tests": tests, "error": err.Error()})
+		writeJSON(w, map[string]any{"tests": tests, "complete": false, "source": "static_scan", "error": err.Error()})
 		return 1
 	}
 
-	writeJSON(w, map[string]any{"tests": tests})
+	writeJSON(w, map[string]any{"tests": tests, "complete": false, "source": "static_scan"})
 	return 0
 }
 

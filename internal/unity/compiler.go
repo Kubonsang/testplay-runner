@@ -14,6 +14,28 @@ import (
 //	Assets/Foo.cs(42,10): error CS0246: The type 'Bar' could not be found
 var compileErrorRe = regexp.MustCompile(`(?m)^(.+\.cs)\((\d+),(\d+)\): error (CS\d+: .+)$`)
 
+// buildFailurePatterns matches Unity stderr output for license and build-target failures.
+// These produce no results XML and no C# compile errors, so they must be detected
+// separately to avoid misclassifying them as compile failures (exit 2).
+var buildFailurePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)no valid unity license`),
+	regexp.MustCompile(`(?i)failed to acquire.*license`),
+	regexp.MustCompile(`(?i)license:.*no valid`),
+	regexp.MustCompile(`(?i)is not (installed|supported)`), // build target
+	regexp.MustCompile(`(?i)module.*\bmissing\b`),
+}
+
+// ParseBuildFailure reports whether stderr looks like a Unity license or
+// build-target failure rather than a C# compile error.
+func ParseBuildFailure(stderr []byte) bool {
+	for _, re := range buildFailurePatterns {
+		if re.Match(stderr) {
+			return true
+		}
+	}
+	return false
+}
+
 // ParseCompileErrors extracts compile errors from Unity's stderr output.
 func ParseCompileErrors(stderr []byte) []history.CompileError {
 	return ParseCompileErrorsWithProject(stderr, "")

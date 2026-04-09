@@ -715,3 +715,50 @@ func TestExecute_CompileErrorsInStderr_Returns2(t *testing.T) {
 		t.Errorf("expected exit 2 when compile errors in stderr, got %d", code)
 	}
 }
+
+func TestExecute_LicenseFailure_ReturnsExit6(t *testing.T) {
+	// No XML produced, no C# compile errors, but stderr contains license error text.
+	dir := t.TempDir()
+	fake := &fakeRunner{
+		exitCode: 1,
+		stderr:   []byte("No valid Unity license found. Please activate Unity before running."),
+	}
+	sw := status.NewWriter(filepath.Join(dir, "status.json"))
+
+	_, code := unity.Execute(context.Background(), fake, unity.ExecuteOptions{
+		ProjectPath:  dir,
+		ResultsFile:  filepath.Join(dir, "results.xml"),
+		StatusWriter: sw,
+	})
+	if code != 6 {
+		t.Errorf("license error must return exit 6, got %d", code)
+	}
+}
+
+func TestExecute_TwoPhase_LicenseFailure_ReturnsExit6(t *testing.T) {
+	// Two-phase: compile phase exits non-zero with license error, no C# errors.
+	dir := t.TempDir()
+	callCount := 0
+	fake := &fakeRunner{
+		runFn: func(_ context.Context, args []string, _, stderr io.Writer) (int, error) {
+			callCount++
+			_, _ = stderr.Write([]byte("Failed to acquire Unity license"))
+			return 1, nil
+		},
+	}
+	sw := status.NewWriter(filepath.Join(dir, "status.json"))
+
+	_, code := unity.Execute(context.Background(), fake, unity.ExecuteOptions{
+		ProjectPath:  dir,
+		ResultsFile:  filepath.Join(dir, "results.xml"),
+		StatusWriter: sw,
+		CompileMs:    5000,
+		TestMs:       5000,
+	})
+	if code != 6 {
+		t.Errorf("license error in compile phase must return exit 6, got %d", code)
+	}
+	if callCount != 1 {
+		t.Errorf("test phase must not run after license failure, got %d calls", callCount)
+	}
+}

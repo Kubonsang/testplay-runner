@@ -24,6 +24,7 @@ const (
 // Status is written atomically to testplay-status.json during a run.
 type Status struct {
 	SchemaVersion string `json:"schema_version"`
+	Seq           int    `json:"seq"`
 	Phase         Phase  `json:"phase"`
 	RunID         string `json:"run_id,omitempty"`
 	Total         int    `json:"total,omitempty"`
@@ -49,6 +50,7 @@ type WriterInterface interface {
 type Writer struct {
 	path string
 	mu   sync.Mutex
+	seq  int // incremented on every Write; injected as Seq into the Status
 }
 
 // NewWriter creates a Writer targeting path.
@@ -57,12 +59,14 @@ func NewWriter(path string) *Writer {
 }
 
 // Write serializes s to JSON and atomically replaces the target file.
-// It always sets schema_version and updated_at before writing.
+// It always sets schema_version, updated_at, and seq before writing.
 func (w *Writer) Write(s Status) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	w.seq++
 	s.SchemaVersion = "1"
+	s.Seq = w.seq
 	s.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 
 	data, err := json.MarshalIndent(s, "", "  ")

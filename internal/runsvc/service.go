@@ -3,6 +3,7 @@ package runsvc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/Kubonsang/testplay-runner/internal/artifacts"
 	"github.com/Kubonsang/testplay-runner/internal/config"
 	"github.com/Kubonsang/testplay-runner/internal/history"
+	"github.com/Kubonsang/testplay-runner/internal/listcache"
 	"github.com/Kubonsang/testplay-runner/internal/parser"
 	"github.com/Kubonsang/testplay-runner/internal/shadow"
 	"github.com/Kubonsang/testplay-runner/internal/status"
@@ -145,6 +147,9 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		var wsErr error
 		ws, wsErr = shadow.Prepare(ctx, req.Config.ProjectPath, runID, opts)
 		if wsErr != nil {
+			if errors.Is(wsErr, os.ErrPermission) {
+				return Response{ExitCode: 7}, fmt.Errorf("runsvc: prepare shadow workspace: %w", wsErr)
+			}
 			return Response{}, fmt.Errorf("runsvc: prepare shadow workspace: %w", wsErr)
 		}
 		defer func() { _ = ws.Cleanup() }()
@@ -232,6 +237,14 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		if cacheErr := ws.UpdateLibraryCache(ctx); cacheErr != nil {
 			warnings = append(warnings, fmt.Sprintf("library cache not updated: %v", cacheErr))
 		}
+	}
+
+	// Write list cache — persists the full test inventory so subsequent
+	// `testplay list` calls can return complete: true.
+	// Non-fatal: a failure here is a quality-of-life degradation, not a system error.
+	// Skipped in scenario mode (concurrent writes, mixed test sets per instance).
+	if !req.SkipCacheWriteBack && (exitCode == 0 || exitCode == 3) {
+		_ = listcache.Write(req.Config.ProjectPath, runID, result.Tests)
 	}
 
 	// Override exit code for runner infrastructure failures.

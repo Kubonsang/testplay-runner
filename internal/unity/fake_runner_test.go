@@ -14,9 +14,14 @@ type fakeRunner struct {
 	err        error
 	// resultsXML, if non-nil, will be written to the resultsFilePath arg
 	resultsXML []byte
+	// runFn, if non-nil, overrides all other fields and is called directly.
+	runFn func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error)
 }
 
-func (f *fakeRunner) Run(_ context.Context, args []string, stdout, stderr io.Writer) (int, error) {
+func (f *fakeRunner) Run(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
+	if f.runFn != nil {
+		return f.runFn(ctx, args, stdout, stderr)
+	}
 	// Find -testResults arg and write resultsXML to that path
 	for i, a := range args {
 		if a == "-testResults" && i+1 < len(args) && f.resultsXML != nil {

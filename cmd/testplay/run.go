@@ -83,6 +83,9 @@ func runRun(w io.Writer, deps runDeps) int {
 	})
 	if infraErr != nil {
 		writeJSON(w, map[string]any{"schema_version": "1", "error": infraErr.Error()})
+		if resp.ExitCode != 0 {
+			return resp.ExitCode
+		}
 		return 1
 	}
 
