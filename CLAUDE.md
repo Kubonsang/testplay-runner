@@ -109,8 +109,8 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 | 3 | Test failure | Fix test logic, see `tests[].absolute_path` + `line` | ✅ |
 | 4 | Timeout | Check `timeout_type` — `"compile"`, `"test"`, or `"total"` | ✅ |
 | 5 | Config error (testplay.json missing/invalid) | Fix config file | ✅ |
-| 6 | Build failure (missing build target, license) | Fix build environment | ❌ not yet returned |
-| 7 | Permission error | Fix path/permissions | ❌ not yet returned |
+| 6 | Build failure (missing build target, license) | Fix build environment | ❌ reserved, never returned — currently exit 1 |
+| 7 | Permission error | Fix path/permissions | ❌ reserved, never returned — currently exit 1 or exit 9 |
 | 8 | Interrupted by signal | Retry without code changes | ✅ |
 | 9 | Runner system error (result/artifact save failed) | Check disk space/permissions; results may be lost, see `warnings` field | ✅ |
 

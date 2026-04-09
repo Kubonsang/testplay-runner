@@ -19,7 +19,7 @@ Unity's raw CLI is broken for automation: exit code 0 even on compile failure, X
 | Ambiguous timeout | `timeout_type: compile / test / total` in JSON; two-phase execution separates compile and test deadlines |
 | No regression tracking | `--compare-run` populates `new_failures` |
 | Platform path differences | Absolute + relative paths in every response |
-| No test discovery without running | `testplay list` static-scans `[Test]`, `[UnityTest]`, `[TestCase]`, `[TestCaseSource]`, and `[Theory]` attributes |
+| No test discovery without running | `testplay list` static-scans known attributes — incomplete for custom attributes (see Known Limitations) |
 | Unity Editor holds project lock | Shadow Workspace runs tests in `.testplay-shadow/` while editor stays open |
 
 ## Installation
@@ -159,7 +159,14 @@ Exit 0 = ready. Exit 1 = dependency missing (fix per `hint`). Exit 5 = config in
 
 ### `testplay list`
 
-Static scan of `*.cs` files for `[Test]`, `[UnityTest]`, `[TestCase]`, `[TestCaseSource]`, and `[Theory]` attributes. Returns candidate test names without running Unity. The list may be incomplete for custom test attributes.
+Static scan of `*.cs` files for `[Test]`, `[UnityTest]`, `[TestCase]`, `[TestCaseSource]`, and `[Theory]` attributes. Returns candidate test names without running Unity.
+
+**This is a best-effort hint, not a complete inventory.** Custom test attributes (`[NetworkTest]`, `[IntegrationTest]`, project-specific bases, etc.) are silently skipped. The output has no way to tell you what it missed.
+
+Practical guidance:
+- Use `list` to generate `--filter` candidates for tests you already know exist.
+- When full coverage matters, run `testplay run` without `--filter`. Unity discovers all tests itself; `testplay list` does not.
+- A test absent from `list` output may still exist and run.
 
 ```bash
 testplay list
@@ -321,8 +328,8 @@ Each run gets its own isolated shadow directory, making parallel `testplay run` 
 | 3 | Test failure | Fix test, see `tests[].absolute_path` + `line` |
 | 4 | Timeout | Check `timeout_type` in the JSON result — see table below |
 | 5 | Config error | Fix or create `testplay.json` |
-| 6 | Build failure (not yet returned) | Check Unity license / build target |
-| 7 | Permission error (not yet returned) | Fix path permissions |
+| 6 | Build failure — **reserved, never returned.** License and build-target failures currently surface as exit 1. | — |
+| 7 | Permission error — **reserved, never returned.** Permission failures currently surface as exit 1 or exit 9. | — |
 | 8 | Interrupted by signal | SIGINT/SIGTERM received — retry without code changes |
 | 9 | Runner system error | Result/artifact save failed — check disk space/permissions, see `warnings` field |
 
@@ -347,6 +354,8 @@ Example JSON for a compile-phase timeout:
 ```
 
 ## Progress Monitoring
+
+**Polling is the only mechanism.** There is no push notification, webhook, or SSE endpoint. Your agent must read `testplay-status.json` on an interval and check `updated_at` to detect stale reads.
 
 During `testplay run`, poll `testplay-status.json` to track progress:
 
@@ -428,6 +437,19 @@ For a reusable real-project pattern, see
 [`docs/05_v0.2.0_playmode_smoke_example.md`](docs/05_v0.2.0_playmode_smoke_example.md). It shows a
 scene-free PlayMode smoke test that creates its fixture in code and runs
 cleanly through `testplay run`.
+
+## Known Limitations
+
+These are current gaps, documented honestly. Each has a planned fix.
+
+**`testplay list` is incomplete by design.**
+The static scanner only detects `[Test]`, `[UnityTest]`, `[TestCase]`, `[TestCaseSource]`, and `[Theory]`. Tests using custom attributes or abstract base-class patterns are invisible to it. There is no `complete: true/false` signal in the output — you cannot tell from the JSON alone whether the list is exhaustive. Planned fix: cache the full test list from post-run NUnit XML so subsequent `list` calls return Unity's actual inventory.
+
+**Exit codes 6 and 7 are never returned.**
+Both are documented and reserved but the runner never emits them. A Unity license failure, a missing build target, and a missing Unity binary all currently surface as exit 1 with the same `hint` field. Planned fix: stderr pattern matching for license and build-target errors (exit 6); `os.IsPermission` checks on all file operations (exit 7).
+
+**Progress monitoring requires polling.**
+`testplay-status.json` is the only channel for in-flight status. No SSE, no websocket, no named pipe. An agent that polls too slowly will miss rapid phase transitions; one that polls too fast wastes cycles. Use `updated_at` to detect reads that predate the last write. Planned fix: `seq` field for change detection; optional SSE endpoint when PlayMode network testing is introduced.
 
 ## License
 
