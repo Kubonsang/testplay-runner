@@ -99,7 +99,7 @@ testplay version
 ```json
 {
   "schema_version": "1",
-  "version": "v0.7.0-rc"
+  "version": "v0.8.0"
 }
 ```
 

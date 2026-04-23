@@ -10,7 +10,7 @@ Agents interact via six commands: `version`, `check`, `list`, `run`, `result`, `
 
 **Supported test platforms:** `"edit_mode"` (default) and `"play_mode"` — set via `test_platform` in `testplay.json`. The platform is passed as `-testPlatform EditMode|PlayMode` to Unity.
 
-**Current version:** `v0.7.1` (main). Stable release — `testplay init` onboarding, GoReleaser pre-built binaries, cross-platform CI, scenario-mode artifact retention, dependency ready/done race fix.
+**Current version:** `v0.8.0` (main). The Honest Contract — `seq` field in `testplay-status.json` for stale-read detection, exit 6 (Unity license/build-target failure detection), exit 7 (shadow workspace permission errors), `testplay list` run cache (`complete: true, source: "run_cache"` after exit 0/3).
 
 **Ultimate goal:** PlayMode + network environment testing.
 
@@ -109,8 +109,8 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 | 3 | Test failure | Fix test logic, see `tests[].absolute_path` + `line` | ✅ |
 | 4 | Timeout | Check `timeout_type` — `"compile"`, `"test"`, or `"total"` | ✅ |
 | 5 | Config error (testplay.json missing/invalid) | Fix config file | ✅ |
-| 6 | Build failure (missing build target, license) | Fix build environment | ❌ reserved, never returned — currently exit 1 |
-| 7 | Permission error | Fix path/permissions | ❌ reserved, never returned — currently exit 1 or exit 9 |
+| 6 | Build failure (missing build target, license) | Fix build environment (Unity license activation, install build module) | ✅ |
+| 7 | Permission error (shadow workspace) | Fix path/permissions on project directory | ✅ |
 | 8 | Interrupted by signal | Retry without code changes | ✅ |
 | 9 | Runner system error (result/artifact save failed) | Check disk space/permissions; results may be lost, see `warnings` field | ✅ |
 
@@ -209,9 +209,9 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 
 | Area | Issue | Severity |
 |---|---|---|
-| `list` scanner | Detects `[Test]`, `[UnityTest]`, `[TestCase]`, `[TestCaseSource]`, and `[Theory]` but may miss custom test attributes — list output may be incomplete. NUnit XML parsing (v0.5.0+) correctly handles parameterized test results with `parameterized_group` field. | Low |
+| `list` scanner | Static scan detects `[Test]`, `[UnityTest]`, `[TestCase]`, `[TestCaseSource]`, and `[Theory]` but may miss custom attributes. ~~Resolved in v0.8.0~~ — after first successful `testplay run` (exit 0/3), the run cache at `.testplay/cache/list.json` provides the complete inventory; `complete` and `source` fields signal whether the list is exhaustive. | Resolved |
 | Phase detection (single-phase) | `running` phase not emitted in single-phase mode — agents see `compiling → done` only. Two-phase mode emits accurate `compiling → running → done` sequence. | Low |
-| Unimplemented exit codes | Exit 6 (build failure), exit 7 (permission) are documented but never returned | Low |
+| Unimplemented exit codes | ~~Resolved in v0.8.0~~ — exit 6 returned on Unity license/build-target failures (stderr pattern match), exit 7 returned on shadow workspace permission errors (`errors.Is(os.ErrPermission)`). | Resolved |
 | Shadow — `Packages/` not fully isolated | `Packages/` is linked (symlink on macOS/Linux, junction on Windows) rather than copied. If Unity or a package tool writes to the `Packages/` tree during batch execution (e.g. embedded packages), those changes propagate back to the original project. This is best-effort isolation. | Low |
 | Shadow — editor-open detection is best-effort | Shadow mode activates when `Temp/UnityLockfile` exists. A stale lockfile after an unclean Unity exit causes unnecessary shadow overhead. The lockfile check is a heuristic, not a guaranteed signal. | Low |
 | Shadow — Library cold-start per run | `Library/` is seeded from a project-local cache (`.testplay/cache/Library/`) when available. First run after a cache miss still cold-starts. Cache is invalidated when `ProjectVersion.txt` or `Packages/manifest.json` changes. Use `--clear-cache` to force a cold start. In `--scenario` mode, cache seeding (read) works per instance but cache write-back is skipped to avoid concurrent writes; a single-mode run is needed to populate the cache. | Low |
@@ -286,6 +286,14 @@ Production readiness — onboarding and distribution.
 - **GoReleaser** — cross-platform pre-built binaries (darwin/linux/windows, amd64/arm64) published to GitHub Releases on tag push
 - **Cross-platform CI** — `go test ./...` on ubuntu, macos, and windows for every push/PR
 - **Scenario-mode artifact retention** — auto-prune after multi-instance runs, deduplicating shared project paths
+
+### v0.8.0 ✅ — The Honest Contract (shipped)
+Aligns documented contract with actual behavior.
+- **`seq` field in `testplay-status.json`** — `status.Writer` injects a monotonically increasing sequence number on every write; agents can detect stale reads without parsing `updated_at`
+- **Exit 6 — build/license failure detection** — `internal/unity.ParseBuildFailure()` matches Unity license and build-target stderr patterns; returned in both single-phase and two-phase paths when XML is absent and no compile errors are present
+- **Exit 7 — shadow workspace permission errors** — `errors.Is(wsErr, os.ErrPermission)` check in `runsvc.Service.Run` propagates filesystem permission errors as exit 7 instead of bare exit 1
+- **`testplay list` run cache** — `internal/listcache` package writes `.testplay/cache/list.json` after `testplay run` exits 0/3; subsequent `list` calls return `complete: true, source: "run_cache"` with full NUnit-discovered test inventory; static scan fallback now signals `complete: false, source: "static_scan"`
+- **Scenario-mode safety** — list cache write-back skipped when `SkipCacheWriteBack` is set, matching Library cache discipline
 
 ### Remaining items (v1.0+)
 
