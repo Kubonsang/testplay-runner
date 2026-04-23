@@ -218,15 +218,53 @@
 
 > **Note:** SSE 기반 실시간 push는 별도 설계가 필요하며, PlayMode 네트워크 테스트 도입(v1.0 이후) 시점에 함께 설계한다.
 
-## 🚀 v1.0.0 (Official Release)
-**테마:** Scenario-Driven Host/Client 멀티 인스턴스 러너
+## 🎯 v0.9.0 (Network Primitives)
+**테마:** 프레임워크 무관 인스턴스 간 통신 + 크로스 인스턴스 실패 상관관계
 
-- **목표:** AI 바이브 코딩 환경에서 코옵 게임 로직 검증을 1급 시나리오로 다룰 수 있는 기반 확보
+- **목표:** v0.6 시나리오 모드의 단방향 ready 시그널을 양방향 메시지 버스로 확장. NGO/Mirror 어떤 프레임워크를 쓰든 사용자가 직접 host↔client 신호를 주고받을 수 있게 한다.
 - **포함 기능:**
-  - v0.7.0-RC 기반 버그 픽스 및 전체 안정성 보강
-  - Scenario-driven Host/Client 멀티 인스턴스 실행 흐름 정리
-  - 시나리오 결과 통합, 실패 원인 구조화, 기본적인 orchestration 계약 확립
-- **릴리즈 게이트:** 실제 프로젝트 환경에서 반복 실행 가능한 시나리오 테스트가 안정적으로 재현되고, 결과 해석이 일관되게 가능할 것
+
+  ### 9-1. IPC 메시지 버스 (scenario-scoped)
+  - 시나리오 실행 시 `.testplay/ipc/<scenario_run_id>/bus.ndjson` 생성
+  - 각 인스턴스에 환경변수 `TESTPLAY_IPC_BUS=<absolute_path>` 자동 주입
+  - 메시지 형식 (NDJSON): `{"seq": int, "ts": iso8601, "from": role, "to": role|"*", "kind": string, "payload": any}`
+  - Atomic append (`os.OpenFile(O_APPEND|O_WRONLY)`) — 다중 writer 안전
+  - 사용자 Unity 테스트 코드는 이 파일에 직접 줄 추가 (Go 의존성 없음, 어떤 언어에서도 사용 가능)
+
+  ### 9-2. Cross-instance failure correlation
+  - 시나리오 출력 스키마에 인스턴스별 `ipc_messages` 필드 추가
+  - 어느 인스턴스가 실패했을 때, 그 인스턴스가 마지막으로 송수신한 메시지의 `seq`/`kind`를 출력에 포함
+  - 예: `client` 실패 시 → "client received host's seq=3 (kind: ready), then sent seq=4 (kind: connected), then failed at test"
+
+  ### 9-3. `events.ndjson` IPC 통합
+  - 각 인스턴스의 `events.ndjson`에 송수신한 IPC 메시지를 `event_kind: "ipc_send"` / `"ipc_recv"`로 기록
+  - 디버깅 시 한 인스턴스의 타임라인에서 IPC 트래픽까지 한 번에 추적 가능
+
+- **명시적 비목표 (v1.0 이후로 미룸):**
+  - NGO/Mirror 프레임워크 헬퍼는 v0.9 범위 아님 (v1.0)
+  - 실시간 push (SSE/websocket) 아님 — 폴링 + atomic append만
+  - 인스턴스 간 RPC 아님 — 단방향 메시지 (응답이 필요하면 사용자가 두 메시지로 구성)
+
+- **릴리즈 게이트:**
+  1. 시나리오 실행 시 모든 인스턴스에 `TESTPLAY_IPC_BUS` 환경변수가 절대 경로로 주입될 것
+  2. 한 인스턴스에서 NDJSON 줄 append → 다른 인스턴스가 폴링으로 읽기 가능
+  3. 시나리오 출력에 `instances[].ipc_messages` 필드가 송수신 마지막 메시지를 담고 있을 것
+  4. host crash 시 `orchestrator_errors`에 "client saw host's last message: seq=N kind=K"가 포함될 것
+
+## 🚀 v1.0.0 (NGO Harness)
+**테마:** v0.9 primitives 위에 NGO(Netcode for GameObjects) 전용 sugar
+
+- **목표:** 사용자가 NGO 프로젝트에서 boilerplate 없이 host/client 테스트를 작성할 수 있게 한다. 본인 프로젝트(map/Assets)에서 dogfooding.
+- **포함 기능:**
+  - NGO `NetworkManager` 부트스트랩 헬퍼 (Unity C# 패키지로 배포, optional install)
+  - `[NetworkTest]` 어트리뷰트 (host/client 역할별 테스트 분기)
+  - `await Network.WaitForClientConnected()` 등 헬퍼 — 내부적으로 v0.9 IPC 버스 사용
+  - NGO 버전 매트릭스 검증 (Netcode 1.x / 2.x)
+- **릴리즈 게이트:** 본인 NGO 프로젝트에서 멀티플레이어 동기화 테스트가 testplay scenario로 안정적으로 재현될 것 (dogfooding)
+- **명시적 비목표 (v1.x 이후로 미룸):**
+  - Mirror, Photon, FishNet 등 다른 프레임워크 sugar
+  - 스크린샷 기반 진단
+  - SSE 실시간 push
 
 ---
 
@@ -235,9 +273,12 @@
 - **실패 진단 시 스크린샷 캡처**
   - 시스템 자원 최적화(`-nographics`) 원칙과 충돌하므로 v1.0 범위에서 제외
   - 구조화된 텍스트와 스택 트레이스 진단에 우선 집중
-- **특정 네트워크 하네스(NGO, Mirror) 전용 내장 기능**
-  - 코어는 프레임워크 종속 기능보다 시나리오 실행과 오케스트레이션 계층에 집중
-  - 프레임워크 비종속적인 실행 코어를 우선 지향
+- **NGO 외 네트워크 하네스(Mirror, Photon, FishNet) 전용 내장 기능**
+  - v0.9 IPC primitives는 프레임워크 무관, v1.0 NGO sugar는 본인 dogfooding 우선
+  - 추가 프레임워크는 v1.x에서 사용자 수요 확인 후 검토
+- **에디터 attach 모드 (Test Runner API 직접 호출)**
+  - 정체성 락(contract layer ≠ speed layer) 위배 위험
+  - shadow warm-cache 시간 실측 결과가 임계값을 넘을 때만 v1.x에서 재검토
 
 ## 🔮 Post-v1.0 (장기 목표)
 
