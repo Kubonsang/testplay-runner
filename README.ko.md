@@ -1,12 +1,21 @@
 # testplay-runner
 
-**AI 에이전트를 위한 신뢰할 수 있는 Unity 테스트 실행기**
+**Unity의 망가진 테스트 러너를 AI 에이전트용 안정적인 계약 레이어로 감싸는 Go CLI — 명확한 exit code, JSON 출력, silent failure 없음.**
 
 한국어 | [English](README.md)
 
 ---
 
 Unity의 원시 CLI는 자동화에 적합하지 않습니다. 컴파일 실패에도 종료코드 0을 반환하고, 결과는 XML로만 출력되며, 진행 상황을 알 수 없고, 오류 유형이 모호합니다. `testplay`는 AI 에이전트와 CI 파이프라인을 위해 설계된 6개의 명령으로 이 모든 문제를 해결합니다.
+
+## testplay는 누구를 위한 도구인가
+
+testplay는 **계약 레이어(contract layer)이지, 속도 레이어가 아닙니다.** 두 종류의 사용자:
+
+- **AI 에이전트와 CI 파이프라인** — 명확한 exit code, 구조화된 JSON, 폴링 가능한 진행 파일이 필요한 자동화 호출자. testplay는 이들을 위해 설계됐습니다.
+- **인간 개발자의 일상 TDD** — Unity의 Test Runner 창을 그대로 쓰세요. testplay는 ms 단위 반복과 경쟁하지 않습니다. *자동화된* 경로를 신뢰 가능하게 만드는 게 역할입니다.
+
+AI 에이전트가 Unity 테스트를 반복 실행한다면, testplay의 모든 일은 매 반복의 결과를 명확하게(legible) 만드는 것입니다. 개별 테스트 실행 속도는 testplay의 최적화 대상이 아닙니다 — 에이전트 루프의 병목은 모델 추론 시간이지, Unity 시작 시간이 아닙니다.
 
 ## 해결하는 문제
 

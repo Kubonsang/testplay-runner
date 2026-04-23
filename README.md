@@ -1,12 +1,21 @@
 # testplay-runner
 
-**Go CLI that makes Unity tests reliable for AI agents**
+**Go CLI that wraps Unity's broken test runner in a stable contract for AI agents — distinct exit codes, JSON output, no silent failures.**
 
 [한국어](README.ko.md) | English
 
 ---
 
 Unity's raw CLI is broken for automation: exit code 0 even on compile failure, XML-only output, no progress visibility, ambiguous error types. `testplay` fixes all of that with a six-command interface designed for AI agents and CI pipelines.
+
+## Who is testplay for?
+
+testplay is a **contract layer**, not a speed layer. Two distinct users:
+
+- **AI agents and CI pipelines** — automated callers that need unambiguous exit codes, structured JSON, and progress files they can poll. testplay is built for them.
+- **Human developers in daily TDD** — keep using Unity's Test Runner window. testplay does not compete with sub-second iteration; it makes the *automated* path reliable.
+
+If your AI agent is iterating on Unity tests, testplay's whole job is making each iteration's outcome legible. Speed of any individual test run is not what testplay optimizes for — model latency dominates the loop.
 
 ## Problems Solved
 
