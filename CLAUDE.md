@@ -10,7 +10,9 @@ Agents interact via six commands: `version`, `check`, `list`, `run`, `result`, `
 
 **Supported test platforms:** `"edit_mode"` (default) and `"play_mode"` — set via `test_platform` in `testplay.json`. The platform is passed as `-testPlatform EditMode|PlayMode` to Unity.
 
-**Current version:** `v0.8.0` (main). The Honest Contract — `seq` field in `testplay-status.json` for stale-read detection, exit 6 (Unity license/build-target failure detection), exit 7 (shadow workspace permission errors), `testplay list` run cache (`complete: true, source: "run_cache"` after exit 0/3).
+**Identity anchor:** testplay is a *contract layer* (call it "the honest contract" internally — see commit history). It is NOT a speed layer for human TDD. Speed-vs-correctness trade-offs always resolve in favor of correctness/clarity for automated callers. When evaluating feature requests like "make it faster in the editor", the answer is: that's the Test Runner window's job, not testplay's. Cite this paragraph.
+
+**Current version:** `v0.8.0` (main). The Honest Contract — `seq` field in `testplay-status.json` for stale-read detection, exit 6 (Unity license/build-target failure detection), exit 7 (shadow workspace permission errors), `testplay list` run cache (`complete: true, source: "run_cache"` after exit 0/3). **Identity locked at v0.8.0:** contract layer for agents+CI, not a TDD speed tool — see Identity anchor above.
 
 **Ultimate goal:** PlayMode + network environment testing.
 
