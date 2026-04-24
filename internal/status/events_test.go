@@ -69,6 +69,27 @@ func TestEventLog_Append_MultipleEvents(t *testing.T) {
 	}
 }
 
+func TestEventLog_Append_PreservesPresetTimestamp(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.ndjson")
+	log := status.NewEventLog(path)
+
+	preset := "2026-04-24T10:00:05Z"
+	if err := log.Append(status.Event{Event: "ipc_send", Timestamp: preset}); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	f, _ := os.Open(path)
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Scan()
+	var m map[string]any
+	_ = json.Unmarshal(sc.Bytes(), &m)
+	if m["timestamp"] != preset {
+		t.Errorf("timestamp = %v, want preserved %q", m["timestamp"], preset)
+	}
+}
+
 func TestEventLog_Append_OrderPreserved(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.ndjson")

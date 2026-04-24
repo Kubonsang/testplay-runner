@@ -311,6 +311,24 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 
 	writeJSON(w, output)
 
+	// Best-effort: append captured IPC events to each instance's events.ndjson
+	// so a single per-instance timeline contains both Unity phases and IPC
+	// traffic. Skipped silently when no project_path is known (test mode with
+	// no real config dir) or when the events file does not exist.
+	if configs != nil {
+		for _, inst := range scenarioResult.Instances {
+			if len(inst.IpcEvents) == 0 || inst.Response.RunID == "" {
+				continue
+			}
+			cfg := configs[inst.Role]
+			if cfg == nil {
+				continue
+			}
+			eventsPath := filepath.Join(cfg.ProjectPath, ".testplay", "runs", inst.Response.RunID, "events.ndjson")
+			appendIpcEventsToLog(eventsPath, inst.Role, inst.IpcEvents)
+		}
+	}
+
 	// Best-effort prune of old results and artifacts for each instance.
 	// Uses configs loaded during the production run path when available; when a
 	// test-injected runner is in use (configs == nil), configs are loaded on demand

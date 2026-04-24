@@ -1,8 +1,36 @@
 package main
 
 import (
+	"os"
+
 	"github.com/Kubonsang/testplay-runner/internal/ipc"
+	"github.com/Kubonsang/testplay-runner/internal/status"
 )
+
+// appendIpcEventsToLog writes ipc_send/ipc_recv entries into the per-instance
+// events.ndjson at path. Best-effort: a missing file (e.g., test mode that
+// never opened a runs/<runID>/ dir) is silently skipped.
+func appendIpcEventsToLog(path, role string, events []ipc.ReadEvent) {
+	if _, err := os.Stat(path); err != nil {
+		return
+	}
+	log := status.NewEventLog(path)
+	for _, ev := range events {
+		seq := ev.Msg.Seq
+		peer := ev.Msg.From
+		if ev.Direction == "send" {
+			peer = ev.Msg.To
+		}
+		_ = log.Append(status.Event{
+			Event:     "ipc_" + ev.Direction,
+			Timestamp: ev.Msg.Ts,
+			IpcSeq:    &seq,
+			IpcKind:   ev.Msg.Kind,
+			IpcPeer:   peer,
+		})
+	}
+	_ = role // role retained for future correlation; currently embedded via run_id at the file path
+}
 
 // ipcMessagesFromEvents flattens captured ReadEvents into the raw Message
 // list emitted in scenario output's instances[].ipc_messages.

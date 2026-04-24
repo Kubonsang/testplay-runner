@@ -17,6 +17,10 @@ type Event struct {
 	Timestamp string `json:"timestamp"`
 	Reason    string `json:"reason,omitempty"`
 	ExitCode  *int   `json:"exit_code,omitempty"`
+	// IPC fields (v0.9): present only on "ipc_send" / "ipc_recv" events.
+	IpcSeq  *int   `json:"ipc_seq,omitempty"`
+	IpcKind string `json:"ipc_kind,omitempty"`
+	IpcPeer string `json:"ipc_peer,omitempty"`
 }
 
 // EventLog writes Event entries as newline-delimited JSON to a file.
@@ -34,11 +38,16 @@ func NewEventLog(path string) *EventLog {
 }
 
 // Append serializes e as a single JSON line and appends it to the log file.
+// If e.Timestamp is already set, it is preserved as-is — this lets callers
+// (e.g., scenario IPC integration) write events with their original event
+// time rather than the moment of disk write.
 func (l *EventLog) Append(e Event) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	e.Timestamp = time.Now().UTC().Format(time.RFC3339)
+	if e.Timestamp == "" {
+		e.Timestamp = time.Now().UTC().Format(time.RFC3339)
+	}
 	data, err := json.Marshal(e)
 	if err != nil {
 		return fmt.Errorf("events: marshal: %w", err)
