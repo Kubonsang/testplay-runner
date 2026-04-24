@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Kubonsang/testplay-runner/internal/ipc"
 	"github.com/Kubonsang/testplay-runner/internal/runsvc"
 )
 
@@ -19,9 +20,10 @@ type InstanceRunner func(ctx context.Context, spec InstanceSpec, readyCh chan<- 
 
 // InstanceResult holds the outcome of a single instance run.
 type InstanceResult struct {
-	Role     string
-	Response runsvc.Response
-	Err      error // non-nil for infrastructure errors only
+	Role      string
+	Response  runsvc.Response
+	Err       error             // non-nil for infrastructure errors only
+	IpcEvents []ipc.ReadEvent   // IPC traffic this instance sent or received; empty when IPC disabled
 }
 
 // ScenarioResult aggregates the outcomes of all instances.
@@ -35,7 +37,11 @@ type ScenarioResult struct {
 // All instances run to completion regardless of individual failures.
 // RunScenario itself never returns a non-nil error; instance errors are recorded
 // in InstanceResult.Err and orchestration errors in ScenarioResult.OrchestratorErrors.
-func RunScenario(ctx context.Context, spec *ScenarioFile, run InstanceRunner) (ScenarioResult, error) {
+//
+// When ipcBusPath is non-empty, a polling reader is attached to each instance
+// for the duration of its goroutine; collected events land in InstanceResult.IpcEvents.
+// Pass "" to disable IPC capture entirely (existing test code does this).
+func RunScenario(ctx context.Context, spec *ScenarioFile, run InstanceRunner, ipcBusPath string) (ScenarioResult, error) {
 	// Create one ready channel and one done channel per instance.
 	// readyCh is closed by the runner (via ReadyNotifier) when the instance
 	// reaches its configured ready phase.
@@ -66,6 +72,42 @@ func RunScenario(ctx context.Context, spec *ScenarioFile, run InstanceRunner) (S
 			defer wg.Done()
 			defer close(doneChannels[inst.Role])
 
+			// Start IPC reader as early as possible so messages arriving during
+			// depWait (e.g., host's ready broadcast) are not missed.
+			var (
+				ipcAcc    *ipc.Accumulator
+				ipcCancel context.CancelFunc
+				ipcDone   chan struct{}
+			)
+			if ipcBusPath != "" {
+				ipcAcc = &ipc.Accumulator{}
+				readerCtx, cancel := context.WithCancel(ctx)
+				ipcCancel = cancel
+				reader := ipc.NewPollingReader(ipcBusPath, inst.Role, 0)
+				ipcDone = make(chan struct{})
+				go func() {
+					defer close(ipcDone)
+					_ = ipc.RunReaderInto(readerCtx, reader, ipcAcc)
+				}()
+			}
+
+			// snapshotIpc returns the accumulated events after stopping the reader.
+			// Safe to call multiple times; subsequent calls are no-ops on the channels.
+			snapshotIpc := func() []ipc.ReadEvent {
+				if ipcAcc == nil {
+					return nil
+				}
+				if ipcCancel != nil {
+					ipcCancel()
+					ipcCancel = nil
+				}
+				if ipcDone != nil {
+					<-ipcDone
+					ipcDone = nil
+				}
+				return ipcAcc.Snapshot()
+			}
+
 			// If this instance depends on another, wait for its ready signal.
 			if inst.DependsOn != "" {
 				depReadyCh := readyChannels[inst.DependsOn]
@@ -85,6 +127,7 @@ func RunScenario(ctx context.Context, spec *ScenarioFile, run InstanceRunner) (S
 						// dependency truly exited without signaling ready — fast-fail
 						depIdx := roleIndex[inst.DependsOn]
 						depResult := results[depIdx]
+						events := snapshotIpc()
 						var msg string
 						if depResult.Err != nil {
 							msg = fmt.Sprintf("instance %q: dependency %q failed with infrastructure error before reaching phase %q",
@@ -94,35 +137,48 @@ func RunScenario(ctx context.Context, spec *ScenarioFile, run InstanceRunner) (S
 							msg = fmt.Sprintf("instance %q: dependency %q exited with exit %d (%s) before reaching phase %q",
 								inst.Role, inst.DependsOn, depExit, exitCodeLabel(depExit), inst.EffectiveReadyPhase())
 						}
+						if last, ok := lastReceivedFrom(events, inst.DependsOn); ok {
+							msg += fmt.Sprintf(`. %q last received from %q: seq=%d kind=%q`,
+								inst.Role, inst.DependsOn, last.Seq, last.Kind)
+						}
 						orchMu.Lock()
 						orchErrs = append(orchErrs, msg)
 						orchMu.Unlock()
 						results[i] = InstanceResult{
-							Role:     inst.Role,
-							Response: runsvc.Response{ExitCode: 4},
+							Role:      inst.Role,
+							Response:  runsvc.Response{ExitCode: 4},
+							IpcEvents: events,
 						}
 						return
 					}
 				case <-time.After(timeout):
+					events := snapshotIpc()
 					msg := fmt.Sprintf("instance %q timed out waiting for %q to reach phase %q (%dms)",
 						inst.Role, inst.DependsOn, inst.EffectiveReadyPhase(), inst.EffectiveReadyTimeoutMs())
+					if last, ok := lastReceivedFrom(events, inst.DependsOn); ok {
+						msg += fmt.Sprintf(`. %q last received from %q: seq=%d kind=%q`,
+							inst.Role, inst.DependsOn, last.Seq, last.Kind)
+					}
 					orchMu.Lock()
 					orchErrs = append(orchErrs, msg)
 					orchMu.Unlock()
 					results[i] = InstanceResult{
-						Role:     inst.Role,
-						Response: runsvc.Response{ExitCode: 4},
+						Role:      inst.Role,
+						Response:  runsvc.Response{ExitCode: 4},
+						IpcEvents: events,
 					}
 					return
 				case <-ctx.Done():
-					results[i] = InstanceResult{Role: inst.Role, Err: ctx.Err()}
+					events := snapshotIpc()
+					results[i] = InstanceResult{Role: inst.Role, Err: ctx.Err(), IpcEvents: events}
 					return
 				}
 			}
 
 			readyCh := readyChannels[inst.Role]
 			resp, err := run(ctx, inst, readyCh)
-			results[i] = InstanceResult{Role: inst.Role, Response: resp, Err: err}
+			events := snapshotIpc()
+			results[i] = InstanceResult{Role: inst.Role, Response: resp, Err: err, IpcEvents: events}
 		}()
 	}
 
@@ -161,6 +217,18 @@ func exitCodeLabel(code int) string {
 	default:
 		return "unknown"
 	}
+}
+
+// lastReceivedFrom returns the most recent recv event whose sender matches role.
+// Returns (zero, false) when none found.
+func lastReceivedFrom(events []ipc.ReadEvent, role string) (ipc.Message, bool) {
+	for i := len(events) - 1; i >= 0; i-- {
+		ev := events[i]
+		if ev.Direction == "recv" && ev.Msg.From == role {
+			return ev.Msg, true
+		}
+	}
+	return ipc.Message{}, false
 }
 
 // aggregateExitCode returns the maximum exit code across all instance results.

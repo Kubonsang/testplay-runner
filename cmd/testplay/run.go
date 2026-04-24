@@ -13,6 +13,7 @@ import (
 	"github.com/Kubonsang/testplay-runner/internal/artifacts"
 	"github.com/Kubonsang/testplay-runner/internal/config"
 	"github.com/Kubonsang/testplay-runner/internal/history"
+	"github.com/Kubonsang/testplay-runner/internal/runid"
 	"github.com/Kubonsang/testplay-runner/internal/runsvc"
 	"github.com/Kubonsang/testplay-runner/internal/scenario"
 	"github.com/Kubonsang/testplay-runner/internal/status"
@@ -130,6 +131,7 @@ type scenarioDeps struct {
 	ctx        context.Context
 	run        scenario.InstanceRunner // nil = real runner constructed from each instance's config
 	clearCache bool                    // passed through to each instance's runsvc.Request
+	ipcBusPath string                  // test injection point; production computes from first instance project_path
 }
 
 // runScenario loads a scenario file, runs all instances concurrently, and writes
@@ -146,8 +148,14 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 		return 5
 	}
 
+	// Generate scenario-level run ID up front so the IPC bus path can be
+	// computed and shared across instances. Each instance still gets its
+	// own per-instance run_id from runsvc.
+	scenarioRunID := runid.Generate(time.Now())
+
 	run := deps.run
 	var configs map[string]*config.Config
+	ipcBusPath := deps.ipcBusPath // test injection wins; production computes below
 	if run == nil {
 		// Pre-load all instance configs for early validation and scenario-level timeout.
 		configs = make(map[string]*config.Config, len(spec.Instances))
@@ -165,6 +173,28 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 			}
 			configs[inst.Role] = cfg
 			totalMs += cfg.Timeout.TotalMs
+		}
+
+		// IPC bus lives under the first instance's project_path. All
+		// instances inherit the same absolute path through TESTPLAY_IPC_BUS.
+		// Skipped when the test harness already provided ipcBusPath.
+		if ipcBusPath == "" && len(spec.Instances) > 0 {
+			firstCfg := configs[spec.Instances[0].Role]
+			if firstCfg != nil {
+				ipcDir := filepath.Join(firstCfg.ProjectPath, ".testplay", "ipc", scenarioRunID)
+				if mkErr := os.MkdirAll(ipcDir, 0755); mkErr == nil {
+					busPath := filepath.Join(ipcDir, "bus.ndjson")
+					if absPath, absErr := filepath.Abs(busPath); absErr == nil {
+						busPath = absPath
+					}
+					// Touch the file so user code can open it for append before
+					// any instance writes its first message.
+					if f, touchErr := os.OpenFile(busPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); touchErr == nil {
+						_ = f.Close()
+						ipcBusPath = busPath
+					}
+				}
+			}
 		}
 
 		// Outer safety-net: sum of all instance timeouts bounds the entire scenario.
@@ -201,9 +231,27 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 		}
 	}
 
+	// Wrap the run closure (production or test-injected) to ensure every
+	// instance sees TESTPLAY_IPC_BUS in its env when IPC is active. User
+	// values for that key win so test fixtures can pin a custom path.
+	if ipcBusPath != "" {
+		inner := run
+		run = func(ctx context.Context, instSpec scenario.InstanceSpec, readyCh chan<- struct{}) (runsvc.Response, error) {
+			env := make(map[string]string, len(instSpec.Env)+1)
+			for k, v := range instSpec.Env {
+				env[k] = v
+			}
+			if _, override := env["TESTPLAY_IPC_BUS"]; !override {
+				env["TESTPLAY_IPC_BUS"] = ipcBusPath
+			}
+			instSpec.Env = env
+			return inner(ctx, instSpec, readyCh)
+		}
+	}
+
 	// RunScenario never returns a non-nil error per its contract; instance errors
 	// are recorded in InstanceResult.Err instead.
-	scenarioResult, _ := scenario.RunScenario(ctx, spec, run)
+	scenarioResult, _ := scenario.RunScenario(ctx, spec, run, ipcBusPath)
 
 	instances := make([]map[string]any, len(scenarioResult.Instances))
 	for i, inst := range scenarioResult.Instances {
@@ -240,13 +288,18 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 		if len(inst.Response.Warnings) > 0 {
 			m["warnings"] = inst.Response.Warnings
 		}
+		if len(inst.IpcEvents) > 0 {
+			m["ipc_messages"] = ipcMessagesFromEvents(inst.IpcEvents)
+			m["ipc_summary"] = ipcSummaryFromEvents(inst.IpcEvents)
+		}
 		instances[i] = m
 	}
 
 	output := map[string]any{
-		"schema_version": "1",
-		"exit_code":      scenarioResult.ExitCode,
-		"instances":      instances,
+		"schema_version":  "1",
+		"scenario_run_id": scenarioRunID,
+		"exit_code":       scenarioResult.ExitCode,
+		"instances":       instances,
 	}
 	if len(scenarioResult.OrchestratorErrors) > 0 {
 		output["orchestrator_errors"] = scenarioResult.OrchestratorErrors

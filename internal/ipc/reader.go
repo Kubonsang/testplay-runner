@@ -8,8 +8,51 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"time"
 )
+
+// Accumulator collects ReadEvents from a reader for later inspection.
+// Safe for concurrent use; the reader goroutine writes via Add and the
+// owning scenario goroutine reads via Snapshot once the reader has exited.
+type Accumulator struct {
+	mu     sync.Mutex
+	events []ReadEvent
+}
+
+// Add appends ev to the accumulator.
+func (a *Accumulator) Add(ev ReadEvent) {
+	a.mu.Lock()
+	a.events = append(a.events, ev)
+	a.mu.Unlock()
+}
+
+// Snapshot returns a copy of every event accumulated so far.
+func (a *Accumulator) Snapshot() []ReadEvent {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]ReadEvent, len(a.events))
+	copy(out, a.events)
+	return out
+}
+
+// RunReaderInto wires a PollingReader to an Accumulator. Blocks until the
+// reader's ctx is canceled, then drains the channel and returns. The
+// caller is responsible for cancelling ctx when the owning instance ends.
+func RunReaderInto(ctx context.Context, reader *PollingReader, acc *Accumulator) error {
+	ch := make(chan ReadEvent, 64)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for ev := range ch {
+			acc.Add(ev)
+		}
+	}()
+	err := reader.Run(ctx, ch)
+	close(ch)
+	<-done
+	return err
+}
 
 // ReadEvent is one line of bus traffic that the reader's owner is allowed
 // to observe. Direction is "send" when the message originates from the

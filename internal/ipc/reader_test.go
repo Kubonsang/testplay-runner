@@ -176,6 +176,52 @@ func TestPollingReader_MissingFileWaits(t *testing.T) {
 	<-done
 }
 
+func TestAccumulator_AddSnapshot(t *testing.T) {
+	var a ipc.Accumulator
+	a.Add(ipc.ReadEvent{Direction: "send", Msg: ipc.Message{Seq: 1, Kind: "x"}})
+	a.Add(ipc.ReadEvent{Direction: "recv", Msg: ipc.Message{Seq: 2, Kind: "y"}})
+
+	snap := a.Snapshot()
+	if len(snap) != 2 {
+		t.Fatalf("got %d, want 2", len(snap))
+	}
+	if snap[0].Msg.Kind != "x" || snap[1].Msg.Kind != "y" {
+		t.Errorf("order broken: %+v", snap)
+	}
+
+	// Snapshot must be a copy: mutating it should not affect the accumulator.
+	snap[0].Msg.Kind = "mutated"
+	again := a.Snapshot()
+	if again[0].Msg.Kind != "x" {
+		t.Errorf("Snapshot leaked internal slice: %q", again[0].Msg.Kind)
+	}
+}
+
+func TestRunReaderInto_AccumulatesUntilCancel(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bus.ndjson")
+	hostW, _ := ipc.NewBusWriter(path, "host")
+	_, _ = hostW.Append(ipc.Message{To: "*", Kind: "a"})
+	_, _ = hostW.Append(ipc.Message{To: "*", Kind: "b"})
+
+	r := ipc.NewPollingReader(path, "client", 20*time.Millisecond)
+	var acc ipc.Accumulator
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	if err := ipc.RunReaderInto(ctx, r, &acc); err != nil {
+		t.Fatalf("RunReaderInto: %v", err)
+	}
+
+	snap := acc.Snapshot()
+	if len(snap) != 2 {
+		t.Fatalf("got %d events, want 2", len(snap))
+	}
+	if snap[0].Msg.Kind != "a" || snap[1].Msg.Kind != "b" {
+		t.Errorf("order: %+v", snap)
+	}
+}
+
 func TestPollingReader_HandlesMalformedLine(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "bus.ndjson")

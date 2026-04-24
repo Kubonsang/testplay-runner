@@ -44,7 +44,7 @@ func TestRunScenario_AllInstancesRun(t *testing.T) {
 		return fakeResult(0), nil
 	}
 
-	result, err := scenario.RunScenario(context.Background(), spec, run)
+	result, err := scenario.RunScenario(context.Background(), spec, run, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestRunScenario_ExitCodeIsMaxOfInstances(t *testing.T) {
 		return fakeResult(exitCodes[i]), nil
 	}
 
-	result, _ := scenario.RunScenario(context.Background(), spec, run)
+	result, _ := scenario.RunScenario(context.Background(), spec, run, "")
 	if result.ExitCode != 3 {
 		t.Errorf("expected exit code 3 (max), got %d", result.ExitCode)
 	}
@@ -96,7 +96,7 @@ func TestRunScenario_InfraErrorTreatedAsExit1(t *testing.T) {
 		return runsvc.Response{}, fmt.Errorf("disk full")
 	}
 
-	result, _ := scenario.RunScenario(context.Background(), spec, run)
+	result, _ := scenario.RunScenario(context.Background(), spec, run, "")
 	if result.ExitCode != 1 {
 		t.Errorf("expected exit code 1 for infra error, got %d", result.ExitCode)
 	}
@@ -116,7 +116,7 @@ func TestAggregateExitCode_AllZero(t *testing.T) {
 	run := func(_ context.Context, _ scenario.InstanceSpec, _ chan<- struct{}) (runsvc.Response, error) {
 		return fakeResult(0), nil
 	}
-	result, _ := scenario.RunScenario(context.Background(), spec, run)
+	result, _ := scenario.RunScenario(context.Background(), spec, run, "")
 	if result.ExitCode != 0 {
 		t.Errorf("expected exit code 0, got %d", result.ExitCode)
 	}
@@ -149,7 +149,7 @@ func TestRunScenario_ClientStartsAfterHostReady(t *testing.T) {
 		return fakeResult(0), nil
 	}
 
-	result, err := scenario.RunScenario(context.Background(), spec, run)
+	result, err := scenario.RunScenario(context.Background(), spec, run, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestRunScenario_ReadyTimeout_ReturnsExit4(t *testing.T) {
 		return fakeResult(0), nil
 	}
 
-	result, err := scenario.RunScenario(context.Background(), spec, run)
+	result, err := scenario.RunScenario(context.Background(), spec, run, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestRunScenario_HostCrash_ClientFastFails(t *testing.T) {
 	}
 
 	start := time.Now()
-	result, err := scenario.RunScenario(context.Background(), spec, run)
+	result, err := scenario.RunScenario(context.Background(), spec, run, "")
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -262,7 +262,7 @@ func TestRunScenario_ContextCancellation_StopsWait(t *testing.T) {
 		cancel()
 	}()
 
-	result, _ := scenario.RunScenario(ctx, spec, run)
+	result, _ := scenario.RunScenario(ctx, spec, run, "")
 	// key assertion: RunScenario returned (did not hang)
 	_ = result
 }
@@ -283,7 +283,7 @@ func TestRunScenario_HostCrash_ErrorIncludesExitCode(t *testing.T) {
 		return fakeResult(0), nil
 	}
 
-	result, err := scenario.RunScenario(context.Background(), spec, run)
+	result, err := scenario.RunScenario(context.Background(), spec, run, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestRunScenario_HostCrash_UnknownExitCode(t *testing.T) {
 		return fakeResult(0), nil
 	}
 
-	result, err := scenario.RunScenario(context.Background(), spec, run)
+	result, err := scenario.RunScenario(context.Background(), spec, run, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestRunScenario_HostInfraError_ErrorIncludesDetail(t *testing.T) {
 		return fakeResult(0), nil
 	}
 
-	result, err := scenario.RunScenario(context.Background(), spec, run)
+	result, err := scenario.RunScenario(context.Background(), spec, run, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
