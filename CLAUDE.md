@@ -164,6 +164,7 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 - `testplay-status-<role>.json` — written per instance in `--scenario` mode. Same schema as `testplay-status.json`. Path is in cwd, named after the instance's `role` field (e.g. `testplay-status-host.json`). Absent for instances that have not yet started.
 - `.testplay/results/<run_id>.json` — one file per run, never overwritten. `run_id` format: `YYYYMMDD-HHMMSS-xxxxxxxx` where the 8-char hex suffix is 4 crypto-random bytes (e.g. `20250301-102200-a3f8b2c1`). Collision probability is negligible even under parallel runs.
 - `.testplay-shadow-<run_id>/` — per-run shadow workspace created automatically when `Temp/UnityLockfile` is detected (Unity Editor open). Contains copied `Assets/`, `ProjectSettings/`, linked `Packages/`, and an empty `Library/` (Unity populates during the run). Removed automatically after each run via `ws.Cleanup()`. Excluded from git via `.gitignore` auto-patching (`testplay-shadow-*/`). Use `--reset-shadow` to force shadow mode (equivalent to `--shadow`; no persistent cache exists to reset).
+- `.testplay/ipc/<scenario_run_id>/bus.ndjson` — scenario-scoped IPC bus, created at the start of every `--scenario` run. Absolute path is exposed to every instance as the `TESTPLAY_IPC_BUS` env var; user code in any language appends NDJSON message lines and polls the file for incoming traffic. testplay's per-instance polling reader captures messages addressed to that role (or broadcast to `*`) and surfaces them in scenario JSON output and per-instance `events.ndjson`. Pruned under the same `retention.max_runs` policy as run artifacts; `.testplay/ipc/` is added to `.gitignore` automatically on first scenario run. Single-mode (`testplay run` without `--scenario`) does not create the file or inject the env var.
 
 ## Agent Recommended Usage Flow
 
@@ -203,9 +204,11 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 5. `hint` field is included only on exit 1 — the one case where an agent can auto-recover.
 6. `new_failures` in exit 3 is only populated when `--compare-run` is specified; otherwise `null`.
 7. `warnings` (string array) is included only when non-fatal infrastructure issues occur (e.g. result save failed, summary write failed). Absent when no warnings.
-8. `orchestrator_errors` (string array) is included in scenario mode output only when a dependency wait fails (ready timeout or context cancellation). Absent when no orchestration errors occurred.
+8. `orchestrator_errors` (string array) is included in scenario mode output only when a dependency wait fails (ready timeout or context cancellation). Absent when no orchestration errors occurred. When IPC was active and the waiting instance received any message from the failed dependency, the entry is enriched with a trailing `"X" last received from "Y": seq=N kind=K` clause.
 9. `parameterized_group` (string) on test entries is present only when the test-case is inside an NUnit `ParameterizedMethod` suite. Absent for non-parameterized tests.
 10. `excerpt` (string) on test entries is present only when the test failed. Format: `"message (at filename.cs:line)"` or just `"message"` when no file info available. Absent for passing/skipped tests.
+11. `scenario_run_id` (string) is present at the top level of every scenario-mode output. Format matches per-instance run IDs (`YYYYMMDD-HHMMSS-xxxxxxxx`) but identifies the scenario as a whole, not any single instance. Absent in single-mode (`testplay run`) output.
+12. `instances[].ipc_messages` (array of Message objects) and `instances[].ipc_summary` (object with `sent_count` / `received_count` / `last_sent` / `last_received`) are present only when IPC capture was active for the scenario AND that instance saw at least one message. Absent otherwise.
 
 ## Known Limitations & Risks
 
@@ -218,7 +221,8 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 | Shadow — editor-open detection is best-effort | Shadow mode activates when `Temp/UnityLockfile` exists. A stale lockfile after an unclean Unity exit causes unnecessary shadow overhead. The lockfile check is a heuristic, not a guaranteed signal. | Low |
 | Shadow — Library cold-start per run | `Library/` is seeded from a project-local cache (`.testplay/cache/Library/`) when available. First run after a cache miss still cold-starts. Cache is invalidated when `ProjectVersion.txt` or `Packages/manifest.json` changes. Use `--clear-cache` to force a cold start. In `--scenario` mode, cache seeding (read) works per instance but cache write-back is skipped to avoid concurrent writes; a single-mode run is needed to populate the cache. | Low |
 | Scenario — status polling (per-instance) | `testplay-status-<role>.json` is written for each instance in `--scenario` mode. No scenario-level aggregate status file exists; agents must poll per-role files. | Low |
-| Scenario — host crash error detail | ~~Resolved in v0.5.0~~ — dependent instance error messages now include the dependency's exit code and failure type (e.g., "exited with exit 2 (compile error)"). | Resolved |
+| Scenario — host crash error detail | ~~Resolved in v0.5.0~~ — dependent instance error messages include the dependency's exit code and failure type. ~~Further enriched in v0.9.0~~ — when IPC was active, the entry adds the last message the waiting instance received from that dependency (`"X" last received from "Y": seq=N kind=K`). | Resolved |
+| Scenario — bidirectional comms | ~~Resolved in v0.9.0~~ — `TESTPLAY_IPC_BUS` env var + shared `bus.ndjson` give every instance an append-only NDJSON channel for arbitrary messages. Captured traffic surfaces as `instances[].ipc_messages` / `ipc_summary` and is interleaved into per-instance `events.ndjson`. | Resolved |
 | Scenario — env key case on Windows | ~~Resolved in v0.6.0~~ — `MergeEnv` now uses case-insensitive key matching on Windows via `strings.EqualFold`. | Resolved |
 
 ## Roadmap
