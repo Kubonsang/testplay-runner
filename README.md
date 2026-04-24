@@ -108,7 +108,7 @@ testplay version
 ```json
 {
   "schema_version": "1",
-  "version": "v0.8.0"
+  "version": "v0.9.0"
 }
 ```
 
@@ -342,6 +342,42 @@ Each run gets its own isolated shadow directory, making parallel `testplay run` 
 - `--clear-cache` — remove `.testplay/cache/` before shadow workspace creation, forcing Unity to reimport from scratch
 
 **`.gitignore` is patched automatically** to exclude `.testplay-shadow-*/` on first use.
+
+## Scenario IPC Bus
+
+When `testplay run --scenario` launches multiple instances, every instance receives an environment variable `TESTPLAY_IPC_BUS` whose value is the absolute path of a shared NDJSON file. Test code in any language can append messages to that file and poll it for incoming traffic. Use this to coordinate beyond the built-in `depends_on` ready signal — e.g., "client connected", "server saw player join", "host received damage event".
+
+**Message format** (one JSON object per line):
+
+```json
+{"seq": 1, "ts": "2026-04-24T13:00:05Z", "from": "host", "to": "*", "kind": "ready", "payload": {"port": 7777}}
+```
+
+- `from` — your role
+- `to` — peer role, or `"*"` for broadcast
+- `kind` — application-defined event name
+- `payload` — optional; keep messages small (atomic-append guaranteed up to ~4 KB)
+- `seq` — your monotonic counter; uniqueness is per-(from, seq) pair
+
+**C# minimal example (host side):**
+
+```csharp
+var bus = System.Environment.GetEnvironmentVariable("TESTPLAY_IPC_BUS");
+if (!string.IsNullOrEmpty(bus)) {
+    var line = "{\"seq\":1,\"ts\":\"" + DateTime.UtcNow.ToString("o") + "\",\"from\":\"host\",\"to\":\"*\",\"kind\":\"ready\"}";
+    System.IO.File.AppendAllText(bus, line + "\n");
+}
+```
+
+**What testplay does for you:**
+
+- Per-instance polling reader collects every message addressed to that instance (or broadcast)
+- Captured traffic surfaces in scenario output as `instances[].ipc_messages` (full list) and `instances[].ipc_summary` (counts + last sent / last received)
+- Each instance's `events.ndjson` interleaves `ipc_send` / `ipc_recv` entries with Unity phase events for a single forensic timeline
+- When a dependency exits before signaling ready, `orchestrator_errors` is enriched with the last message the waiting instance saw from that dependency
+- Bus directories (`.testplay/ipc/<scenario_run_id>/`) follow the same `retention.max_runs` policy as run artifacts; `.gitignore` is patched automatically
+
+**Out of scope for v0.9:** real-time push (SSE/websockets), bidirectional RPC, framework-specific helpers (NGO/Mirror — planned for v1.0), single-mode (`testplay run` without `--scenario`) IPC.
 
 ## Exit Codes
 

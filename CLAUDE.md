@@ -12,7 +12,7 @@ Agents interact via six commands: `version`, `check`, `list`, `run`, `result`, `
 
 **Identity anchor:** testplay is a *contract layer* (call it "the honest contract" internally — see commit history). It is NOT a speed layer for human TDD. Speed-vs-correctness trade-offs always resolve in favor of correctness/clarity for automated callers. When evaluating feature requests like "make it faster in the editor", the answer is: that's the Test Runner window's job, not testplay's. Cite this paragraph.
 
-**Current version:** `v0.8.0` (main). The Honest Contract — `seq` field in `testplay-status.json` for stale-read detection, exit 6 (Unity license/build-target failure detection), exit 7 (shadow workspace permission errors), `testplay list` run cache (`complete: true, source: "run_cache"` after exit 0/3). **Identity locked at v0.8.0:** contract layer for agents+CI, not a TDD speed tool — see Identity anchor above.
+**Current version:** `v0.9.0` (main). Network Primitives — scenario-scoped IPC bus (`TESTPLAY_IPC_BUS` env var, `.testplay/ipc/<scenario_run_id>/bus.ndjson`), per-instance polling readers, `instances[].ipc_messages` + `ipc_summary` in scenario JSON output, `scenario_run_id` top-level field, IPC events interleaved into per-instance `events.ndjson`, host-crash correlation in `orchestrator_errors`, IPC-tree retention. **Identity locked at v0.8.0:** contract layer for agents+CI, not a TDD speed tool — see Identity anchor above.
 
 **Ultimate goal:** PlayMode + network environment testing.
 
@@ -288,6 +288,15 @@ Production readiness — onboarding and distribution.
 - **GoReleaser** — cross-platform pre-built binaries (darwin/linux/windows, amd64/arm64) published to GitHub Releases on tag push
 - **Cross-platform CI** — `go test ./...` on ubuntu, macos, and windows for every push/PR
 - **Scenario-mode artifact retention** — auto-prune after multi-instance runs, deduplicating shared project paths
+
+### v0.9.0 ✅ — Network Primitives (shipped)
+Framework-agnostic instance-to-instance communication and cross-instance failure correlation, unblocking dogfooding on multiplayer (NGO) projects.
+- **Scenario-scoped IPC bus** — `internal/ipc.BusWriter` + `PollingReader` over a shared NDJSON file at `<project>/.testplay/ipc/<scenario_run_id>/bus.ndjson`; `TESTPLAY_IPC_BUS` env var auto-injected into every instance (user values win)
+- **`scenario_run_id` top-level field** in scenario JSON output (separate from per-instance `run_id`); generated via shared `internal/runid.Generate` (relocated from runsvc)
+- **`instances[].ipc_messages` + `ipc_summary`** — full message list plus counts/last-of-each-direction; gives agents both forensic detail and quick triage
+- **Cross-instance failure correlation** — when a dependency exits before signaling ready, `orchestrator_errors` entries gain `"X" last received from "Y": seq=N kind=K`
+- **`events.ndjson` IPC integration** — `ipc_send` / `ipc_recv` event lines interleaved per-instance with original send/recv timestamps; `internal/status.EventLog.Append` now preserves a caller-set `Timestamp` instead of overwriting
+- **Retention + .gitignore** — IPC bus directories follow the same `retention.max_runs` policy as run artifacts (reuses `artifacts.Store.Prune`); `.testplay/ipc/` auto-added to `.gitignore` on first scenario run
 
 ### v0.8.0 ✅ — The Honest Contract (shipped)
 Aligns documented contract with actual behavior.
