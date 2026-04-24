@@ -14,6 +14,7 @@ import (
 	"github.com/Kubonsang/testplay-runner/internal/history"
 	"github.com/Kubonsang/testplay-runner/internal/listcache"
 	"github.com/Kubonsang/testplay-runner/internal/parser"
+	"github.com/Kubonsang/testplay-runner/internal/runid"
 	"github.com/Kubonsang/testplay-runner/internal/shadow"
 	"github.com/Kubonsang/testplay-runner/internal/status"
 	"github.com/Kubonsang/testplay-runner/internal/unity"
@@ -70,7 +71,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		clock = time.Now
 	}
 
-	runID := generateRunID(clock())
+	runID := runid.Generate(clock())
 
 	// Prepare artifact directory and get results XML path.
 	runDir, err := s.Artifacts.PrepareRunDir(runID)
