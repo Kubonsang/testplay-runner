@@ -133,6 +133,82 @@ func TestRunScenario_UserEnvOverridesIpcBus(t *testing.T) {
 	}
 }
 
+// IPC bus directories under .testplay/ipc/ should obey the same retention
+// policy as run artifacts.
+func TestRunScenario_PrunesIpcBusDirs(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	projectDir := filepath.Join(dir, "project")
+	resultDir := filepath.Join(projectDir, ".testplay", "results")
+	ipcRoot := filepath.Join(projectDir, ".testplay", "ipc")
+	if err := os.MkdirAll(ipcRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	maxRuns := 2
+	cfgData, _ := json.Marshal(map[string]any{
+		"schema_version": "1",
+		"unity_path":     "/fake/unity",
+		"project_path":   projectDir,
+		"result_dir":     resultDir,
+		"timeout":        map[string]any{"total_ms": 300000},
+		"retention":      map[string]any{"max_runs": maxRuns},
+	})
+	cfgPath := filepath.Join(projectDir, "testplay.json")
+	if err := os.WriteFile(cfgPath, cfgData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pre-populate 4 IPC scenario directories.
+	preExisting := []string{
+		"20260401-100000-aaaaaaaa",
+		"20260401-100001-bbbbbbbb",
+		"20260401-100002-cccccccc",
+		"20260401-100003-dddddddd",
+	}
+	for _, id := range preExisting {
+		if err := os.MkdirAll(filepath.Join(ipcRoot, id), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	scenarioContent, _ := json.Marshal(map[string]any{
+		"schema_version": "1",
+		"instances":      []map[string]any{{"role": "host", "config": cfgPath}},
+	})
+	specPath := filepath.Join(dir, "scenario.json")
+	_ = os.WriteFile(specPath, scenarioContent, 0644)
+
+	fakeRun := func(_ context.Context, _ scenario.InstanceSpec, _ chan<- struct{}) (runsvc.Response, error) {
+		return runsvc.Response{
+			RunID: "x", ExitCode: 0,
+			Result: &history.RunResult{SchemaVersion: "1", Tests: []parser.TestCase{}, Errors: []history.CompileError{}},
+		}, nil
+	}
+
+	var buf bytes.Buffer
+	if code := runScenario(&buf, specPath, scenarioDeps{run: fakeRun}); code != 0 {
+		t.Fatalf("exit %d: %s", code, buf.String())
+	}
+
+	entries, err := os.ReadDir(ipcRoot)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	// 4 pre-existing → pruned to maxRuns(2). This test injects a fake runner
+	// so the production IPC bus creation path is skipped — no fresh dir.
+	dirCount := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			dirCount++
+		}
+	}
+	if dirCount != maxRuns {
+		t.Errorf("ipc dir count = %d, want %d", dirCount, maxRuns)
+	}
+}
+
 // End-to-end at the cmd layer: bus exchange surfaces in instances[].ipc_messages
 // and instances[].ipc_summary in the output JSON.
 func TestRunScenario_OutputContainsIpcMessagesAndSummary(t *testing.T) {

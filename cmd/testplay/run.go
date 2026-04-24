@@ -16,6 +16,7 @@ import (
 	"github.com/Kubonsang/testplay-runner/internal/runid"
 	"github.com/Kubonsang/testplay-runner/internal/runsvc"
 	"github.com/Kubonsang/testplay-runner/internal/scenario"
+	"github.com/Kubonsang/testplay-runner/internal/shadow"
 	"github.com/Kubonsang/testplay-runner/internal/status"
 	"github.com/Kubonsang/testplay-runner/internal/unity"
 )
@@ -194,6 +195,9 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 						ipcBusPath = busPath
 					}
 				}
+				// Patch project .gitignore so the IPC bus tree stays out of commits.
+				// Non-fatal: missing/unwritable .gitignore does not block scenario runs.
+				_ = shadow.EnsureIgnored(firstCfg.ProjectPath, ".testplay/ipc/")
 			}
 		}
 
@@ -335,6 +339,7 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 			}
 			maxRuns := *cfg.Retention.MaxRuns
 			artifactRoot := filepath.Join(cfg.ProjectPath, ".testplay", "runs")
+			ipcRoot := filepath.Join(cfg.ProjectPath, ".testplay", "ipc")
 			key := cfg.ResultDir + "|" + artifactRoot
 			if _, dup := seen[key]; dup {
 				continue
@@ -342,6 +347,9 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 			seen[key] = struct{}{}
 			_, _ = history.NewStore(cfg.ResultDir).Prune(maxRuns)
 			_, _ = artifacts.NewStore(artifactRoot).Prune(maxRuns)
+			// IPC bus dirs share the run-id format and the same retention policy;
+			// reusing artifacts.Store here keeps the prune logic in one place.
+			_, _ = artifacts.NewStore(ipcRoot).Prune(maxRuns)
 		}
 	}
 
