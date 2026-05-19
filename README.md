@@ -297,6 +297,90 @@ testplay run --scenario scenario.json  # multi-instance concurrent execution
 }
 ```
 
+**Build/license failure (exit 6):**
+
+Returned when Unity's batch run exits without producing NUnit XML and without parseable C# compile errors — typically a license activation failure or a missing build module. Fix the Unity environment (license, install the required platform module), not the source code.
+
+```json
+{
+  "schema_version": "1",
+  "run_id": "20250325-143000-a3f8b2c1",
+  "exit_code": 6,
+  "tests": [],
+  "errors": []
+}
+```
+
+**Shadow workspace permission error (exit 7):**
+
+Returned when preparing the per-run `.testplay-shadow-<run_id>/` workspace fails with a filesystem permission error (e.g., project directory not writable, or `.testplay/` owned by another user). Fix the path/ownership.
+
+```json
+{
+  "schema_version": "1",
+  "exit_code": 7,
+  "error": "runsvc: prepare shadow workspace: ... permission denied"
+}
+```
+
+**Scenario mode (`--scenario`) — aggregated output:**
+
+Runs every instance concurrently and writes a single JSON object covering all of them. Fields new in v0.9: `scenario_run_id` (top-level), `instances[].ipc_messages`, `instances[].ipc_summary`. See [Scenario IPC Bus](#scenario-ipc-bus) for how user code populates these.
+
+```json
+{
+  "schema_version": "1",
+  "scenario_run_id": "20260424-130000-a3f8b2c1",
+  "exit_code": 0,
+  "instances": [
+    {
+      "role": "host",
+      "run_id": "20260424-130000-h1234567",
+      "exit_code": 0,
+      "total": 5, "passed": 5, "failed": 0, "skipped": 0,
+      "tests": [],
+      "errors": [],
+      "new_failures": null,
+      "ipc_messages": [
+        {"seq": 1, "ts": "2026-04-24T13:00:05Z", "from": "host", "to": "*", "kind": "ready", "payload": {"port": 7777}},
+        {"seq": 3, "ts": "2026-04-24T13:00:08Z", "from": "client", "to": "host", "kind": "connected"}
+      ],
+      "ipc_summary": {
+        "sent_count": 1,
+        "received_count": 1,
+        "last_sent":     {"seq": 1, "to": "*", "kind": "ready"},
+        "last_received": {"seq": 3, "from": "client", "kind": "connected"}
+      }
+    },
+    {
+      "role": "client",
+      "run_id": "20260424-130000-c7654321",
+      "exit_code": 0,
+      "total": 3, "passed": 3, "failed": 0, "skipped": 0,
+      "tests": [],
+      "errors": [],
+      "new_failures": null,
+      "ipc_messages": [...],
+      "ipc_summary": {...}
+    }
+  ]
+}
+```
+
+When dependency orchestration fails, an extra top-level `orchestrator_errors` array appears. Entries enriched with the last IPC message the waiting instance saw from the failed dependency:
+
+```json
+{
+  "schema_version": "1",
+  "scenario_run_id": "20260424-130000-a3f8b2c1",
+  "exit_code": 4,
+  "instances": [...],
+  "orchestrator_errors": [
+    "instance \"client\": dependency \"host\" exited with exit 2 (compile error) before reaching phase \"compiling\". \"client\" last received from \"host\": seq=1 kind=\"boot\""
+  ]
+}
+```
+
 ---
 
 ### `testplay result`
@@ -423,6 +507,7 @@ During `testplay run`, poll `testplay-status.json` to track progress:
 ```json
 {
   "schema_version": "1",
+  "seq": 7,
   "phase": "running",
   "run_id": "20250325-143000-a3f8b2c1",
   "total": 10,

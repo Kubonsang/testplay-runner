@@ -186,6 +186,14 @@
   - **시나리오 모드 아티팩트 정리** — 멀티 인스턴스 실행 후에도 retention 정책에 따라 자동 정리; 같은 프로젝트를 공유하는 인스턴스는 중복 정리 방지
 - **릴리즈 게이트:** ✅ 설치 경로가 단순해지고, 빈 프로젝트에서도 `init`과 기본 설정만으로 첫 실행 흐름을 재현할 수 있음
 
+## ✅ v0.7.1 (Scenario race fix) — shipped 2026-04-03
+**테마:** v0.7.0 스모크 검증 중 드러난 race 한 줄 픽스
+
+- **목표:** v0.4.0-beta 이래 잠재해 있던 시나리오 fast-fail 경로의 race를 제거.
+- **수정 내용:**
+  - **`depReadyCh` re-check** — `depReadyCh` 와 `depDoneCh` 가 동시에 close되면 Go의 `select` 는 랜덤하게 한 쪽을 고름. 이전엔 `depDoneCh` 가 선택되면 즉시 fast-fail 했는데, 실제로는 dependency가 정상적으로 ready 신호를 친 직후 종료한 경우일 수도 있음. v0.7.1은 fast-fail 분기 진입 직전 `depReadyCh` 를 한 번 더 확인하는 inner-select 를 추가해 잘못된 실패 판정을 제거함. 코드: `internal/scenario/runner.go:120-126`.
+- **릴리즈 게이트:** v0.7.0 스모크 시나리오 305 테스트 반복 실행에서 race 없음.
+
 ## ✅ v0.8.0 (The Honest Contract) — shipped 2026-04-23
 **테마:** 문서화된 계약과 실제 동작의 일치
 

@@ -215,7 +215,7 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 | Area | Issue | Severity |
 |---|---|---|
 | `list` scanner | Static scan detects `[Test]`, `[UnityTest]`, `[TestCase]`, `[TestCaseSource]`, and `[Theory]` but may miss custom attributes. ~~Resolved in v0.8.0~~ — after first successful `testplay run` (exit 0/3), the run cache at `.testplay/cache/list.json` provides the complete inventory; `complete` and `source` fields signal whether the list is exhaustive. | Resolved |
-| Phase detection (single-phase) | `running` phase not emitted in single-phase mode — agents see `compiling → done` only. Two-phase mode emits accurate `compiling → running → done` sequence. | Low |
+| Phase detection (single-phase) | `running` phase intentionally not emitted in single-phase mode — agents see `compiling → done`. Two-phase mode (both `compile_ms` + `test_ms` set) emits accurate `compiling → running → done`. v0.6.0+ removed the misleading post-exit `running` write that existed earlier — this is now documented behavior, not a bug. | Intentional |
 | Unimplemented exit codes | ~~Resolved in v0.8.0~~ — exit 6 returned on Unity license/build-target failures (stderr pattern match), exit 7 returned on shadow workspace permission errors (`errors.Is(os.ErrPermission)`). | Resolved |
 | Shadow — `Packages/` not fully isolated | `Packages/` is linked (symlink on macOS/Linux, junction on Windows) rather than copied. If Unity or a package tool writes to the `Packages/` tree during batch execution (e.g. embedded packages), those changes propagate back to the original project. This is best-effort isolation. | Low |
 | Shadow — editor-open detection is best-effort | Shadow mode activates when `Temp/UnityLockfile` exists. A stale lockfile after an unclean Unity exit causes unnecessary shadow overhead. The lockfile check is a heuristic, not a guaranteed signal. | Low |
@@ -259,6 +259,11 @@ Host/Client startup ordering via Go channels (no disk polling).
 - **Host ready gating** — `depends_on`/`ready_phase`/`ready_timeout_ms` fields in scenario JSON; clients wait for host's ready phase before starting
 - **`orchestrator_errors`** — structured field in scenario output for dependency timeout/cancellation failures
 
+### v0.4.1-beta ✅ — Orchestrator hardening (shipped)
+Hotfix on top of v0.4.0 addressing two deadlock/hang scenarios discovered in dogfooding.
+- **Circular `depends_on` detection** — `scenario.Load()` rejects scenarios whose dependency graph contains cycles (would otherwise deadlock at scenario start)
+- **Dependent fast-fail** — when a dependency exits without ever signaling its ready phase, dependents abort immediately with exit 4 instead of waiting for `ready_timeout_ms`; failure recorded in `orchestrator_errors`
+
 ### v0.4.2-beta ✅ — Library Warm Cache (shipped)
 Shadow workspace Library/ seeded from project-local cache to eliminate cold-start latency.
 - **Parallel copy** — `copyDir` parallelized with 8-goroutine worker pool
@@ -293,6 +298,17 @@ Production readiness — onboarding and distribution.
 - **Cross-platform CI** — `go test ./...` on ubuntu, macos, and windows for every push/PR
 - **Scenario-mode artifact retention** — auto-prune after multi-instance runs, deduplicating shared project paths
 
+### v0.7.1 ✅ — Scenario race fix (shipped)
+Single-commit hotfix on top of v0.7.0, surfaced during smoke verification.
+- **`depReadyCh` re-check in fast-fail path** — when both `depReadyCh` and `depDoneCh` close simultaneously, Go's `select` picks randomly; the `depDoneCh` branch now re-checks `depReadyCh` before declaring fast-fail. Latent bug since v0.4.0-beta. See `internal/scenario/runner.go:120-126`.
+
+### v0.8.0 ✅ — The Honest Contract (shipped)
+Aligns documented contract with actual behavior.
+- **`seq` field in `testplay-status.json`** — `status.Writer` injects a monotonically increasing sequence number on every write; agents can detect stale reads without parsing `updated_at`
+- **Exit 6 — build/license failure detection** — `internal/unity.ParseBuildFailure()` matches Unity license and build-target stderr patterns; returned in both single-phase and two-phase paths when XML is absent and no compile errors are present
+- **Exit 7 — shadow workspace permission errors** — `errors.Is(wsErr, os.ErrPermission)` check in `runsvc.Service.Run` propagates filesystem permission errors as exit 7 instead of bare exit 1
+- **`testplay list` run cache** — `internal/listcache` package writes `.testplay/cache/list.json` after `testplay run` exits 0/3; subsequent `list` calls return `complete: true, source: "run_cache"` with full NUnit-discovered test inventory; static scan fallback now signals `complete: false, source: "static_scan"`
+
 ### v0.9.0 ✅ — Network Primitives (shipped)
 Framework-agnostic instance-to-instance communication and cross-instance failure correlation, unblocking dogfooding on multiplayer (NGO) projects.
 - **Scenario-scoped IPC bus** — `internal/ipc.BusWriter` + `PollingReader` over a shared NDJSON file at `<project>/.testplay/ipc/<scenario_run_id>/bus.ndjson`; `TESTPLAY_IPC_BUS` env var auto-injected into every instance (user values win)
@@ -301,13 +317,6 @@ Framework-agnostic instance-to-instance communication and cross-instance failure
 - **Cross-instance failure correlation** — when a dependency exits before signaling ready, `orchestrator_errors` entries gain `"X" last received from "Y": seq=N kind=K`
 - **`events.ndjson` IPC integration** — `ipc_send` / `ipc_recv` event lines interleaved per-instance with original send/recv timestamps; `internal/status.EventLog.Append` now preserves a caller-set `Timestamp` instead of overwriting
 - **Retention + .gitignore** — IPC bus directories follow the same `retention.max_runs` policy as run artifacts (reuses `artifacts.Store.Prune`); `.testplay/ipc/` auto-added to `.gitignore` on first scenario run
-
-### v0.8.0 ✅ — The Honest Contract (shipped)
-Aligns documented contract with actual behavior.
-- **`seq` field in `testplay-status.json`** — `status.Writer` injects a monotonically increasing sequence number on every write; agents can detect stale reads without parsing `updated_at`
-- **Exit 6 — build/license failure detection** — `internal/unity.ParseBuildFailure()` matches Unity license and build-target stderr patterns; returned in both single-phase and two-phase paths when XML is absent and no compile errors are present
-- **Exit 7 — shadow workspace permission errors** — `errors.Is(wsErr, os.ErrPermission)` check in `runsvc.Service.Run` propagates filesystem permission errors as exit 7 instead of bare exit 1
-- **`testplay list` run cache** — `internal/listcache` package writes `.testplay/cache/list.json` after `testplay run` exits 0/3; subsequent `list` calls return `complete: true, source: "run_cache"` with full NUnit-discovered test inventory; static scan fallback now signals `complete: false, source: "static_scan"`
 - **Scenario-mode safety** — list cache write-back skipped when `SkipCacheWriteBack` is set, matching Library cache discipline
 
 ### Remaining items (v1.0+)

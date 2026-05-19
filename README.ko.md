@@ -281,6 +281,90 @@ testplay run --scenario scenario.json  # 멀티 인스턴스 동시 실행
 }
 ```
 
+**빌드/라이선스 실패 (exit 6):**
+
+Unity 배치 실행이 NUnit XML도 안 만들고 C# 컴파일 에러도 없이 종료한 경우 — 보통 라이선스 활성화 실패 또는 빌드 모듈 미설치. 소스가 아닌 Unity 환경(라이선스, 플랫폼 모듈 설치)을 고치세요.
+
+```json
+{
+  "schema_version": "1",
+  "run_id": "20250325-143000-a3f8b2c1",
+  "exit_code": 6,
+  "tests": [],
+  "errors": []
+}
+```
+
+**섀도우 워크스페이스 권한 오류 (exit 7):**
+
+per-run `.testplay-shadow-<run_id>/` 워크스페이스 준비가 파일시스템 권한 오류로 실패한 경우 (예: 프로젝트 디렉토리 쓰기 불가, `.testplay/` 가 다른 사용자 소유). 경로/소유권을 고치세요.
+
+```json
+{
+  "schema_version": "1",
+  "exit_code": 7,
+  "error": "runsvc: prepare shadow workspace: ... permission denied"
+}
+```
+
+**시나리오 모드 (`--scenario`) — 집계 출력:**
+
+모든 인스턴스를 동시 실행하고 결과를 하나의 JSON으로 합쳐 출력합니다. v0.9 신규 필드: `scenario_run_id` (top-level), `instances[].ipc_messages`, `instances[].ipc_summary`. 사용자 코드가 이 필드들을 어떻게 채우는지는 [시나리오 IPC 버스](#시나리오-ipc-버스) 섹션 참고.
+
+```json
+{
+  "schema_version": "1",
+  "scenario_run_id": "20260424-130000-a3f8b2c1",
+  "exit_code": 0,
+  "instances": [
+    {
+      "role": "host",
+      "run_id": "20260424-130000-h1234567",
+      "exit_code": 0,
+      "total": 5, "passed": 5, "failed": 0, "skipped": 0,
+      "tests": [],
+      "errors": [],
+      "new_failures": null,
+      "ipc_messages": [
+        {"seq": 1, "ts": "2026-04-24T13:00:05Z", "from": "host", "to": "*", "kind": "ready", "payload": {"port": 7777}},
+        {"seq": 3, "ts": "2026-04-24T13:00:08Z", "from": "client", "to": "host", "kind": "connected"}
+      ],
+      "ipc_summary": {
+        "sent_count": 1,
+        "received_count": 1,
+        "last_sent":     {"seq": 1, "to": "*", "kind": "ready"},
+        "last_received": {"seq": 3, "from": "client", "kind": "connected"}
+      }
+    },
+    {
+      "role": "client",
+      "run_id": "20260424-130000-c7654321",
+      "exit_code": 0,
+      "total": 3, "passed": 3, "failed": 0, "skipped": 0,
+      "tests": [],
+      "errors": [],
+      "new_failures": null,
+      "ipc_messages": [...],
+      "ipc_summary": {...}
+    }
+  ]
+}
+```
+
+의존성 오케스트레이션이 실패하면 top-level `orchestrator_errors` 배열이 추가됩니다. v0.9부터 각 항목은 대기 인스턴스가 실패한 의존성으로부터 마지막으로 본 IPC 메시지로 보강됩니다:
+
+```json
+{
+  "schema_version": "1",
+  "scenario_run_id": "20260424-130000-a3f8b2c1",
+  "exit_code": 4,
+  "instances": [...],
+  "orchestrator_errors": [
+    "instance \"client\": dependency \"host\" exited with exit 2 (compile error) before reaching phase \"compiling\". \"client\" last received from \"host\": seq=1 kind=\"boot\""
+  ]
+}
+```
+
 ---
 
 ### `testplay result`
@@ -407,6 +491,7 @@ if (!string.IsNullOrEmpty(bus)) {
 ```json
 {
   "schema_version": "1",
+  "seq": 7,
   "phase": "running",
   "run_id": "20250325-143000-a3f8b2c1",
   "total": 10,
