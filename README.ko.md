@@ -108,7 +108,7 @@ testplay version
 ```json
 {
   "schema_version": "1",
-  "version": "v0.9.1"
+  "version": "v0.9.2"
 }
 ```
 
@@ -473,7 +473,7 @@ if (!string.IsNullOrEmpty(bus)) {
 | 3 | 테스트 실패 | 테스트 수정, `tests[].absolute_path` + `line` 참조 |
 | 4 | 타임아웃 | JSON 결과의 `timeout_type` 확인 — 아래 표 참조 |
 | 5 | 설정 오류 | `testplay.json` 수정 또는 생성 |
-| 6 | 빌드 실패 (라이선스 / 빌드 타겟) | Unity 라이선스 활성화 및 빌드 모듈 설치 확인 |
+| 6 | 빌드 / Unity invocation 실패 | Unity 라이선스, 빌드 모듈, 에디터 로그, 패키지 import, shadow cold import 확인 |
 | 7 | 권한 오류 (섀도우 워크스페이스) | 프로젝트 디렉토리 권한 수정 |
 | 8 | 시그널 중단 | SIGINT/SIGTERM 수신 — 코드 변경 없이 재시도 |
 | 9 | 러너 시스템 오류 | 결과/아티팩트 저장 실패 — 디스크 용량/권한 확인, `warnings` 필드 참조 |
@@ -497,6 +497,12 @@ if (!string.IsNullOrEmpty(bus)) {
   "errors": []
 }
 ```
+
+two-phase 모드의 compile invocation에서 exit 6이 반환되고 `errors[].message`에
+C# compile error가 없다고 표시되면, 이를 소스 컴파일 실패로 보지 마세요.
+shadow 모드에서는 cold workspace import 또는 패키지/asmdef refresh 중 테스트 phase에
+도달하기 전에 이런 결과가 날 수 있습니다. `compile_ms`를 늘리거나 shadow cache를
+워밍하고, 필요하면 non-shadow 실행으로 환경 비용과 실제 테스트 실패를 분리하세요.
 
 ## 진행 상황 모니터링
 

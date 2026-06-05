@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -350,10 +351,10 @@ func TestExecute_TwoPhase_BothSucceed_Returns0(t *testing.T) {
 	}
 
 	_, code := unity.Execute(context.Background(), runner, unity.ExecuteOptions{
-		ProjectPath:  dir,
-		ResultsFile:  filepath.Join(dir, "results.xml"),
-		CompileMs:    5000,
-		TestMs:       5000,
+		ProjectPath: dir,
+		ResultsFile: filepath.Join(dir, "results.xml"),
+		CompileMs:   5000,
+		TestMs:      5000,
 	})
 
 	if code != 0 {
@@ -567,20 +568,21 @@ func TestExecute_TwoPhase_TotalTimeout_DuringTest_EmitsTimeoutTotal(t *testing.T
 	}
 }
 
-// TestExecute_TwoPhase_CompilePhase_NonZeroExit_NoCompileErrors_ReturnsExit2 verifies
-// that a non-zero exit from the compile phase with no recognisable compile errors
-// is still treated as a failure (exit 2) rather than silently passing to phase 2.
-func TestExecute_TwoPhase_CompilePhase_NonZeroExit_NoCompileErrors_ReturnsExit2(t *testing.T) {
+// TestExecute_TwoPhase_CompilePhase_NonZeroExit_NoCompileErrors_ReturnsExit6 verifies
+// that a non-zero compile invocation exit with no recognisable C# compile errors
+// is classified as a Unity build/invocation failure, not a source compile failure.
+func TestExecute_TwoPhase_CompilePhase_NonZeroExit_NoCompileErrors_ReturnsExit6(t *testing.T) {
 	dir := t.TempDir()
 	callCount := 0
 	runner := &funcRunner{
 		run: func(ctx context.Context, args []string, stdout, stderr io.Writer) (int, error) {
 			callCount++
-			// Non-zero exit with generic (non-compile-error) stderr, e.g. license failure.
+			// Non-zero exit with generic non-compile stderr, e.g. shadow cold import
+			// or Unity process failure after a successful backend build.
 			if stderr != nil {
-				_, _ = stderr.Write([]byte("Unity license check failed"))
+				_, _ = stderr.Write([]byte("Tundra build success"))
 			}
-			return 1, nil
+			return -1, nil
 		},
 	}
 
@@ -591,14 +593,16 @@ func TestExecute_TwoPhase_CompilePhase_NonZeroExit_NoCompileErrors_ReturnsExit2(
 		TestMs:      5000,
 	})
 
-	if code != 2 {
-		t.Errorf("expected exit 2 for non-zero compile phase exit, got %d", code)
+	if code != 6 {
+		t.Errorf("expected exit 6 for non-zero compile invocation exit, got %d", code)
 	}
 	if callCount != 1 {
 		t.Errorf("expected runner called once (no test phase after compile failure), got %d", callCount)
 	}
 	if len(result.Errors) == 0 {
 		t.Error("expected at least one error entry for non-zero compile exit with no compile errors")
+	} else if !strings.Contains(result.Errors[0].Message, "no C# compile errors") {
+		t.Errorf("expected diagnostic to say no C# compile errors, got %q", result.Errors[0].Message)
 	}
 }
 

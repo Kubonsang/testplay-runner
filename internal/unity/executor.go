@@ -208,10 +208,12 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 		}, 2
 	}
 
-	// Non-zero exit with no recognisable compile errors.
+	// Non-zero exit with no recognisable C# compile errors.
 	if exitCode != 0 {
 		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
-		// Distinguish license / build-target failures (exit 6) from generic compile failures (exit 2).
+		// License / build-target failures are known exit 6 cases. Unknown
+		// non-zero exits without C# errors also stay in exit 6 because they
+		// point at Unity invocation/import state rather than source compilation.
 		if ParseBuildFailure(compileTail.Bytes()) {
 			return &history.RunResult{
 				SchemaVersion: "1",
@@ -222,12 +224,12 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 		}
 		return &history.RunResult{
 			SchemaVersion: "1",
-			ExitCode:      2,
+			ExitCode:      6,
 			Tests:         []parser.TestCase{},
 			Errors: []history.CompileError{
-				{Message: fmt.Sprintf("compile phase exited with code %d (no compile errors in stderr)", exitCode)},
+				{Message: fmt.Sprintf("Unity compile invocation exited with code %d (no C# compile errors in stderr); check Unity/editor logs, package import, shadow workspace cold import, license, or build-target setup", exitCode)},
 			},
-		}, 2
+		}, 6
 	}
 
 	// ── Phase 2: run tests ─────────────────────────────────────────────────

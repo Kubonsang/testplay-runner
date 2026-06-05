@@ -1,6 +1,6 @@
 # 📈 testplay Release Plan & Version History
 
-**현재 버전:** `v0.9.1`
+**현재 버전:** `v0.9.2`
 **목표:** 단순한 로컬 테스트 래퍼를 넘어, AI 에이전트에 최적화된 시나리오 기반 멀티 인스턴스 러너로 단계적으로 확장
 
 > 이 문서는 확정 약속이 아니라, 베타 진행 상황에 따라 조정될 수 있는 릴리즈 계획을 정리한 것입니다.  
@@ -274,6 +274,20 @@
   2. `depends_on_phase: "running"`이 조용히 무시되지 않고 실제 대기 phase와 에러 메시지에 반영될 것
   3. 알 수 없는 scenario 필드는 silent failure가 아니라 validation error일 것
   4. v0.9 IPC bus와 failure correlation 계약이 회귀하지 않을 것
+
+## ✅ v0.9.2 (Shadow Diagnostic Hotfix) — shipped 2026-06-05
+**테마:** shadow cold import와 C# compile failure의 진단 분리
+
+- **배경:** GNF_ 프로젝트 dogfooding에서 shadow workspace 초기 package/import 비용과 Unity compile invocation 실패가 C# compile failure처럼 보이는 문제가 발견됨.
+- **포함 수정:**
+  - two-phase compile invocation이 non-zero exit을 반환했지만 stderr에서 C# compile error가 발견되지 않으면 exit 2가 아니라 exit 6으로 분류
+  - 진단 메시지에 "no C# compile errors"와 Unity/editor logs, package import, shadow cold import 확인 경로를 명시
+  - 기존 `timeout_type: "compile"` 계약은 유지: phase deadline이 실제로 초과된 경우는 계속 exit 4
+  - README exit code 표를 업데이트하여 exit 6을 license/build target뿐 아니라 Unity invocation/import failure까지 포함하도록 확장
+- **릴리즈 게이트:**
+  1. 실제 C# compile errors가 있는 경우만 exit 2로 남을 것
+  2. C# compile errors 없는 compile invocation 실패는 exit 6 + 명확한 환경/Unity 진단 메시지를 반환할 것
+  3. shadow cold import 비용 때문에 테스트 실패로 오독하지 않도록 README에 대응 경로가 문서화될 것
 
 ## 🚀 v1.0.0 (NGO Harness)
 **테마:** v0.9 primitives 위에 NGO(Netcode for GameObjects) 전용 sugar

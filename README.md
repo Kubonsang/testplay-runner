@@ -108,7 +108,7 @@ testplay version
 ```json
 {
   "schema_version": "1",
-  "version": "v0.9.1"
+  "version": "v0.9.2"
 }
 ```
 
@@ -489,7 +489,7 @@ if (!string.IsNullOrEmpty(bus)) {
 | 3 | Test failure | Fix test, see `tests[].absolute_path` + `line` |
 | 4 | Timeout | Check `timeout_type` in the JSON result — see table below |
 | 5 | Config error | Fix or create `testplay.json` |
-| 6 | Build failure (license / build target) | Check Unity license activation and installed build modules |
+| 6 | Build / Unity invocation failure | Check Unity license, installed build modules, editor logs, package import, and shadow cold import |
 | 7 | Permission error (shadow workspace) | Fix permissions on project directory |
 | 8 | Interrupted by signal | SIGINT/SIGTERM received — retry without code changes |
 | 9 | Runner system error | Result/artifact save failed — check disk space/permissions, see `warnings` field |
@@ -513,6 +513,13 @@ Example JSON for a compile-phase timeout:
   "errors": []
 }
 ```
+
+When two-phase mode returns exit 6 from the compile invocation and `errors[].message`
+says no C# compile errors were found, do not treat it as a source compile
+failure. In shadow mode this can happen during a cold workspace import or
+package/asmdef refresh before Unity reaches the test phase. Increase `compile_ms`,
+warm the shadow cache, or re-run non-shadow to separate environment cost from
+actual test failures.
 
 ## Progress Monitoring
 
