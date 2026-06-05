@@ -1,6 +1,7 @@
 package scenario
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,11 +16,12 @@ var ErrScenarioInvalid = errors.New("scenario file is invalid")
 // InstanceSpec describes a single instance to run in the scenario.
 type InstanceSpec struct {
 	Role           string            `json:"role"`
-	Config         string            `json:"config"`                      // path to testplay.json, relative to scenario file or absolute
-	DependsOn      string            `json:"depends_on,omitempty"`        // role this instance waits for before starting
-	ReadyPhase     string            `json:"ready_phase,omitempty"`       // phase to wait for in the depended-on instance
-	ReadyTimeoutMs int               `json:"ready_timeout_ms,omitempty"`  // how long to wait for the dependency (ms)
-	Env            map[string]string `json:"env,omitempty"`               // extra env vars merged with os.Environ() for this instance
+	Config         string            `json:"config"`                     // path to testplay.json, relative to scenario file or absolute
+	DependsOn      string            `json:"depends_on,omitempty"`       // role this instance waits for before starting
+	DependsOnPhase string            `json:"depends_on_phase,omitempty"` // phase the dependency must reach before this instance starts
+	ReadyPhase     string            `json:"ready_phase,omitempty"`      // phase to wait for in the depended-on instance
+	ReadyTimeoutMs int               `json:"ready_timeout_ms,omitempty"` // how long to wait for the dependency (ms)
+	Env            map[string]string `json:"env,omitempty"`              // extra env vars merged with os.Environ() for this instance
 }
 
 // EffectiveReadyPhase returns the phase string to wait for, defaulting to "compiling".
@@ -56,6 +58,35 @@ func (f *ScenarioFile) ConfigPath(inst InstanceSpec) string {
 	return filepath.Join(f.dir, inst.Config)
 }
 
+// DependencyPhase returns the phase inst waits for on its dependency.
+// An explicit depends_on_phase wins; otherwise the dependency's ready_phase is used.
+func (f *ScenarioFile) DependencyPhase(inst InstanceSpec) string {
+	if inst.DependsOnPhase != "" {
+		return inst.DependsOnPhase
+	}
+	for _, dep := range f.Instances {
+		if dep.Role == inst.DependsOn {
+			return dep.EffectiveReadyPhase()
+		}
+	}
+	return InstanceSpec{}.EffectiveReadyPhase()
+}
+
+// SignalPhase returns the phase at which inst should notify dependents.
+// If a dependent requests depends_on_phase and inst has no explicit ready_phase,
+// the requested phase becomes the signal phase.
+func (f *ScenarioFile) SignalPhase(inst InstanceSpec) string {
+	if inst.ReadyPhase != "" {
+		return inst.ReadyPhase
+	}
+	for _, candidate := range f.Instances {
+		if candidate.DependsOn == inst.Role && candidate.DependsOnPhase != "" {
+			return candidate.DependsOnPhase
+		}
+	}
+	return inst.EffectiveReadyPhase()
+}
+
 // Load reads, parses, and validates a scenario file from path.
 func Load(path string) (*ScenarioFile, error) {
 	data, err := os.ReadFile(path)
@@ -67,7 +98,9 @@ func Load(path string) (*ScenarioFile, error) {
 	}
 
 	var sf ScenarioFile
-	if err := json.Unmarshal(data, &sf); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&sf); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrScenarioInvalid, err)
 	}
 
@@ -79,6 +112,7 @@ func Load(path string) (*ScenarioFile, error) {
 	}
 	// Build role set for cross-reference validation.
 	roles := make(map[string]struct{}, len(sf.Instances))
+	instancesByRole := make(map[string]InstanceSpec, len(sf.Instances))
 	for i, inst := range sf.Instances {
 		if inst.Role == "" {
 			return nil, fmt.Errorf("%w: instances[%d].role is required", ErrScenarioInvalid, i)
@@ -90,8 +124,10 @@ func Load(path string) (*ScenarioFile, error) {
 			return nil, fmt.Errorf("%w: instances[%d].role %q is not unique", ErrScenarioInvalid, i, inst.Role)
 		}
 		roles[inst.Role] = struct{}{}
+		instancesByRole[inst.Role] = inst
 	}
 	// Validate depends_on references.
+	requiredDependencyPhases := make(map[string]string)
 	for i, inst := range sf.Instances {
 		if inst.DependsOn == "" {
 			continue
@@ -102,6 +138,20 @@ func Load(path string) (*ScenarioFile, error) {
 		if inst.DependsOn == inst.Role {
 			return nil, fmt.Errorf("%w: instances[%d].depends_on %q cannot depend on itself", ErrScenarioInvalid, i, inst.Role)
 		}
+		dep := instancesByRole[inst.DependsOn]
+		phase := inst.DependsOnPhase
+		if phase == "" {
+			phase = dep.EffectiveReadyPhase()
+		}
+		if dep.ReadyPhase != "" && inst.DependsOnPhase != "" && dep.ReadyPhase != inst.DependsOnPhase {
+			return nil, fmt.Errorf("%w: instances[%d].depends_on_phase %q conflicts with %q.ready_phase %q",
+				ErrScenarioInvalid, i, inst.DependsOnPhase, inst.DependsOn, dep.ReadyPhase)
+		}
+		if prev, ok := requiredDependencyPhases[inst.DependsOn]; ok && prev != phase {
+			return nil, fmt.Errorf("%w: dependency %q has conflicting requested phases %q and %q",
+				ErrScenarioInvalid, inst.DependsOn, prev, phase)
+		}
+		requiredDependencyPhases[inst.DependsOn] = phase
 	}
 
 	// Validate env keys.

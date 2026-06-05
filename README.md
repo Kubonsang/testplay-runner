@@ -108,7 +108,7 @@ testplay version
 ```json
 {
   "schema_version": "1",
-  "version": "v0.9.0"
+  "version": "v0.9.1"
 }
 ```
 
@@ -221,6 +221,8 @@ testplay run --clear-cache         # remove cached Library before shadow workspa
 testplay run --scenario scenario.json  # multi-instance concurrent execution
 ```
 
+When `--scenario` is used, `--filter`, `--category`, `--compare-run`, `--shadow`, and cache flags are forwarded to every scenario instance.
+
 **All tests pass (exit 0):**
 
 ```json
@@ -325,7 +327,7 @@ Returned when preparing the per-run `.testplay-shadow-<run_id>/` workspace fails
 
 **Scenario mode (`--scenario`) — aggregated output:**
 
-Runs every instance concurrently and writes a single JSON object covering all of them. Fields new in v0.9: `scenario_run_id` (top-level), `instances[].ipc_messages`, `instances[].ipc_summary`. See [Scenario IPC Bus](#scenario-ipc-bus) for how user code populates these.
+Runs every instance concurrently and writes a single JSON object covering all of them. Fields new in v0.9: `scenario_run_id` (top-level), `instances[].ipc_messages`, `instances[].ipc_summary`. v0.9.1 also makes scenario JSON strict: unknown fields fail validation instead of being silently ignored.
 
 ```json
 {
@@ -366,6 +368,20 @@ Runs every instance concurrently and writes a single JSON object covering all of
   ]
 }
 ```
+
+Minimal scenario file:
+
+```json
+{
+  "schema_version": "1",
+  "instances": [
+    {"role": "host", "config": "testplay.json", "ready_phase": "running"},
+    {"role": "client", "config": "testplay.json", "depends_on": "host", "depends_on_phase": "running", "ready_timeout_ms": 120000}
+  ]
+}
+```
+
+`config` paths are resolved relative to the scenario file unless absolute. `depends_on_phase` controls the dependency phase a waiting instance requires; if omitted, the dependency's `ready_phase` is used, then `"compiling"` as the default.
 
 When dependency orchestration fails, an extra top-level `orchestrator_errors` array appears. Entries enriched with the last IPC message the waiting instance saw from the failed dependency:
 

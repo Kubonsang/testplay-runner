@@ -108,7 +108,7 @@ testplay version
 ```json
 {
   "schema_version": "1",
-  "version": "v0.9.0"
+  "version": "v0.9.1"
 }
 ```
 
@@ -204,6 +204,8 @@ testplay run --shadow              # 에디터 락 없이 강제로 섀도우 �
 testplay run --clear-cache         # 캐시된 Library 제거 후 섀도우 워크스페이스 생성
 testplay run --scenario scenario.json  # 멀티 인스턴스 동시 실행
 ```
+
+`--scenario`와 함께 사용하면 `--filter`, `--category`, `--compare-run`, `--shadow`, 캐시 플래그가 모든 시나리오 인스턴스에 전파됩니다.
 
 **전체 통과 (exit 0):**
 
@@ -309,7 +311,7 @@ per-run `.testplay-shadow-<run_id>/` 워크스페이스 준비가 파일시스�
 
 **시나리오 모드 (`--scenario`) — 집계 출력:**
 
-모든 인스턴스를 동시 실행하고 결과를 하나의 JSON으로 합쳐 출력합니다. v0.9 신규 필드: `scenario_run_id` (top-level), `instances[].ipc_messages`, `instances[].ipc_summary`. 사용자 코드가 이 필드들을 어떻게 채우는지는 [시나리오 IPC 버스](#시나리오-ipc-버스) 섹션 참고.
+모든 인스턴스를 동시 실행하고 결과를 하나의 JSON으로 합쳐 출력합니다. v0.9 신규 필드: `scenario_run_id` (top-level), `instances[].ipc_messages`, `instances[].ipc_summary`. v0.9.1부터 시나리오 JSON은 strict validation을 사용하므로 알 수 없는 필드는 조용히 무시되지 않고 오류가 됩니다.
 
 ```json
 {
@@ -350,6 +352,20 @@ per-run `.testplay-shadow-<run_id>/` 워크스페이스 준비가 파일시스�
   ]
 }
 ```
+
+최소 시나리오 파일:
+
+```json
+{
+  "schema_version": "1",
+  "instances": [
+    {"role": "host", "config": "testplay.json", "ready_phase": "running"},
+    {"role": "client", "config": "testplay.json", "depends_on": "host", "depends_on_phase": "running", "ready_timeout_ms": 120000}
+  ]
+}
+```
+
+`config` 경로는 절대 경로가 아니면 시나리오 파일 위치 기준으로 해석됩니다. `depends_on_phase`는 대기 중인 인스턴스가 의존 대상에게 요구하는 phase입니다. 생략하면 의존 대상의 `ready_phase`, 그마저 없으면 기본값 `"compiling"`을 사용합니다.
 
 의존성 오케스트레이션이 실패하면 top-level `orchestrator_errors` 배열이 추가됩니다. v0.9부터 각 항목은 대기 인스턴스가 실패한 의존성으로부터 마지막으로 본 IPC 메시지로 보강됩니다:
 

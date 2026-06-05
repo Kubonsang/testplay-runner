@@ -22,8 +22,8 @@ type InstanceRunner func(ctx context.Context, spec InstanceSpec, readyCh chan<- 
 type InstanceResult struct {
 	Role      string
 	Response  runsvc.Response
-	Err       error             // non-nil for infrastructure errors only
-	IpcEvents []ipc.ReadEvent   // IPC traffic this instance sent or received; empty when IPC disabled
+	Err       error           // non-nil for infrastructure errors only
+	IpcEvents []ipc.ReadEvent // IPC traffic this instance sent or received; empty when IPC disabled
 }
 
 // ScenarioResult aggregates the outcomes of all instances.
@@ -112,6 +112,7 @@ func RunScenario(ctx context.Context, spec *ScenarioFile, run InstanceRunner, ip
 			if inst.DependsOn != "" {
 				depReadyCh := readyChannels[inst.DependsOn]
 				depDoneCh := doneChannels[inst.DependsOn]
+				depPhase := spec.DependencyPhase(inst)
 				timeout := time.Duration(inst.EffectiveReadyTimeoutMs()) * time.Millisecond
 				select {
 				case <-depReadyCh:
@@ -131,11 +132,11 @@ func RunScenario(ctx context.Context, spec *ScenarioFile, run InstanceRunner, ip
 						var msg string
 						if depResult.Err != nil {
 							msg = fmt.Sprintf("instance %q: dependency %q failed with infrastructure error before reaching phase %q",
-								inst.Role, inst.DependsOn, inst.EffectiveReadyPhase())
+								inst.Role, inst.DependsOn, depPhase)
 						} else {
 							depExit := depResult.Response.ExitCode
 							msg = fmt.Sprintf("instance %q: dependency %q exited with exit %d (%s) before reaching phase %q",
-								inst.Role, inst.DependsOn, depExit, exitCodeLabel(depExit), inst.EffectiveReadyPhase())
+								inst.Role, inst.DependsOn, depExit, exitCodeLabel(depExit), depPhase)
 						}
 						if last, ok := lastReceivedFrom(events, inst.DependsOn); ok {
 							msg += fmt.Sprintf(`. %q last received from %q: seq=%d kind=%q`,
@@ -154,7 +155,7 @@ func RunScenario(ctx context.Context, spec *ScenarioFile, run InstanceRunner, ip
 				case <-time.After(timeout):
 					events := snapshotIpc()
 					msg := fmt.Sprintf("instance %q timed out waiting for %q to reach phase %q (%dms)",
-						inst.Role, inst.DependsOn, inst.EffectiveReadyPhase(), inst.EffectiveReadyTimeoutMs())
+						inst.Role, inst.DependsOn, depPhase, inst.EffectiveReadyTimeoutMs())
 					if last, ok := lastReceivedFrom(events, inst.DependsOn); ok {
 						msg += fmt.Sprintf(`. %q last received from %q: seq=%d kind=%q`,
 							inst.Role, inst.DependsOn, last.Seq, last.Kind)

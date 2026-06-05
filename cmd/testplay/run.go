@@ -131,6 +131,8 @@ func runRun(w io.Writer, deps runDeps) int {
 type scenarioDeps struct {
 	ctx        context.Context
 	run        scenario.InstanceRunner // nil = real runner constructed from each instance's config
+	runner     unity.Runner            // test injection point for production run path; nil = ProcessRunner
+	opts       RunCmdOptions           // flags forwarded to each instance when run is nil
 	clearCache bool                    // passed through to each instance's runsvc.Request
 	ipcBusPath string                  // test injection point; production computes from first instance project_path
 }
@@ -218,18 +220,27 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 			// Wrap with ReadyNotifier so this instance signals its readyCh when the
 			// target phase is reached. readyCh is nil for instances with no dependents.
 			if readyCh != nil {
-				sw = scenario.NewReadyNotifier(sw, instSpec.EffectiveReadyPhase(), readyCh)
+				sw = scenario.NewReadyNotifier(sw, spec.SignalPhase(instSpec), readyCh)
 			}
 
+			runner := deps.runner
+			if runner == nil {
+				runner = &unity.ProcessRunner{UnityPath: cfg.UnityPath, Env: instSpec.Env}
+			}
 			svc := &runsvc.Service{
-				Runner:       &unity.ProcessRunner{UnityPath: cfg.UnityPath, Env: instSpec.Env},
+				Runner:       runner,
 				Store:        history.NewStore(cfg.ResultDir),
 				Artifacts:    artifacts.NewStore(artifactRoot),
 				StatusWriter: sw,
 			}
 			return svc.Run(instanceCtx, runsvc.Request{
 				Config:             cfg,
-				ClearCache:         deps.clearCache,
+				Filter:             deps.opts.Filter,
+				Category:           deps.opts.Category,
+				CompareRun:         deps.opts.CompareRun,
+				ResetShadow:        deps.opts.ResetShadow,
+				ForceShadow:        deps.opts.ForceShadow,
+				ClearCache:         deps.clearCache || deps.opts.ClearCache,
 				SkipCacheWriteBack: true, // avoid concurrent writes to shared cache dir
 			})
 		}
@@ -397,7 +408,18 @@ var runCmd = &cobra.Command{
 
 		var code int
 		if scenarioPath != "" {
-			code = runScenario(cmd.OutOrStdout(), scenarioPath, scenarioDeps{ctx: ctx, clearCache: clearCache})
+			code = runScenario(cmd.OutOrStdout(), scenarioPath, scenarioDeps{
+				ctx:        ctx,
+				clearCache: clearCache,
+				opts: RunCmdOptions{
+					Filter:      runFilter,
+					Category:    runCategory,
+					CompareRun:  runCompareRun,
+					ResetShadow: resetShadow,
+					ForceShadow: forceShadow,
+					ClearCache:  clearCache,
+				},
+			})
 		} else {
 			deps := runDeps{
 				ctx:        ctx,

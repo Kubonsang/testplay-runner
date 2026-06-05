@@ -33,7 +33,7 @@ func TestRunScenario_AllInstancesRun(t *testing.T) {
 	t.Parallel()
 	spec := &scenario.ScenarioFile{
 		Instances: []scenario.InstanceSpec{
-			{Role: "Host",   Config: "./host.json"},
+			{Role: "Host", Config: "./host.json"},
 			{Role: "Client", Config: "./client.json"},
 		},
 	}
@@ -66,7 +66,7 @@ func TestRunScenario_ExitCodeIsMaxOfInstances(t *testing.T) {
 	t.Parallel()
 	spec := &scenario.ScenarioFile{
 		Instances: []scenario.InstanceSpec{
-			{Role: "Host",   Config: "./host.json"},
+			{Role: "Host", Config: "./host.json"},
 			{Role: "Client", Config: "./client.json"},
 		},
 	}
@@ -126,7 +126,7 @@ func TestRunScenario_ClientStartsAfterHostReady(t *testing.T) {
 	t.Parallel()
 	spec := &scenario.ScenarioFile{
 		Instances: []scenario.InstanceSpec{
-			{Role: "host",   Config: "./host.json"},
+			{Role: "host", Config: "./host.json"},
 			{Role: "client", Config: "./client.json", DependsOn: "host"},
 		},
 	}
@@ -161,8 +161,12 @@ func TestRunScenario_ClientStartsAfterHostReady(t *testing.T) {
 	defer mu.Unlock()
 	hostStartIdx, clientStartIdx := -1, -1
 	for i, ev := range order {
-		if ev == "host:start" { hostStartIdx = i }
-		if ev == "client:start" { clientStartIdx = i }
+		if ev == "host:start" {
+			hostStartIdx = i
+		}
+		if ev == "client:start" {
+			clientStartIdx = i
+		}
 	}
 	if hostStartIdx == -1 || clientStartIdx == -1 {
 		t.Fatalf("order incomplete: %v", order)
@@ -176,7 +180,7 @@ func TestRunScenario_ReadyTimeout_ReturnsExit4(t *testing.T) {
 	t.Parallel()
 	spec := &scenario.ScenarioFile{
 		Instances: []scenario.InstanceSpec{
-			{Role: "host",   Config: "./host.json"},
+			{Role: "host", Config: "./host.json"},
 			{Role: "client", Config: "./client.json", DependsOn: "host", ReadyTimeoutMs: 50},
 		},
 	}
@@ -198,6 +202,40 @@ func TestRunScenario_ReadyTimeout_ReturnsExit4(t *testing.T) {
 	}
 	if len(result.OrchestratorErrors) == 0 {
 		t.Error("expected orchestrator_errors to be non-empty")
+	}
+}
+
+func TestRunScenario_ReadyTimeout_UsesDependsOnPhaseInError(t *testing.T) {
+	t.Parallel()
+	spec := &scenario.ScenarioFile{
+		Instances: []scenario.InstanceSpec{
+			{Role: "host", Config: "./host.json"},
+			{
+				Role:           "client",
+				Config:         "./client.json",
+				DependsOn:      "host",
+				DependsOnPhase: "running",
+				ReadyTimeoutMs: 50,
+			},
+		},
+	}
+
+	run := func(_ context.Context, inst scenario.InstanceSpec, readyCh chan<- struct{}) (runsvc.Response, error) {
+		if inst.Role == "host" {
+			time.Sleep(200 * time.Millisecond)
+		}
+		return fakeResult(0), nil
+	}
+
+	result, err := scenario.RunScenario(context.Background(), spec, run, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.OrchestratorErrors) == 0 {
+		t.Fatal("expected orchestrator_errors to be non-empty")
+	}
+	if !strings.Contains(result.OrchestratorErrors[0], `phase "running"`) {
+		t.Errorf("expected timeout to mention depends_on_phase running, got: %s", result.OrchestratorErrors[0])
 	}
 }
 
@@ -242,7 +280,7 @@ func TestRunScenario_ContextCancellation_StopsWait(t *testing.T) {
 	t.Parallel()
 	spec := &scenario.ScenarioFile{
 		Instances: []scenario.InstanceSpec{
-			{Role: "host",   Config: "./host.json"},
+			{Role: "host", Config: "./host.json"},
 			{Role: "client", Config: "./client.json", DependsOn: "host", ReadyTimeoutMs: 10000},
 		},
 	}

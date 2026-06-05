@@ -1,6 +1,6 @@
 # 📈 testplay Release Plan & Version History
 
-**현재 버전:** `v0.9.0`
+**현재 버전:** `v0.9.1`
 **목표:** 단순한 로컬 테스트 래퍼를 넘어, AI 에이전트에 최적화된 시나리오 기반 멀티 인스턴스 러너로 단계적으로 확장
 
 > 이 문서는 확정 약속이 아니라, 베타 진행 상황에 따라 조정될 수 있는 릴리즈 계획을 정리한 것입니다.  
@@ -258,6 +258,22 @@
   2. 한 인스턴스에서 NDJSON 줄 append → 다른 인스턴스가 폴링으로 읽기 가능
   3. 시나리오 출력에 `instances[].ipc_messages` 필드가 송수신 마지막 메시지를 담고 있을 것
   4. host crash 시 `orchestrator_errors`에 "client saw host's last message: seq=N kind=K"가 포함될 것
+
+## ✅ v0.9.1 (Scenario Orchestration Hotfix) — shipped 2026-06-05
+**테마:** dogfooding에서 발견된 scenario 모드의 사용자 워크플로우 결함 해소
+
+- **배경:** NGO 액션 RPG Phase F dogfooding에서 IPC 버스는 동작했지만, scenario orchestration 계층이 실제 multi-client 검증 워크플로우를 막는 문제가 발견됨.
+- **포함 수정:**
+  - `testplay run --scenario ... --filter X` / `--category X`가 모든 인스턴스의 Unity 실행 인자로 전파됨
+  - `depends_on_phase` 필드를 정식 지원하여 dependent 인스턴스가 의존 대상에게 요구하는 phase를 명시 가능
+  - `ready_phase`와 `depends_on_phase`의 의미를 분리하고, timeout/fast-fail 에러 메시지가 실제 대기 phase를 보고하도록 수정
+  - scenario JSON을 strict validation으로 변경하여 알 수 없는 필드와 phase 충돌을 즉시 exit 5(config error)로 거부
+  - `ready_timeout_ms` 문서화 강화: 기본 30초는 유지하되 대형 Unity 프로젝트는 scenario JSON에서 명시적으로 늘릴 수 있음
+- **릴리즈 게이트:**
+  1. scenario 모드에서 필터/카테고리가 모든 인스턴스에 동일하게 적용될 것
+  2. `depends_on_phase: "running"`이 조용히 무시되지 않고 실제 대기 phase와 에러 메시지에 반영될 것
+  3. 알 수 없는 scenario 필드는 silent failure가 아니라 validation error일 것
+  4. v0.9 IPC bus와 failure correlation 계약이 회귀하지 않을 것
 
 ## 🚀 v1.0.0 (NGO Harness)
 **테마:** v0.9 primitives 위에 NGO(Netcode for GameObjects) 전용 sugar

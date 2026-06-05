@@ -123,7 +123,7 @@ func TestLoad_DependsOn_ValidReference(t *testing.T) {
 		"schema_version": "1",
 		"instances": [
 			{"role": "host",   "config": "host.json"},
-			{"role": "client", "config": "client.json", "depends_on": "host", "ready_timeout_ms": 5000}
+			{"role": "client", "config": "client.json", "depends_on": "host", "depends_on_phase": "running", "ready_timeout_ms": 5000}
 		]
 	}`
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
@@ -135,6 +135,9 @@ func TestLoad_DependsOn_ValidReference(t *testing.T) {
 	}
 	if sf.Instances[1].DependsOn != "host" {
 		t.Errorf("expected depends_on=host, got %q", sf.Instances[1].DependsOn)
+	}
+	if sf.Instances[1].DependsOnPhase != "running" {
+		t.Errorf("expected depends_on_phase=running, got %q", sf.Instances[1].DependsOnPhase)
 	}
 	if sf.Instances[1].ReadyTimeoutMs != 5000 {
 		t.Errorf("expected ready_timeout_ms=5000, got %d", sf.Instances[1].ReadyTimeoutMs)
@@ -343,6 +346,25 @@ func TestLoad_EnvKeyWithEquals_Rejected(t *testing.T) {
 	_, err := scenario.Load(path)
 	if err == nil {
 		t.Fatal("expected error for env key containing '='")
+	}
+	if !errors.Is(err, scenario.ErrScenarioInvalid) {
+		t.Errorf("expected ErrScenarioInvalid, got %v", err)
+	}
+}
+
+func TestLoad_UnknownInstanceFieldRejected(t *testing.T) {
+	dir := t.TempDir()
+	content := `{
+		"schema_version": "1",
+		"instances": [
+			{"role": "client", "config": "client.json", "depends_on_phase_typo": "running"}
+		]
+	}`
+	path := filepath.Join(dir, "scenario.json")
+	os.WriteFile(path, []byte(content), 0644)
+	_, err := scenario.Load(path)
+	if err == nil {
+		t.Fatal("expected error for unknown instance field")
 	}
 	if !errors.Is(err, scenario.ErrScenarioInvalid) {
 		t.Errorf("expected ErrScenarioInvalid, got %v", err)

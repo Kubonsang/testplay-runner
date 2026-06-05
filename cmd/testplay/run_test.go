@@ -202,6 +202,24 @@ func (c *capturingRunner) Run(_ context.Context, args []string, stdout, stderr i
 	return 0, nil
 }
 
+type scenarioCapturingRunner struct {
+	resultsXML []byte
+	mu         sync.Mutex
+	args       [][]string
+}
+
+func (c *scenarioCapturingRunner) Run(_ context.Context, args []string, stdout, stderr io.Writer) (int, error) {
+	c.mu.Lock()
+	c.args = append(c.args, append([]string(nil), args...))
+	c.mu.Unlock()
+	for i, a := range args {
+		if a == "-testResults" && i+1 < len(args) && c.resultsXML != nil {
+			_ = os.WriteFile(args[i+1], c.resultsXML, 0644)
+		}
+	}
+	return 0, nil
+}
+
 func TestRunCmd_FilterForwarded(t *testing.T) {
 	dir := t.TempDir()
 	xmlData := mustReadXMLFixture(t, "../../internal/parser/testdata/passing.xml")
@@ -233,6 +251,77 @@ func TestRunCmd_FilterForwarded(t *testing.T) {
 	}
 }
 
+func TestRunScenario_FilterAndCategoryForwardedToInstances(t *testing.T) {
+	dir := t.TempDir()
+	xmlData := mustReadXMLFixture(t, "../../internal/parser/testdata/passing.xml")
+	runner := &scenarioCapturingRunner{resultsXML: xmlData}
+	t.Cleanup(func() {
+		_ = os.Remove("testplay-status-host.json")
+		_ = os.Remove("testplay-status-client.json")
+	})
+
+	projectDir := filepath.Join(dir, "project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	resultDir := filepath.Join(projectDir, ".testplay", "results")
+	cfgData, _ := json.Marshal(map[string]any{
+		"schema_version": "1",
+		"unity_path":     "/fake/unity",
+		"project_path":   projectDir,
+		"result_dir":     resultDir,
+		"timeout":        map[string]any{"total_ms": 300000},
+	})
+	cfgPath := filepath.Join(projectDir, "testplay.json")
+	if err := os.WriteFile(cfgPath, cfgData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	scenarioContent, _ := json.Marshal(map[string]any{
+		"schema_version": "1",
+		"instances": []map[string]any{
+			{"role": "host", "config": cfgPath},
+			{"role": "client", "config": cfgPath},
+		},
+	})
+	specPath := filepath.Join(dir, "scenario.json")
+	if err := os.WriteFile(specPath, scenarioContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	code := runScenario(&buf, specPath, scenarioDeps{
+		runner: runner,
+		opts:   RunCmdOptions{Filter: "ROOM_TRAVERSAL_PORT", Category: "NGO"},
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput: %s", code, buf.String())
+	}
+
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if len(runner.args) != 2 {
+		t.Fatalf("expected two Unity invocations, got %d: %v", len(runner.args), runner.args)
+	}
+	for _, args := range runner.args {
+		if !argsContainPair(args, "-testFilter", "ROOM_TRAVERSAL_PORT") {
+			t.Errorf("expected -testFilter in args, got: %v", args)
+		}
+		if !argsContainPair(args, "-testCategory", "NGO") {
+			t.Errorf("expected -testCategory in args, got: %v", args)
+		}
+	}
+}
+
+func argsContainPair(args []string, key, value string) bool {
+	for i, arg := range args {
+		if arg == key && i+1 < len(args) && args[i+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
 func TestRunCmd_SaveFailure_ReturnsExit9WithWarning(t *testing.T) {
 	dir := t.TempDir()
 	xmlData := mustReadXMLFixture(t, "../../internal/parser/testdata/passing.xml")
@@ -252,9 +341,9 @@ func TestRunCmd_SaveFailure_ReturnsExit9WithWarning(t *testing.T) {
 
 	var buf bytes.Buffer
 	code := runRun(&buf, runDeps{
-		loadConfig:  func(string) (*config.Config, error) { return cfg, nil },
-		runner:      fake,
-		statusPath:  filepath.Join(dir, "status.json"),
+		loadConfig: func(string) (*config.Config, error) { return cfg, nil },
+		runner:     fake,
+		statusPath: filepath.Join(dir, "status.json"),
 		// Point store at a path inside a file to force a save error.
 		resultStore: history.NewStore(filepath.Join(blocker, "impossible")),
 		opts:        RunCmdOptions{},
