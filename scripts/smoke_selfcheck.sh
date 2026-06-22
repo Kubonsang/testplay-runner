@@ -95,7 +95,7 @@ assert_eq "missing field returns empty (no crash)" \
 echo ""
 echo "── non-zero command capture ──────────────────────────────────────────────"
 
-# Simulate fastplay run failing: || cmd_status=$? must capture the status
+# Simulate testplay run failing: || cmd_status=$? must capture the status
 # without set -e killing the script, leaving the diagnostic block reachable.
 _fake_fail() { printf '{"error":"unity not found"}\n'; return 2; }
 

@@ -1,6 +1,6 @@
 using NUnit.Framework;
 
-namespace FastPlaySmoke
+namespace TestPlaySmoke
 {
     public class EditModeSmoke
     {

@@ -2,7 +2,7 @@ using System.Collections;
 using NUnit.Framework;
 using UnityEngine.TestTools;
 
-namespace FastPlaySmoke
+namespace TestPlaySmoke
 {
     public class PlayModeSmoke
     {
