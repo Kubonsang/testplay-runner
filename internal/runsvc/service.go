@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Kubonsang/testplay-runner/internal/artifacts"
+	"github.com/Kubonsang/testplay-runner/internal/bridge"
 	"github.com/Kubonsang/testplay-runner/internal/config"
 	"github.com/Kubonsang/testplay-runner/internal/history"
 	"github.com/Kubonsang/testplay-runner/internal/listcache"
@@ -21,6 +22,46 @@ import (
 )
 
 const heartbeatInterval = 5 * time.Second
+
+// Backend identifiers recorded in RunResult.Backend / the CLI output.
+const (
+	backendProcess = "process"
+	backendShadow  = "shadow"
+	backendBridge  = "bridge"
+)
+
+// defaultBridgeIdleDeadlineMs bounds how long the warm bridge may wait for the
+// editor to become idle (compile/import to settle) before answering busy.
+const defaultBridgeIdleDeadlineMs = 30000
+
+// twoPhaseRequested reports whether the config asks for two-phase execution.
+// The warm bridge cannot honestly reproduce the strict compile/test phase
+// split, so two-phase always runs cold.
+func twoPhaseRequested(c *config.Config) bool {
+	return c.Timeout.CompileMs > 0 && c.Timeout.TestMs > 0
+}
+
+// bridgeIdleDeadline is the idle-wait budget for the bridge, never exceeding
+// the overall total_ms run budget.
+func bridgeIdleDeadline(c *config.Config) int64 {
+	idle := int64(defaultBridgeIdleDeadlineMs)
+	if c.Timeout.TotalMs > 0 && c.Timeout.TotalMs < idle {
+		idle = c.Timeout.TotalMs
+	}
+	return idle
+}
+
+// prefixWarnings tags each message with a source prefix (e.g. "bridge: ...").
+func prefixWarnings(prefix string, msgs []string) []string {
+	if len(msgs) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, prefix+": "+m)
+	}
+	return out
+}
 
 // ResultStore is the subset of history.Store used by Service.
 // Defining it here (consumer side) follows standard Go interface practice
@@ -35,7 +76,7 @@ type ResultStore interface {
 // through Request and all outputs through Response.
 type Service struct {
 	Runner       unity.Runner
-	Store        ResultStore            // *history.Store satisfies this
+	Store        ResultStore // *history.Store satisfies this
 	Artifacts    *artifacts.Store
 	StatusWriter status.WriterInterface // may be nil
 	Clock        func() time.Time       // defaults to time.Now if nil
@@ -43,14 +84,16 @@ type Service struct {
 
 // Request carries all inputs for a single testplay run.
 type Request struct {
-	Config      *config.Config
-	Filter      string
-	Category    string
-	CompareRun  string
-	ResetShadow bool // activates shadow workspace; equivalent to ForceShadow with per-run isolation
-	ForceShadow bool // activate shadow workspace without resetting Library cache
+	Config             *config.Config
+	Filter             string
+	Category           string
+	CompareRun         string
+	ResetShadow        bool // activates shadow workspace; equivalent to ForceShadow with per-run isolation
+	ForceShadow        bool // activate shadow workspace without resetting Library cache
 	ClearCache         bool // remove cached Library before preparing shadow workspace
 	SkipCacheWriteBack bool // skip Library cache write-back (used in scenario mode to avoid concurrent writes)
+	ForceBridge        bool // --bridge: prefer the warm bridge (still subject to the Pristine Gate)
+	DisableBridge      bool // --no-bridge: never select the warm bridge for this run
 }
 
 // Response carries all outputs of a single testplay run.
@@ -136,58 +179,117 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		_ = shadow.ClearCache(req.Config.ProjectPath)
 	}
 
-	// Determine execution backend: shadow if editor has the project open.
-	var ws *shadow.Workspace
-	if req.ForceShadow || req.ResetShadow || shadow.IsLocked(req.Config.ProjectPath) {
-		// ResetShadow and ForceShadow behave identically — per-run dirs are always fresh.
-		var opts shadow.PrepareOptions
-		if !req.ClearCache && shadow.ValidateCache(req.Config.ProjectPath) {
-			opts.LibraryCacheDir = shadow.CacheLibraryDir(req.Config.ProjectPath)
-		}
+	var warnings []string
+	var hasSystemError bool
 
-		var wsErr error
-		ws, wsErr = shadow.Prepare(ctx, req.Config.ProjectPath, runID, opts)
-		if wsErr != nil {
-			if errors.Is(wsErr, os.ErrPermission) {
-				return Response{ExitCode: 7}, fmt.Errorf("runsvc: prepare shadow workspace: %w", wsErr)
+	var result *history.RunResult
+	var exitCode int
+
+	// ── Tier-1: warm-editor bridge ─────────────────────────────────────────
+	// Selected only when the caller has not forced the cold path, the bridge is
+	// enabled, two-phase is not requested (a warm editor cannot honestly
+	// reproduce the strict compile/test phase split), and a live, compatible
+	// bridge is present (Probe). On ANY decline the run falls through to the
+	// unchanged shadow/process cold path below — correctness wins by default.
+	ranBridge := false
+	bridgeFallbackReason := ""
+	bridgeEligible := !req.ForceShadow && !req.ResetShadow && !req.ClearCache &&
+		!req.DisableBridge && !twoPhaseRequested(req.Config) &&
+		(req.Config.BridgeEnabled() || req.ForceBridge)
+	if bridgeEligible {
+		expectedVer := bridge.ExpectedUnityVersion(req.Config.UnityPath, req.Config.ProjectPath)
+		_, probeOK, reason := bridge.Probe(req.Config.ProjectPath, expectedVer, clock(), 0)
+		// --bridge forces an attempt even on a soft probe failure; the C#-side
+		// Pristine Gate remains the authoritative correctness bar and the bridge
+		// answers busy/rejected (→ FellBack) when it cannot run cleanly.
+		if probeOK || req.ForceBridge {
+			bridgeOpts := unity.ExecuteOptions{
+				ProjectPath:  req.Config.ProjectPath,
+				ResultsFile:  resultsFile,
+				StatusWriter: sw,
+				TimeoutType:  "total",
+				Filter:       req.Filter,
+				Category:     req.Category,
+				TestPlatform: req.Config.TestPlatform,
 			}
-			return Response{}, fmt.Errorf("runsvc: prepare shadow workspace: %w", wsErr)
+			br := unity.ExecuteBridge(ctx, bridge.NewClient(req.Config.ProjectPath), bridgeOpts, runID, bridgeIdleDeadline(req.Config))
+			if br.FellBack {
+				bridgeFallbackReason = "bridge declined the run (busy or could not guarantee a pristine domain)"
+			} else {
+				result = br.Result
+				exitCode = br.ExitCode
+				result.Backend = backendBridge
+				warnings = append(warnings, prefixWarnings("bridge", br.Warnings)...)
+				ranBridge = true
+			}
+		} else {
+			bridgeFallbackReason = reason
 		}
-		defer func() { _ = ws.Cleanup() }()
 	}
 
-	execProjectPath := req.Config.ProjectPath
-	var extraArgs []string
-	if ws != nil {
-		execProjectPath = ws.ShadowPath
-		extraArgs = []string{"-disable-assembly-updater"}
+	// ── Tier-2/3: cold path — shadow if the editor holds the project open,
+	// else a fresh batchmode process against the real project. Unchanged. ───
+	var ws *shadow.Workspace
+	if !ranBridge {
+		if req.ForceShadow || req.ResetShadow || shadow.IsLocked(req.Config.ProjectPath) {
+			// ResetShadow and ForceShadow behave identically — per-run dirs are always fresh.
+			var opts shadow.PrepareOptions
+			if !req.ClearCache && shadow.ValidateCache(req.Config.ProjectPath) {
+				opts.LibraryCacheDir = shadow.CacheLibraryDir(req.Config.ProjectPath)
+			}
+
+			var wsErr error
+			ws, wsErr = shadow.Prepare(ctx, req.Config.ProjectPath, runID, opts)
+			if wsErr != nil {
+				if errors.Is(wsErr, os.ErrPermission) {
+					return Response{ExitCode: 7}, fmt.Errorf("runsvc: prepare shadow workspace: %w", wsErr)
+				}
+				return Response{}, fmt.Errorf("runsvc: prepare shadow workspace: %w", wsErr)
+			}
+			defer func() { _ = ws.Cleanup() }()
+		}
+
+		execProjectPath := req.Config.ProjectPath
+		var extraArgs []string
+		if ws != nil {
+			execProjectPath = ws.ShadowPath
+			extraArgs = []string{"-disable-assembly-updater"}
+		}
+
+		// Execute Unity.
+		execOpts := unity.ExecuteOptions{
+			ProjectPath:  execProjectPath,
+			ResultsFile:  resultsFile,
+			StatusWriter: sw,
+			TimeoutType:  "total",
+			Filter:       req.Filter,
+			Category:     req.Category,
+			TestPlatform: req.Config.TestPlatform,
+			CompileMs:    req.Config.Timeout.CompileMs,
+			TestMs:       req.Config.Timeout.TestMs,
+			StdoutWriter: stdoutLog,
+			StderrWriter: stderrLog,
+			ExtraArgs:    extraArgs,
+		}
+		result, exitCode = unity.Execute(ctx, s.Runner, execOpts)
+		if ws != nil {
+			result.Backend = backendShadow
+		} else {
+			result.Backend = backendProcess
+		}
 	}
 
-	// Execute Unity.
-	execOpts := unity.ExecuteOptions{
-		ProjectPath:  execProjectPath,
-		ResultsFile:  resultsFile,
-		StatusWriter: sw,
-		TimeoutType:  "total",
-		Filter:       req.Filter,
-		Category:     req.Category,
-		TestPlatform: req.Config.TestPlatform,
-		CompileMs:    req.Config.Timeout.CompileMs,
-		TestMs:       req.Config.Timeout.TestMs,
-		StdoutWriter: stdoutLog,
-		StderrWriter: stderrLog,
-		ExtraArgs:    extraArgs,
+	// Disclose when an explicit --bridge could not run and we honored
+	// correctness by falling back (force changes preference, never the bar).
+	if req.ForceBridge && !ranBridge && bridgeFallbackReason != "" {
+		warnings = append(warnings, fmt.Sprintf("bridge requested but unavailable: %s; ran %s backend instead", bridgeFallbackReason, result.Backend))
 	}
-	result, exitCode := unity.Execute(ctx, s.Runner, execOpts)
 
 	finishedAt := clock()
 
 	result.RunID = runID
 	result.SchemaVersion = "1"
 	result.ExitCode = exitCode
-
-	var warnings []string
-	var hasSystemError bool
 
 	// Regression comparison.
 	if req.CompareRun != "" {

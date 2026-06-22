@@ -39,6 +39,13 @@ type RunResult struct {
 	Tests         []parser.TestCase `json:"tests"`
 	Errors        []CompileError    `json:"errors,omitempty"`
 	NewFailures   []parser.TestCase `json:"new_failures"` // null when compare-run not specified
+
+	// Backend identifies which execution engine produced this result:
+	// "process" (cold batchmode against the real project), "shadow" (cold
+	// batchmode inside a per-run shadow workspace), or "bridge" (warm editor
+	// via the TestPlay bridge). Set by runsvc.Service.Run before persistence;
+	// always present in the CLI stdout output (Output Design Rule #13).
+	Backend string `json:"backend,omitempty"`
 }
 
 // CompileError represents a C# compile error from Unity stderr.

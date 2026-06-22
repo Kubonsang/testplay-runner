@@ -1,6 +1,6 @@
 # 📈 testplay Release Plan & Version History
 
-**현재 버전:** `v0.9.2`
+**현재 버전:** `v0.10.0`
 **목표:** 단순한 로컬 테스트 래퍼를 넘어, AI 에이전트에 최적화된 시나리오 기반 멀티 인스턴스 러너로 단계적으로 확장
 
 > 이 문서는 확정 약속이 아니라, 베타 진행 상황에 따라 조정될 수 있는 릴리즈 계획을 정리한 것입니다.  
@@ -288,6 +288,32 @@
   1. 실제 C# compile errors가 있는 경우만 exit 2로 남을 것
   2. C# compile errors 없는 compile invocation 실패는 exit 6 + 명확한 환경/Unity 진단 메시지를 반환할 것
   3. shadow cold import 비용 때문에 테스트 실패로 오독하지 않도록 README에 대응 경로가 문서화될 것
+
+## 🌉 v0.10.0 (The Warm-Editor Bridge) — 구현 완료 (main), 릴리스 게이트(spike) 통과 후 태깅 예정
+**테마:** 에디터가 열려 있을 때의 두 가지 물리적 병목 — shadow workspace 바이트 복사(용량)와 cold domain reload(시간) — 를, 에디터를 *우회*하지 않고 *통과*해서 제거한다. 계약은 그대로 유지되는 투명한 backend.
+
+- **배경:** dogfooding에서 에디터가 열려 있으면(`Temp/UnityLockfile`) 매 실행마다 `Assets/`+`ProjectSettings/`+캐시된 `Library/`를 통째로 복사(`io.Copy`, reflink 없음)하고 batchmode를 cold start 한다. 자동 호출자(agent/CI)는 사람이 쓰는 Test Runner window를 쓸 수 없으므로 따뜻한 경로 자체가 없었다.
+- **정체성 정합성 (Identity anchor 인용):** "make it faster in the editor → Test Runner window의 몫"은 *사람의* GUI를 전제로 한다. 브릿지는 자동 호출자에게 동일한 따뜻한 경로를, **변경 없는 JSON/exit-code 계약 뒤의 투명한 backend로만** 제공한다. warm/cold가 *결과*를 바꿀 수 있는 순간에는 항상 cold로 강등(Pristine Gate). 속도·용량 이득은 부수효과지 약속된 기능이 아니다.
+- **포함 기능:**
+  ### 10-1. 3-tier auto backend (`bridge → shadow → process`)
+  - `runsvc.Service.Run`의 기존 shadow/process 블록 *앞에* 브릿지 분기 추가 (Backend 인터페이스 도입 없음 — 실행 엔진은 cold/warm 둘 뿐).
+  - `--bridge`(선호, 단 Pristine Gate는 통과해야 함) / `--no-bridge`(금지) / config `bridge.enabled:false`. two-phase·scenario는 항상 cold.
+  ### 10-2. `internal/bridge` Go 클라이언트
+  - `Probe` 6-점 handshake 게이트(protocol version, project-path 일치, Unity-version 일치, liveness/staleness, idle 상태) + `.testplay/bridge/` 하 파일 기반 NDJSON `Client`(atomic request/response, status-stream tail, `.cancel`).
+  ### 10-3. `unity.ExecuteBridge`
+  - `unity.Execute`의 형제. 동일한 `RunResult`/exit code 반환. `parseResults`(브릿지가 쓴 `results.xml`) + 추출한 `classifyNoResults`(compile-errors sidecar→exit 2 / build-failed→exit 6) + `handleContextErr`(timeout→4 / signal→8) 재사용 → cold와 byte-identical 분류.
+  ### 10-4. `unity/com.testplay.bridge` (C# UPM, greenfield, EditMode 한정)
+  - opt-in `[InitializeOnLoad]`(`TESTPLAY_BRIDGE_ENABLE` / `ENABLE` sentinel, batchmode에서는 절대 비활성), `TestRunnerApi` 드라이버가 cold와 동일한 NUnit `results.xml` 작성, `CompilationPipeline`→`CSxxxx:` 프리픽스 compile-errors sidecar, `O_APPEND` progress stream, **Pristine Gate**(Play Mode 거부, compile-settle 대기, dirty-scene 공개).
+  ### 10-5. 공개(disclosure)
+  - `backend` 필드(`process`|`shadow`|`bridge`) 항상 존재(Output Design Rule #13). 비-pristine 상태는 `warnings`로 공개(결과를 바꾸는 차이는 공개가 아니라 cold fallback). `testplay-status.json` 스키마 불변.
+- **릴리즈 게이트 (spike로 사전 검증 후 태깅):**
+  1. **Cold/bridge parity** — `e2e/bridge_parity_test.go`: 동일 fixture에서 `tests[]`·exit code·`errors[]`(절대경로 제외) 동일.
+  2. **`ITestResultAdaptor.ToXml()` 충실도** — parameterized + 실패 케이스가 `parser.Parse`를 통해 cold `-testResults`와 동일 결과.
+  3. **Compile-error parity** — `CSxxxx` 에러가 warm sidecar→`errors[]`로 cold stderr scrape와 동일(경로 제외).
+  4. **TestRunnerApi 취소** — 긴 EditMode run 중단 시 에디터가 wedge되지 않고 다음 run이 신뢰 가능.
+  5. **Windows atomic 파일** — `.testplay/bridge/`에서 1000회 req/resp 루프에 partial read/sharing violation 없음.
+- **명시적 비목표 (이후 버전):** PlayMode-warm, scenario/network warm orchestration, bridge-side hard cancellation.
+- **버전 규칙 준수:** 새 태그 `v0.10.0` 발행. 원격에 푸시된 태그는 절대 덮어쓰지 않는다.
 
 ## 🚀 v1.0.0 (NGO Harness)
 **테마:** v0.9 primitives 위에 NGO(Netcode for GameObjects) 전용 sugar
