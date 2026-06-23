@@ -289,7 +289,7 @@
   2. C# compile errors 없는 compile invocation 실패는 exit 6 + 명확한 환경/Unity 진단 메시지를 반환할 것
   3. shadow cold import 비용 때문에 테스트 실패로 오독하지 않도록 README에 대응 경로가 문서화될 것
 
-## 🌉 v0.10.0 (The Warm-Editor Bridge) — 구현 완료 (main), 릴리스 게이트(spike) 통과 후 태깅 예정
+## 🌉 v0.10.0 (The Warm-Editor Bridge) — 구현 완료 (main); Tier B spike 검증 통과 (Unity 6, docs/25); LTS 재실행 후 태깅 예정
 **테마:** 에디터가 열려 있을 때의 두 가지 물리적 병목 — shadow workspace 바이트 복사(용량)와 cold domain reload(시간) — 를, 에디터를 *우회*하지 않고 *통과*해서 제거한다. 계약은 그대로 유지되는 투명한 backend.
 
 - **배경:** dogfooding에서 에디터가 열려 있으면(`Temp/UnityLockfile`) 매 실행마다 `Assets/`+`ProjectSettings/`+캐시된 `Library/`를 통째로 복사(`io.Copy`, reflink 없음)하고 batchmode를 cold start 한다. 자동 호출자(agent/CI)는 사람이 쓰는 Test Runner window를 쓸 수 없으므로 따뜻한 경로 자체가 없었다.
@@ -312,6 +312,7 @@
   3. **Compile-error parity** — `CSxxxx` 에러가 warm sidecar→`errors[]`로 cold stderr scrape와 동일(경로 제외).
   4. **TestRunnerApi 취소** — 긴 EditMode run 중단 시 에디터가 wedge되지 않고 다음 run이 신뢰 가능.
   5. **Windows atomic 파일** — `.testplay/bridge/`에서 1000회 req/resp 루프에 partial read/sharing violation 없음.
+  - **검증 결과 (2026-06-23, Unity 6000.3.8f1):** 1–5 모두 통과 — 1·2 byte-identical parity(parameterized+failing), 3 warm sidecar 정확(cold는 Unity 6에서 under-report → issue #31), 4 SIGINT→exit 8 + 에디터 복구, 5 Go atomic stress test(CI windows-latest)에서 0 torn. 증거: `docs/25_v0.10.0_bridge_validation.md`. **남은 것: LTS(2021.3/2022.3) 재실행.**
 - **명시적 비목표 (이후 버전):** PlayMode-warm, scenario/network warm orchestration, bridge-side hard cancellation.
 - **버전 규칙 준수:** 새 태그 `v0.10.0` 발행. 원격에 푸시된 태그는 절대 덮어쓰지 않는다.
 

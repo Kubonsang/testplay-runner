@@ -330,7 +330,7 @@ Framework-agnostic instance-to-instance communication and cross-instance failure
 - **Retention + .gitignore** — IPC bus directories follow the same `retention.max_runs` policy as run artifacts (reuses `artifacts.Store.Prune`); `.testplay/ipc/` auto-added to `.gitignore` on first scenario run
 - **Scenario-mode safety** — list cache write-back skipped when `SkipCacheWriteBack` is set, matching Library cache discipline
 
-### v0.10.0 — The Warm-Editor Bridge (implemented on main; release pending the validation spikes below)
+### v0.10.0 — The Warm-Editor Bridge (implemented on main; Tier B spikes validated on Unity 6 — see docs/25; LTS-Editor re-run pending before tag)
 Cuts the two physical bottlenecks of "Editor open" runs — the shadow-workspace byte copy (용량) and the cold domain reload (시간) — by running tests *through* the warm Editor instead of *around* it. Transparent backend; contract unchanged.
 - **3-tier auto backend** — `bridge → shadow → process`, selected in `runsvc.Service.Run` (new branch before the existing shadow/process block, no `Backend` interface). Correctness wins by default: the bridge self-demotes to cold on any Probe/Pristine-Gate failure.
 - **`internal/bridge`** — `Probe` 6-point handshake gate (protocol version, project-path match, Unity-version match, liveness/staleness, idle state) + file-based NDJSON `Client` (atomic request/response, status-stream tail, `.cancel` marker) over `<project>/.testplay/bridge/`.
