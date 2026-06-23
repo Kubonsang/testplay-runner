@@ -90,10 +90,17 @@ namespace TestPlay.Bridge
             if (now - s_lastBeat < HeartbeatSeconds)
                 return;
             s_lastBeat = now;
+            // editor_state must reflect a claimed run even after a domain reload
+            // reset the in-memory s_runningTests flag: report busy whenever
+            // SessionState still holds an active run id, so the handshake's
+            // editor_state and active_run_id never disagree (the Go Probe keys
+            // on editor_state==idle).
+            string active = SessionState.GetString(KeyActive, "");
+            bool busy = s_runningTests || !string.IsNullOrEmpty(active);
             HandshakeWriter.Write(
                 SessionState.GetString(KeySession, ""),
-                HandshakeWriter.CurrentState(s_runningTests),
-                SessionState.GetString(KeyActive, ""));
+                HandshakeWriter.CurrentState(busy),
+                active);
         }
 
         private static void Pump()
@@ -190,6 +197,11 @@ namespace TestPlay.Bridge
                     SessionState.SetString(KeyNonPristine, string.Join("\n", gate.NonPristine));
                     new StatusStream(req.status_ndjson).Compiling();
                     SessionState.SetString(KeyPhase, PhaseRefreshing);
+                    // Clear any compile errors collected before this run so the
+                    // sidecar reflects ONLY this run's recompile — otherwise a
+                    // stale error from a prior (changed) compile would be reported
+                    // alongside, or instead of, the current one.
+                    CompileErrorSidecar.Clear();
                     // May trigger import + compilation (+ a domain reload). The
                     // sidecar (hooked at Start) captures any resulting errors.
                     AssetDatabase.Refresh();
