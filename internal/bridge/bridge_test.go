@@ -84,6 +84,10 @@ func TestProbe_Failures(t *testing.T) {
 		}, wantFrag: "stale"},
 		{name: "bad timestamp", write: true, mutate: func(_ string, h *Handshake) { h.UpdatedAt = "not-a-time" }, wantFrag: "unparseable"},
 		{name: "not idle", write: true, mutate: func(_ string, h *Handshake) { h.EditorState = EditorStateInPlayMode }, wantFrag: "not idle"},
+		{name: "active run in flight", write: true, mutate: func(_ string, h *Handshake) { h.ActiveRunID = "20260101-120000-deadbeef" }, wantFrag: "active run"},
+		{name: "future clock skew", write: true, mutate: func(_ string, h *Handshake) {
+			h.UpdatedAt = time.Now().Add(1 * time.Hour).UTC().Format(time.RFC3339)
+		}, wantFrag: "skew"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

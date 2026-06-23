@@ -71,9 +71,21 @@ func ExecuteBridge(ctx context.Context, client BridgeClient, opts ExecuteOptions
 
 	switch outcome.Outcome {
 	case bridge.OutcomeCompleted:
+		// The bridge must have written results.xml. If it claims completion but
+		// did not write the XML (results_xml_written=false), fall back to cold —
+		// never derive a result from a missing file.
+		if !outcome.ResultsXMLWritten {
+			return BridgeResult{FellBack: true}
+		}
 		// The bridge wrote results.xml to opts.ResultsFile; classify it exactly
 		// as batchmode does (parseResults also writes the terminal done phase).
 		result, code := parseResults(opts, nil)
+		// A "completed" outcome must yield real results (exit 0/3). An exit 2
+		// here means the XML is missing/unparseable despite the bridge's claim;
+		// fall back to cold rather than report a phantom compile failure.
+		if code == 2 {
+			return BridgeResult{FellBack: true}
+		}
 		return BridgeResult{Result: result, ExitCode: code, Warnings: outcome.NonPristine}
 
 	case bridge.OutcomeCompileFailed:

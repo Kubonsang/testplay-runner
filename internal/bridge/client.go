@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Kubonsang/testplay-runner/internal/atomicfile"
 	"github.com/Kubonsang/testplay-runner/internal/history"
 	"github.com/Kubonsang/testplay-runner/internal/status"
 )
@@ -101,7 +102,7 @@ func (c *Client) Run(ctx context.Context, req RunRequest, sw status.WriterInterf
 // writes the sidecar before the response (atomic ordering), so by the time the
 // response is visible the sidecar is complete.
 func finishOutcome(resp responseFile, compileErrPath string) RunOutcome {
-	out := RunOutcome{Outcome: resp.Outcome, NonPristine: resp.NonPristine}
+	out := RunOutcome{Outcome: resp.Outcome, ResultsXMLWritten: resp.ResultsXMLWritten, NonPristine: resp.NonPristine}
 	if resp.Outcome == OutcomeCompileFailed {
 		if errs, err := readCompileErrors(compileErrPath); err == nil {
 			out.CompileErrors = errs
@@ -205,9 +206,8 @@ func (c *Client) writeCancel(runID string) {
 	_ = os.WriteFile(path, []byte("cancel\n"), 0o644)
 }
 
-// writeAtomicJSON marshals v and writes it to path via a temp file + rename,
-// the same atomic discipline as internal/status (Go 1.22+ os.Rename replaces an
-// existing destination atomically on all platforms).
+// writeAtomicJSON marshals v and writes it to path via the shared atomic +
+// Windows-tolerant tmp+rename writer (internal/atomicfile).
 func writeAtomicJSON(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -216,33 +216,7 @@ func writeAtomicJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	if err := renameWithRetry(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
-}
-
-// renameWithRetry replaces newpath with oldpath, retrying transient failures.
-// On Windows, os.Rename's MoveFileEx(REPLACE_EXISTING) fails with a sharing
-// violation ("Access is denied") while a concurrent reader has the destination
-// briefly open (os.ReadFile does not open with FILE_SHARE_DELETE). The reader's
-// handle is short-lived, so a bounded backoff resolves the race. On POSIX,
-// rename is atomic and succeeds on the first attempt.
-func renameWithRetry(oldpath, newpath string) error {
-	const maxAttempts = 100 // ~1s total at 10ms spacing
-	var err error
-	for i := 0; i < maxAttempts; i++ {
-		if err = os.Rename(oldpath, newpath); err == nil {
-			return nil
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return err
+	return atomicfile.Write(path, data, 0o644)
 }
 
 type noopWriter struct{}

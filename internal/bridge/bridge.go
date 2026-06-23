@@ -64,12 +64,22 @@ func Probe(projectPath, expectedUnityVersion string, now time.Time, staleWindow 
 	if err != nil {
 		return &h, false, "bridge handshake timestamp is unparseable"
 	}
-	if age := now.Sub(updatedAt); age > staleWindow {
-		return &h, false, fmt.Sprintf("bridge handshake is stale (last beat %s ago)", age.Round(time.Millisecond))
+	// |age| must be within the window. A timestamp far in the future means the
+	// editor host clock is skewed ahead and its liveness cannot be trusted, so a
+	// crashed-but-skewed editor must not pass the live gate.
+	if age := now.Sub(updatedAt); age > staleWindow || age < -staleWindow {
+		return &h, false, fmt.Sprintf("bridge handshake is stale or clock-skewed (age %s)", age.Round(time.Millisecond))
 	}
 
 	if h.EditorState != EditorStateIdle {
 		return &h, false, fmt.Sprintf("editor not idle (state=%q)", h.EditorState)
+	}
+	// An idle editor must have no run in flight. A non-empty active_run_id with
+	// an idle state signals a stale/orphaned run (e.g. a domain reload reset the
+	// in-memory running flag while SessionState kept the active id); do not
+	// dispatch a new run onto it.
+	if h.ActiveRunID != "" {
+		return &h, false, "editor reports an active run in flight"
 	}
 
 	return &h, true, ""

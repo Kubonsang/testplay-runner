@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Kubonsang/testplay-runner/internal/atomicfile"
 	"github.com/Kubonsang/testplay-runner/internal/parser"
 	"github.com/Kubonsang/testplay-runner/internal/runid"
 )
@@ -106,7 +107,7 @@ func atomicWrite(path string, data []byte) error {
 		}
 		return closeErr
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := atomicfile.Rename(tmpName, path); err != nil {
 		_ = os.Remove(tmpName)
 		return err
 	}

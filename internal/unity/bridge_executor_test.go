@@ -60,7 +60,7 @@ func baseOpts(t *testing.T) ExecuteOptions {
 
 func TestExecuteBridge_CompletedPass(t *testing.T) {
 	opts := baseOpts(t)
-	client := &fakeBridgeClient{outcome: bridge.RunOutcome{Outcome: bridge.OutcomeCompleted}, writeXML: passingXML}
+	client := &fakeBridgeClient{outcome: bridge.RunOutcome{Outcome: bridge.OutcomeCompleted, ResultsXMLWritten: true}, writeXML: passingXML}
 
 	res := ExecuteBridge(context.Background(), client, opts, "20260101-120000-aaaaaaaa", 30000)
 	if res.FellBack {
@@ -79,7 +79,7 @@ func TestExecuteBridge_CompletedPass(t *testing.T) {
 
 func TestExecuteBridge_CompletedFail(t *testing.T) {
 	opts := baseOpts(t)
-	client := &fakeBridgeClient{outcome: bridge.RunOutcome{Outcome: bridge.OutcomeCompleted, NonPristine: []string{"editor had unsaved changes"}}, writeXML: failingXML}
+	client := &fakeBridgeClient{outcome: bridge.RunOutcome{Outcome: bridge.OutcomeCompleted, ResultsXMLWritten: true, NonPristine: []string{"editor had unsaved changes"}}, writeXML: failingXML}
 
 	res := ExecuteBridge(context.Background(), client, opts, "20260101-120000-bbbbbbbb", 30000)
 	if res.ExitCode != 3 {
@@ -87,6 +87,27 @@ func TestExecuteBridge_CompletedFail(t *testing.T) {
 	}
 	if len(res.Warnings) != 1 {
 		t.Fatalf("expected 1 non-pristine warning, got %+v", res.Warnings)
+	}
+}
+
+func TestExecuteBridge_CompletedWithoutResultsXMLFallsBack(t *testing.T) {
+	opts := baseOpts(t)
+	// Bridge reports completed but did NOT write results.xml.
+	client := &fakeBridgeClient{outcome: bridge.RunOutcome{Outcome: bridge.OutcomeCompleted, ResultsXMLWritten: false}}
+	res := ExecuteBridge(context.Background(), client, opts, "20260101-120000-11111111", 30000)
+	if !res.FellBack {
+		t.Fatal("completed outcome with results_xml_written=false must fall back to cold")
+	}
+}
+
+func TestExecuteBridge_CompletedButUnparseableXMLFallsBack(t *testing.T) {
+	opts := baseOpts(t)
+	// Claims it wrote results.xml, but the file is absent → parseResults exit 2;
+	// must fall back, NOT report a phantom compile failure.
+	client := &fakeBridgeClient{outcome: bridge.RunOutcome{Outcome: bridge.OutcomeCompleted, ResultsXMLWritten: true}}
+	res := ExecuteBridge(context.Background(), client, opts, "20260101-120000-22222222", 30000)
+	if !res.FellBack {
+		t.Fatalf("completed+claimed but missing XML must fall back, got exit %d", res.ExitCode)
 	}
 }
 

@@ -112,7 +112,8 @@ type RunRequest struct {
 
 // RunOutcome is the Go-side result of Client.Run.
 type RunOutcome struct {
-	Outcome       Outcome
-	NonPristine   []string               // disclosure reasons → run warnings
-	CompileErrors []history.CompileError // populated when Outcome == OutcomeCompileFailed
+	Outcome           Outcome
+	ResultsXMLWritten bool                   // the bridge claims it wrote results.xml (Outcome==completed)
+	NonPristine       []string               // disclosure reasons → run warnings
+	CompileErrors     []history.CompileError // populated when Outcome == OutcomeCompileFailed
 }

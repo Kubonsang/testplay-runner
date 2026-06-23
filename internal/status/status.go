@@ -2,9 +2,10 @@ package status
 
 import (
 	"encoding/json"
-	"os"
 	"sync"
 	"time"
+
+	"github.com/Kubonsang/testplay-runner/internal/atomicfile"
 )
 
 // Phase represents the current execution phase of a testplay run.
@@ -74,17 +75,7 @@ func (w *Writer) Write(s Status) error {
 		return err
 	}
 
-	tmp := w.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return err
-	}
-
-	// Go 1.22+ uses MoveFileExW(MOVEFILE_REPLACE_EXISTING) on Windows,
-	// so os.Rename atomically replaces an existing destination on all platforms.
-	if err := os.Rename(tmp, w.path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-
-	return nil
+	// Atomic + Windows-tolerant: an agent polling the status file can otherwise
+	// make the replace-rename fail with a sharing violation on Windows.
+	return atomicfile.Write(w.path, data, 0644)
 }
