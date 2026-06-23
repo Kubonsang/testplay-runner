@@ -220,11 +220,29 @@ func writeAtomicJSON(path string, v any) error {
 	if err := os.WriteFile(tmp, data, 0o644); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err := renameWithRetry(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}
 	return nil
+}
+
+// renameWithRetry replaces newpath with oldpath, retrying transient failures.
+// On Windows, os.Rename's MoveFileEx(REPLACE_EXISTING) fails with a sharing
+// violation ("Access is denied") while a concurrent reader has the destination
+// briefly open (os.ReadFile does not open with FILE_SHARE_DELETE). The reader's
+// handle is short-lived, so a bounded backoff resolves the race. On POSIX,
+// rename is atomic and succeeds on the first attempt.
+func renameWithRetry(oldpath, newpath string) error {
+	const maxAttempts = 100 // ~1s total at 10ms spacing
+	var err error
+	for i := 0; i < maxAttempts; i++ {
+		if err = os.Rename(oldpath, newpath); err == nil {
+			return nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return err
 }
 
 type noopWriter struct{}

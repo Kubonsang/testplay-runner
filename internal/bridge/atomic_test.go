@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestAtomicWriteRead_NoTornReads hammers the atomic response file with a
@@ -72,6 +73,9 @@ func TestAtomicWriteRead_NoTornReads(t *testing.T) {
 			t.Logf("atomic handoff OK: %d writes, %d valid concurrent reads, 0 torn", iterations, valid)
 			return
 		default:
+			// Brief yield models the production poller (which opens the file only
+			// briefly) so the writer's replace-rename gets windows to succeed.
+			time.Sleep(200 * time.Microsecond)
 		}
 	}
 }
@@ -135,6 +139,7 @@ func TestAtomicRequestRoundTrip_NoTornReads(t *testing.T) {
 			t.Logf("request handoff OK: %d writes, %d valid concurrent reads", iterations, reads)
 			return
 		default:
+			time.Sleep(200 * time.Microsecond)
 		}
 	}
 }
