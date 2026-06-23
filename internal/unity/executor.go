@@ -359,6 +359,38 @@ func makeRunWriters(opts ExecuteOptions) (stdoutW io.Writer, stderrW io.Writer, 
 	return
 }
 
+// classifyNoResults builds the RunResult + exit code for the case where no
+// results XML was produced. It is the single source of truth for the 2-vs-6
+// split and is shared by two callers so they can never drift:
+//
+//   - the batchmode executor (parseResults), with compile errors scraped from
+//     Unity stderr and buildFailure from ParseBuildFailure; and
+//   - the bridge executor (ExecuteBridge), with compile errors read from the
+//     bridge's compile-errors.json sidecar and buildFailure from the bridge
+//     response outcome.
+//
+// When compileErrors is non-empty → exit 2 with those errors. Otherwise when
+// buildFailure is true → exit 6 (license/build-target). Otherwise → exit 2
+// with no errors (unknown non-zero outcome producing no results).
+//
+// It does not write status; callers own the PhaseDone write.
+func classifyNoResults(compileErrors []history.CompileError, buildFailure bool) (*history.RunResult, int) {
+	if len(compileErrors) == 0 && buildFailure {
+		return &history.RunResult{
+			SchemaVersion: "1",
+			ExitCode:      6,
+			Tests:         []parser.TestCase{},
+			Errors:        []history.CompileError{},
+		}, 6
+	}
+	return &history.RunResult{
+		SchemaVersion: "1",
+		ExitCode:      2,
+		Tests:         []parser.TestCase{},
+		Errors:        compileErrors,
+	}, 2
+}
+
 // parseResults reads the XML results file and returns the run result.
 // It is shared between single-phase and two-phase executors.
 func parseResults(opts ExecuteOptions, stderrTail []byte) (*history.RunResult, int) {
@@ -368,21 +400,7 @@ func parseResults(opts ExecuteOptions, stderrTail []byte) (*history.RunResult, i
 		// No XML file — determine cause from stderr.
 		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
 		compileErrors := ParseCompileErrorsWithProject(stderrTail, opts.ProjectPath)
-		// License or build-target failures produce no XML and no C# errors.
-		if len(compileErrors) == 0 && ParseBuildFailure(stderrTail) {
-			return &history.RunResult{
-				SchemaVersion: "1",
-				ExitCode:      6,
-				Tests:         []parser.TestCase{},
-				Errors:        []history.CompileError{},
-			}, 6
-		}
-		return &history.RunResult{
-			SchemaVersion: "1",
-			ExitCode:      2,
-			Tests:         []parser.TestCase{},
-			Errors:        compileErrors,
-		}, 2
+		return classifyNoResults(compileErrors, ParseBuildFailure(stderrTail))
 	}
 
 	// Even if XML was produced, check stderr for compile errors

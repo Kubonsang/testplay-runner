@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/Kubonsang/testplay-runner/internal/atomicfile"
 	"github.com/Kubonsang/testplay-runner/internal/history"
 )
 
@@ -136,7 +137,7 @@ func (w *Workspace) UpdateLibraryCache(ctx context.Context) error {
 		_ = os.RemoveAll(tmpLib)
 		return fmt.Errorf("update library cache: remove old: %w", err)
 	}
-	if err := os.Rename(tmpLib, dstLib); err != nil {
+	if err := atomicfile.Rename(tmpLib, dstLib); err != nil {
 		_ = os.RemoveAll(tmpLib)
 		return fmt.Errorf("update library cache: rename: %w", err)
 	}

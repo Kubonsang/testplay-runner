@@ -29,7 +29,7 @@ AI 에이전트가 Unity 테스트를 반복 실행한다면, testplay의 모든
 | 회귀 추적 불가 | `--compare-run`으로 `new_failures` 비교 |
 | 플랫폼별 경로 차이 | 모든 응답에 절대경로 + 상대경로 동시 제공 |
 | 실행 없이 테스트 탐색 불가 | `testplay list`로 알려진 어트리뷰트 정적 스캔 — 커스텀 어트리뷰트 누락 (Known Limitations 참조) |
-| Unity 에디터가 프로젝트 잠금 보유 | 섀도우 워크스페이스가 `.testplay-shadow/`에서 테스트를 실행하여 에디터 사용 중에도 테스트 가능 |
+| Unity 에디터가 프로젝트 잠금 보유 | 웜 에디터 브릿지가 열린 에디터에서 테스트 실행(`backend: "bridge"`); 없으면 `.testplay-shadow/` 워크스페이스, 그다음 새 프로세스로 폴백 |
 
 ## 설치
 
@@ -93,6 +93,8 @@ testplay init --unity-path /path/to/Unity
 - `compile_ms` + `test_ms`: **반드시 둘 다 함께 설정해야** two-phase 실행이 활성화됨 — Unity가 컴파일만 먼저 실행(`compile_ms` 데드라인), 이후 테스트 실행(`test_ms` 데드라인). 단계별 타임아웃이면 `timeout_type: "compile"` 또는 `"test"`가 나오고, 바깥 `total_ms`가 먼저 만료되면 `"total"`이 나올 수 있습니다. 하나만 설정하면 validation error.
 - 둘 다 설정하지 않으면 single-phase 실행 (컴파일+테스트를 Unity 한 번 호출로 처리, `total_ms` 기준).
 
+**브릿지 설정 (v0.10.0):** 선택적 top-level `"bridge": { "enabled": false }` 블록으로 웜 에디터 브릿지를 완전히 비활성화할 수 있습니다(생략 시 기본값: 활성). `compile_ms`와 `test_ms`를 둘 다 설정(two-phase)하면 해당 실행도 cold 경로를 강제합니다. [웜 에디터 브릿지](#웜-에디터-브릿지) 참조.
+
 > **참고:** PlayMode 네트워크 하네스와 NGO 오케스트레이션은 아직 미지원입니다.
 
 ## 명령어
@@ -108,7 +110,7 @@ testplay version
 ```json
 {
   "schema_version": "1",
-  "version": "v0.9.2"
+  "version": "v0.10.0"
 }
 ```
 
@@ -181,9 +183,25 @@ Unity를 실행하지 않고 `*.cs` 파일에서 `[Test]`, `[UnityTest]`, `[Test
 testplay list
 ```
 
+성공적인 `testplay run`(exit 0 또는 3) 이후에는 전체 테스트 목록이 캐시됩니다. 이후 `list` 호출은 그 캐시에서 `complete: true`로 반환합니다:
+
 ```json
 {
   "schema_version": "1",
+  "complete": true,
+  "source": "run_cache",
+  "cached_run_id": "20250325-143000-a3f8b2c1",
+  "tests": ["MyTests.PlayerTests.TestJump", "MyTests.PlayerTests.TestRun"]
+}
+```
+
+첫 성공 실행 전에는 `list`가 정적 스캔으로 폴백합니다:
+
+```json
+{
+  "schema_version": "1",
+  "complete": false,
+  "source": "static_scan",
   "tests": ["MyTests.PlayerTests.TestJump", "MyTests.PlayerTests.TestRun"]
 }
 ```
@@ -202,10 +220,14 @@ testplay run --compare-run 20250301-102200-a3f8b2c1
 testplay run --config path/to/testplay.json
 testplay run --shadow              # 에디터 락 없이 강제로 섀도우 워크스페이스 사용
 testplay run --clear-cache         # 캐시된 Library 제거 후 섀도우 워크스페이스 생성
+testplay run --bridge              # 웜 에디터 브릿지 선호 (단, Pristine Gate는 통과해야 함)
+testplay run --no-bridge           # cold shadow/process 경로 강제
 testplay run --scenario scenario.json  # 멀티 인스턴스 동시 실행
 ```
 
-`--scenario`와 함께 사용하면 `--filter`, `--category`, `--compare-run`, `--shadow`, 캐시 플래그가 모든 시나리오 인스턴스에 전파됩니다.
+`--scenario`와 함께 사용하면 `--filter`, `--category`, `--compare-run`, `--shadow`, 캐시 플래그가 모든 시나리오 인스턴스에 전파됩니다(시나리오 모드는 항상 cold 실행).
+
+**`backend` 필드 (v0.10.0):** 모든 `run` 결과에는 어떤 엔진이 결과를 만들었는지 알려주는 `backend` 필드(`"process"`, `"shadow"`, `"bridge"`)가 **항상** 포함됩니다([웜 에디터 브릿지](#웜-에디터-브릿지) 참조).
 
 **전체 통과 (exit 0):**
 
@@ -214,6 +236,7 @@ testplay run --scenario scenario.json  # 멀티 인스턴스 동시 실행
   "schema_version": "1",
   "run_id": "20250325-143000-a3f8b2c1",
   "exit_code": 0,
+  "backend": "process",
   "total": 2,
   "passed": 2,
   "failed": 0,
@@ -240,6 +263,7 @@ testplay run --scenario scenario.json  # 멀티 인스턴스 동시 실행
 {
   "schema_version": "1",
   "run_id": "20250325-143000-a3f8b2c1",
+  "backend": "process",
   "total": 10,
   "passed": 9,
   "failed": 1,
@@ -266,6 +290,7 @@ testplay run --scenario scenario.json  # 멀티 인스턴스 동시 실행
   "schema_version": "1",
   "run_id": "20250325-143000-a3f8b2c1",
   "exit_code": 2,
+  "backend": "process",
   "total": 0,
   "passed": 0,
   "failed": 0,
@@ -292,6 +317,7 @@ Unity 배치 실행이 NUnit XML도 안 만들고 C# 컴파일 에러도 없이 
   "schema_version": "1",
   "run_id": "20250325-143000-a3f8b2c1",
   "exit_code": 6,
+  "backend": "process",
   "tests": [],
   "errors": []
 }
@@ -311,7 +337,7 @@ per-run `.testplay-shadow-<run_id>/` 워크스페이스 준비가 파일시스�
 
 **시나리오 모드 (`--scenario`) — 집계 출력:**
 
-모든 인스턴스를 동시 실행하고 결과를 하나의 JSON으로 합쳐 출력합니다. v0.9 신규 필드: `scenario_run_id` (top-level), `instances[].ipc_messages`, `instances[].ipc_summary`. v0.9.1부터 시나리오 JSON은 strict validation을 사용하므로 알 수 없는 필드는 조용히 무시되지 않고 오류가 됩니다.
+모든 인스턴스를 동시 실행하고 결과를 하나의 JSON으로 합쳐 출력합니다. v0.9 신규 필드: `scenario_run_id` (top-level), `instances[].ipc_messages`, `instances[].ipc_summary`. v0.9.1부터 시나리오 JSON은 strict validation을 사용하므로 알 수 없는 필드는 조용히 무시되지 않고 오류가 됩니다. v0.10부터 인스턴스별 `backend` 필드가 추가됩니다(시나리오는 항상 cold이므로 `"shadow"` 또는 `"process"`).
 
 ```json
 {
@@ -323,6 +349,7 @@ per-run `.testplay-shadow-<run_id>/` 워크스페이스 준비가 파일시스�
       "role": "host",
       "run_id": "20260424-130000-h1234567",
       "exit_code": 0,
+      "backend": "shadow",
       "total": 5, "passed": 5, "failed": 0, "skipped": 0,
       "tests": [],
       "errors": [],
@@ -342,6 +369,7 @@ per-run `.testplay-shadow-<run_id>/` 워크스페이스 준비가 파일시스�
       "role": "client",
       "run_id": "20260424-130000-c7654321",
       "exit_code": 0,
+      "backend": "shadow",
       "total": 3, "passed": 3, "failed": 0, "skipped": 0,
       "tests": [],
       "errors": [],
@@ -402,9 +430,34 @@ testplay result --last 3
 }
 ```
 
+## 웜 에디터 브릿지
+
+에디터가 열려 있으면 아래의 cold 경로는 프로젝트를 섀도우 워크스페이스로 복사하고 배치 모드를 cold-start 해야 합니다 — 복사(디스크)와 도메인 리로드+재임포트(시간) 비용을 모두 지불합니다. **웜 에디터 브릿지**는 둘 다 제거합니다: opt-in C# 에디터 패키지(`unity/com.testplay.bridge`)가 *이미 열린 에디터에서* `TestRunnerApi`로 EditMode 테스트를 실행하고 cold 실행과 동일한 NUnit `results.xml`을 작성합니다. **투명한 backend**(동일한 exit code, 동일한 JSON)이며, 어떤 엔진이 실행됐는지 `backend` 필드로 공개합니다.
+
+**3-tier 자동 선택** (기본값은 정확성 우선):
+
+```
+1. bridge   — 살아있고 호환되는 idle 브릿지가 있고 Pristine Gate를 통과할 때
+2. shadow   — 아니면 에디터가 프로젝트 락(Temp/UnityLockfile)을 보유할 때
+3. process  — 아니면 실제 프로젝트에 대해 새 배치 모드 프로세스
+```
+
+cold 실행과 동등한 결과를 보장할 수 없으면 브릿지는 자동으로 폴백합니다. `--no-bridge`(또는 `"bridge": { "enabled": false }`)는 완전히 금지하고, `--bridge`는 선호하되 Pristine Gate는 여전히 존중합니다. `--shadow`/`--reset-shadow`/`--clear-cache`, two-phase 설정(`compile_ms`+`test_ms`), 시나리오 모드는 모두 cold로 실행됩니다.
+
+**설치 + opt-in.** in-repo UPM 패키지 `unity/com.testplay.bridge`를 프로젝트 `Packages/manifest.json`에 추가한 뒤 opt-in 합니다(그 전에는 휴면 상태이며 배치 모드에서는 절대 실행되지 않음):
+
+- 에디터 실행 시 `TESTPLAY_BRIDGE_ENABLE=1` 환경변수, **또는**
+- 빈 `<project>/.testplay/bridge/ENABLE` sentinel 파일.
+
+**Pristine Gate (정확성).** warm 결과는 warm 도메인이 테스트 대상 코드에 대해 fresh cold 도메인과 동등할 때만 반환됩니다. 브릿지는 Play Mode이거나 PlayMode 요청이면 거부(→ cold)하고, 컴파일/임포트가 안정될 때까지 대기한 뒤(컴파일 에러는 cold와 동일하게 `exit 2` + `errors[]`로 보고), 결과를 바꾸지 않는 상태(예: 미저장 씬)는 `warnings`로 공개합니다 — 에디터를 자동 저장하지 않습니다.
+
+**런타임 파일**은 `<project>/.testplay/bridge/` 아래에 위치합니다: `handshake.json`(CLI가 probe하는 liveness 하트비트), `requests/`, `responses/`, `runs/<run_id>/{status.ndjson, compile-errors.json}`. 브릿지는 `results.xml`을 기존 `.testplay/runs/<run_id>/`에 작성하므로 기존 파싱 파이프라인이 그대로 재사용됩니다.
+
+**범위 (v0.10.0):** EditMode 전용. PlayMode-warm과 시나리오/네트워크 warm 오케스트레이션은 deferred이며 당분간 cold로 실행됩니다. exit code(0–9)와 6-command 인터페이스는 변경 없습니다. [`unity/com.testplay.bridge/README.md`](unity/com.testplay.bridge/README.md) 참조.
+
 ## 섀도우 워크스페이스
 
-Unity 에디터가 프로젝트를 열고 있으면 `Temp/UnityLockfile`이 존재하며, Unity 배치 모드가 동일한 프로젝트 디렉터리에서 실행될 수 없습니다. `testplay run`은 이를 자동으로 감지하고 프로젝트 루트 내 `.testplay-shadow-<run_id>/`에 per-run 섀도우 워크스페이스를 생성합니다:
+Unity 에디터가 프로젝트를 열고 있으면 `Temp/UnityLockfile`이 존재하며, Unity 배치 모드가 동일한 프로젝트 디렉터리에서 실행될 수 없습니다. 사용 가능한 웜 브릿지가 없으면 `testplay run`은 이를 자동으로 감지하고 프로젝트 루트 내 `.testplay-shadow-<run_id>/`에 per-run 섀도우 워크스페이스를 생성합니다:
 
 | 디렉터리 | 전략 |
 |---|---|
@@ -492,6 +545,7 @@ if (!string.IsNullOrEmpty(bus)) {
 {
   "schema_version": "1",
   "exit_code": 4,
+  "backend": "process",
   "timeout_type": "compile",
   "tests": [],
   "errors": []

@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# smoke.sh — local smoke verification for FastPlay Runner
+# smoke.sh — local smoke verification for TestPlay Runner
 #
 # Usage:
 #   UNITY_PATH=/path/to/Unity ./scripts/smoke.sh
 #
 # Options (env vars):
 #   UNITY_PATH   Required. Path to Unity binary.
-#   FASTPLAY     Path to fastplay binary (default: ./fastplay built from source)
+#   TESTPLAY     Path to testplay binary (default: ./testplay built from source)
 #   SMOKE_DIR    Path to the smoke Unity project (default: ./fixtures/smoke-project)
 #
 # What this tests:
-#   1. EditMode smoke: fastplay run → exit 0, all 6 run artifacts present
-#   2. PlayMode smoke: fastplay run → same artifacts, test_platform=play_mode
+#   1. EditMode smoke: testplay run → exit 0, all 6 run artifacts present
+#   2. PlayMode smoke: testplay run → same artifacts, test_platform=play_mode
 #
-# Artifacts verified per run (inside .fastplay/runs/<run_id>/):
+# Artifacts verified per run (inside .testplay/runs/<run_id>/):
 #   results.xml, summary.json, manifest.json, stdout.log, stderr.log, events.ndjson
 # Snapshot (in smoke project root, outside run artifact dir):
-#   fastplay-status.json
+#   testplay-status.json
 #
 # The script exits non-zero if any check fails.
 # Dependencies: bash, grep, sed, go — no python3 or jq required.
@@ -27,7 +27,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 SMOKE_DIR="${SMOKE_DIR:-$REPO_ROOT/fixtures/smoke-project}"
-FASTPLAY="${FASTPLAY:-}"
+TESTPLAY="${TESTPLAY:-}"
 
 # ── Prerequisites ────────────────────────────────────────────────────────────
 
@@ -47,19 +47,19 @@ echo "==> Running smoke helper self-check..."
 bash "$SCRIPT_DIR/smoke_selfcheck.sh"
 echo ""
 
-# Build fastplay if not provided.
-if [[ -z "$FASTPLAY" ]]; then
-  echo "==> Building fastplay..."
-  go build -o "$REPO_ROOT/fastplay" "$REPO_ROOT/cmd/fastplay"
-  FASTPLAY="$REPO_ROOT/fastplay"
+# Build testplay if not provided.
+if [[ -z "$TESTPLAY" ]]; then
+  echo "==> Building testplay..."
+  go build -o "$REPO_ROOT/testplay" "$REPO_ROOT/cmd/testplay"
+  TESTPLAY="$REPO_ROOT/testplay"
 fi
 
-if [[ ! -x "$FASTPLAY" ]]; then
-  echo "ERROR: fastplay binary not found or not executable: $FASTPLAY" >&2
+if [[ ! -x "$TESTPLAY" ]]; then
+  echo "ERROR: testplay binary not found or not executable: $TESTPLAY" >&2
   exit 1
 fi
 
-echo "==> Using fastplay:   $FASTPLAY"
+echo "==> Using testplay:   $TESTPLAY"
 echo "==> Using Unity:      $UNITY_PATH"
 echo "==> Smoke project:    $SMOKE_DIR"
 echo ""
@@ -75,17 +75,17 @@ assert_field() {
   local stage="$1" field="$2" value="$3" raw="$4"
   if [[ -z "$value" ]]; then
     echo "  ERROR [$stage]: field '$field' is empty — JSON parsing failed." >&2
-    echo "  Raw fastplay output:" >&2
+    echo "  Raw testplay output:" >&2
     printf '%s\n' "$raw" | sed 's/^/    /' >&2
     exit 1
   fi
 }
 
-# ── Helper: generate fastplay.json for smoke project ─────────────────────────
+# ── Helper: generate testplay.json for smoke project ─────────────────────────
 
 write_config() {
   local platform="$1"
-  cat > "$SMOKE_DIR/fastplay.json" <<EOF
+  cat > "$SMOKE_DIR/testplay.json" <<EOF
 {
   "schema_version": "1",
   "unity_path": "$UNITY_PATH",
@@ -94,7 +94,7 @@ write_config() {
   "timeout": {
     "total_ms": 300000
   },
-  "result_dir": ".fastplay/results"
+  "result_dir": ".testplay/results"
 }
 EOF
 }
@@ -104,16 +104,16 @@ EOF
 # Exits immediately if the artifact directory or any expected file is missing.
 check_artifacts() {
   local stage="$1" run_id="$2"
-  local artifact_dir="$SMOKE_DIR/.fastplay/runs/$run_id"
+  local artifact_dir="$SMOKE_DIR/.testplay/runs/$run_id"
 
   if [[ ! -d "$artifact_dir" ]]; then
     echo "  ERROR [$stage]: artifact directory not found: $artifact_dir" >&2
-    echo "  Possible cause: run_id extraction failed or fastplay did not create the run directory." >&2
+    echo "  Possible cause: run_id extraction failed or testplay did not create the run directory." >&2
     exit 1
   fi
 
   local missing=false
-  # Run artifacts (inside .fastplay/runs/<run_id>/)
+  # Run artifacts (inside .testplay/runs/<run_id>/)
   for f in results.xml summary.json manifest.json stdout.log stderr.log events.ndjson; do
     if [[ ! -f "$artifact_dir/$f" ]]; then
       echo "  MISSING [$stage]: $artifact_dir/$f" >&2
@@ -121,8 +121,8 @@ check_artifacts() {
     fi
   done
   # Status snapshot (in project root, outside the run artifact dir)
-  if [[ ! -f "$SMOKE_DIR/fastplay-status.json" ]]; then
-    echo "  MISSING [$stage]: $SMOKE_DIR/fastplay-status.json (status snapshot)" >&2
+  if [[ ! -f "$SMOKE_DIR/testplay-status.json" ]]; then
+    echo "  MISSING [$stage]: $SMOKE_DIR/testplay-status.json (status snapshot)" >&2
     missing=true
   fi
   if [[ "$missing" == "true" ]]; then
@@ -138,22 +138,22 @@ run_smoke() {
   echo "==> $stage ($platform)"
   write_config "$platform"
 
-  echo "  fastplay check..."
-  "$FASTPLAY" check
+  echo "  testplay check..."
+  "$TESTPLAY" check
 
-  echo "  fastplay run ($platform)..."
+  echo "  testplay run ($platform)..."
   local output cmd_status=0
-  output=$("$FASTPLAY" run) || cmd_status=$?
+  output=$("$TESTPLAY" run) || cmd_status=$?
 
   local run_id exit_code
   run_id=$(json_str "$output" "run_id")
   exit_code=$(json_num "$output" "exit_code")
 
   if [[ "$cmd_status" -ne 0 ]]; then
-    echo "  ERROR [$stage]: fastplay run exited with status $cmd_status" >&2
+    echo "  ERROR [$stage]: testplay run exited with status $cmd_status" >&2
     echo "  run_id:    ${run_id:-(unparsed)}" >&2
     echo "  exit_code: ${exit_code:-(unparsed)}" >&2
-    echo "  Raw fastplay output:" >&2
+    echo "  Raw testplay output:" >&2
     printf '%s\n' "$output" | sed 's/^/    /' >&2
     exit 1
   fi
@@ -172,9 +172,9 @@ run_smoke() {
 
 # ── Shadow smoke runner ───────────────────────────────────────────────────────
 # Usage: run_smoke_shadow <stage_label> <platform>
-# Runs fastplay run --shadow and verifies:
+# Runs testplay run --shadow and verifies:
 #   1. Exit 0 and standard run artifacts.
-#   2. .fastplay-shadow/ was created with expected subdirectories.
+#   2. .testplay-shadow/ was created with expected subdirectories.
 run_smoke_shadow() {
   local stage="$1" platform="$2"
 
@@ -182,24 +182,24 @@ run_smoke_shadow() {
   write_config "$platform"
 
   # Clean any pre-existing shadow workspace so the test is deterministic.
-  rm -rf "$SMOKE_DIR/.fastplay-shadow"
+  rm -rf "$SMOKE_DIR/.testplay-shadow"
 
-  echo "  fastplay check..."
-  "$FASTPLAY" check
+  echo "  testplay check..."
+  "$TESTPLAY" check
 
-  echo "  fastplay run --shadow ($platform)..."
+  echo "  testplay run --shadow ($platform)..."
   local output cmd_status=0
-  output=$("$FASTPLAY" run --shadow) || cmd_status=$?
+  output=$("$TESTPLAY" run --shadow) || cmd_status=$?
 
   local run_id exit_code
   run_id=$(json_str "$output" "run_id")
   exit_code=$(json_num "$output" "exit_code")
 
   if [[ "$cmd_status" -ne 0 ]]; then
-    echo "  ERROR [$stage]: fastplay run --shadow exited with status $cmd_status" >&2
+    echo "  ERROR [$stage]: testplay run --shadow exited with status $cmd_status" >&2
     echo "  run_id:    ${run_id:-(unparsed)}" >&2
     echo "  exit_code: ${exit_code:-(unparsed)}" >&2
-    echo "  Raw fastplay output:" >&2
+    echo "  Raw testplay output:" >&2
     printf '%s\n' "$output" | sed 's/^/    /' >&2
     exit 1
   fi
@@ -214,7 +214,7 @@ run_smoke_shadow() {
   check_artifacts "$stage" "$run_id"
 
   echo "  Checking shadow workspace structure..."
-  local shadow_dir="$SMOKE_DIR/.fastplay-shadow"
+  local shadow_dir="$SMOKE_DIR/.testplay-shadow"
   if [[ ! -d "$shadow_dir" ]]; then
     echo "  ERROR [$stage]: shadow workspace not created: $shadow_dir" >&2
     exit 1

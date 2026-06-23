@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/Kubonsang/testplay-runner/internal/atomicfile"
 	"github.com/Kubonsang/testplay-runner/internal/parser"
 )
 
@@ -56,7 +57,7 @@ func Write(projectPath, runID string, tests []parser.TestCase) error {
 	if err := os.WriteFile(tmp, data, 0644); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, dest); err != nil {
+	if err := atomicfile.Rename(tmp, dest); err != nil {
 		_ = os.Remove(tmp)
 		return err
 	}

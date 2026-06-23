@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Kubonsang/testplay-runner/internal/atomicfile"
 	"github.com/Kubonsang/testplay-runner/internal/parser"
 	"github.com/Kubonsang/testplay-runner/internal/runid"
 )
@@ -39,6 +40,13 @@ type RunResult struct {
 	Tests         []parser.TestCase `json:"tests"`
 	Errors        []CompileError    `json:"errors,omitempty"`
 	NewFailures   []parser.TestCase `json:"new_failures"` // null when compare-run not specified
+
+	// Backend identifies which execution engine produced this result:
+	// "process" (cold batchmode against the real project), "shadow" (cold
+	// batchmode inside a per-run shadow workspace), or "bridge" (warm editor
+	// via the TestPlay bridge). Set by runsvc.Service.Run before persistence;
+	// always present in the CLI stdout output (Output Design Rule #13).
+	Backend string `json:"backend,omitempty"`
 }
 
 // CompileError represents a C# compile error from Unity stderr.
@@ -99,7 +107,7 @@ func atomicWrite(path string, data []byte) error {
 		}
 		return closeErr
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := atomicfile.Rename(tmpName, path); err != nil {
 		_ = os.Remove(tmpName)
 		return err
 	}

@@ -10,9 +10,9 @@ Agents interact via six commands: `version`, `check`, `list`, `run`, `result`, `
 
 **Supported test platforms:** `"edit_mode"` (default) and `"play_mode"` — set via `test_platform` in `testplay.json`. The platform is passed as `-testPlatform EditMode|PlayMode` to Unity.
 
-**Identity anchor:** testplay is a *contract layer* (call it "the honest contract" internally — see commit history). It is NOT a speed layer for human TDD. Speed-vs-correctness trade-offs always resolve in favor of correctness/clarity for automated callers. When evaluating feature requests like "make it faster in the editor", the answer is: that's the Test Runner window's job, not testplay's. Cite this paragraph.
+**Identity anchor:** testplay is a *contract layer* (call it "the honest contract" internally — see commit history). It is NOT a speed layer for human TDD. Speed-vs-correctness trade-offs always resolve in favor of correctness/clarity for automated callers. When evaluating feature requests like "make it faster in the editor", the answer is: that's the Test Runner window's job, not testplay's. Cite this paragraph. **Bridge corollary (v0.10.0):** the warm-editor bridge does not violate this — the Test Runner window is a human GUI that automated callers *cannot* use, so the bridge gives agents/CI the warm path humans already have, *only* as a transparent backend behind the unchanged JSON/exit-code contract. It is enforced by a resolution rule, not intent: the warm path is forbidden whenever warm-vs-cold could change *results*, and the Pristine Gate self-demotes to the cold path. Speed/disk savings are a side effect of reusing a warm domain, never a promised capability.
 
-**Current version:** `v0.9.0` (main). Network Primitives — scenario-scoped IPC bus (`TESTPLAY_IPC_BUS` env var, `.testplay/ipc/<scenario_run_id>/bus.ndjson`), per-instance polling readers, `instances[].ipc_messages` + `ipc_summary` in scenario JSON output, `scenario_run_id` top-level field, IPC events interleaved into per-instance `events.ndjson`, host-crash correlation in `orchestrator_errors`, IPC-tree retention. **Identity locked at v0.8.0:** contract layer for agents+CI, not a TDD speed tool — see Identity anchor above.
+**Current version:** `v0.10.0` (main). Warm-Editor Bridge — a 3-tier auto backend (`bridge → shadow → process`) where a greenfield C# Editor package (`unity/com.testplay.bridge`, opt-in via `TESTPLAY_BRIDGE_ENABLE`/`.testplay/bridge/ENABLE`) runs EditMode tests in the already-open warm Editor via `TestRunnerApi` and writes the same NUnit `results.xml` a cold run would — eliminating the shadow-workspace copy (용량) and the cold domain reload (시간). File-based protocol under `.testplay/bridge/`; `unity.ExecuteBridge` reuses `parseResults`/`classifyNoResults` for byte-identical exit codes; `backend` field discloses which engine ran; Pristine Gate (`internal` C# `PristineGate`) keeps the warm path honest. Two-phase configs and scenario mode always run cold. **Identity locked at v0.8.0:** contract layer for agents+CI, not a TDD speed tool — see Identity anchor above.
 
 **Ultimate goal:** PlayMode + network environment testing.
 
@@ -62,7 +62,12 @@ internal/
   scenario/          # Scenario JSON loading, validation, and multi-instance spec
   config/            # testplay.json loading and validation
   runid/             # Shared run-ID format validation (regex pattern)
+  bridge/            # Warm-editor bridge client — Probe handshake gate + file-based protocol
+unity/
+  com.testplay.bridge/  # Greenfield C# UPM Editor package (warm-editor bridge; opt-in)
 ```
+
+The warm bridge has two halves: the Go client in `internal/bridge` (handshake `Probe` + request/response/progress over `.testplay/bridge/`) plus `unity.ExecuteBridge` (sibling of `unity.Execute`, reuses `parseResults`/`classifyNoResults`), and the C# `unity/com.testplay.bridge` package that drives `TestRunnerApi` in the warm Editor. Their protocol version is locked in lockstep (`bridge.ProtocolVersion` ↔ `BridgeProtocol.Version`).
 
 ## CLI Contract (stdout = JSON only)
 
@@ -74,12 +79,14 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 | `testplay init [--unity-path <path>] [--test-platform <platform>] [--force]` | Generate testplay.json with sensible defaults |
 | `testplay check` | Validate Unity path, project path, and testplay.json before running |
 | `testplay list` | Static source scan returning candidate test names (not guaranteed complete) |
-| `testplay run [--filter <name>] [--category <cat>] [--compare-run <run_id>] [--shadow] [--reset-shadow] [--clear-cache] [--scenario <file>]` | Execute tests; streams progress to `testplay-status.json` (single mode) or `testplay-status-<role>.json` (scenario mode) |
+| `testplay run [--filter <name>] [--category <cat>] [--compare-run <run_id>] [--shadow] [--reset-shadow] [--clear-cache] [--bridge] [--no-bridge] [--scenario <file>]` | Execute tests; streams progress to `testplay-status.json` (single mode) or `testplay-status-<role>.json` (scenario mode) |
 | `testplay result [--last N]` | Re-read stored results; returns run_id history |
 
 **`--reset-shadow`**: Activates shadow workspace mode. With per-run isolation (v0.3+), equivalent to `--shadow` — every run already starts with a fresh workspace. Kept for API compatibility.
 
 **`--clear-cache`**: Removes the cached Library (`.testplay/cache/`) before shadow workspace creation, forcing Unity to reimport from scratch. Use when the cache might be corrupted or when troubleshooting import-related failures.
+
+**`--bridge` / `--no-bridge`** (v0.10.0): backend-selection overrides for the warm-editor bridge. By default the bridge is auto-selected as tier-1 (`bridge → shadow → process`) when a live, compatible, idle bridge handshake is present and the Pristine Gate passes; otherwise execution falls back to the cold path automatically. `--no-bridge` (or `bridge.enabled: false` in config) forbids the bridge entirely for guaranteed cold hermeticity. `--bridge` *prefers* the bridge even on a soft probe failure but still respects the Pristine Gate — force changes preference, never the correctness bar (if it cannot run cleanly it falls back to cold with a disclosed `warnings` entry). `--shadow`/`--reset-shadow`/`--clear-cache` and two-phase configs (`compile_ms`+`test_ms`) bypass the bridge. Scenario mode always runs cold (scenario-warm orchestration is deferred).
 
 **Scenario JSON `env` field:** Each instance in a scenario file can specify an `env` map of environment variables injected into the Unity process. Keys must be non-empty and must not contain `=`. Values override inherited environment variables.
 
@@ -147,7 +154,9 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 
 `unity_path` falls back to `UNITY_PATH` env var if omitted. `project_path` defaults to the directory containing `testplay.json`.
 
-**Two-phase execution:** when both `compile_ms` and `test_ms` are set (both > 0), two-phase execution is enabled. Both fields must be set together — setting only one is a validation error. When neither is set, single-phase execution uses only `total_ms`.
+**Two-phase execution:** when both `compile_ms` and `test_ms` are set (both > 0), two-phase execution is enabled. Both fields must be set together — setting only one is a validation error. When neither is set, single-phase execution uses only `total_ms`. Note: setting both also **disables the warm bridge** for that run (the warm Editor cannot honestly reproduce the strict compile/test phase split), so two-phase always runs cold.
+
+**Bridge config (v0.10.0):** an optional top-level `"bridge": { "enabled": false }` block forbids the warm-editor bridge entirely (default when absent: enabled). Even when enabled, the bridge is only *selected* when a live, compatible, idle bridge handshake is present and the Pristine Gate passes — otherwise the run falls back to shadow/process automatically.
 
 **Config path:** Loaded from the path given by `--config <path>` (default: `"testplay.json"` in cwd). When `--config` is omitted, behaviour is unchanged from v0.2.
 
@@ -165,6 +174,7 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 - `.testplay/results/<run_id>.json` — one file per run, never overwritten. `run_id` format: `YYYYMMDD-HHMMSS-xxxxxxxx` where the 8-char hex suffix is 4 crypto-random bytes (e.g. `20250301-102200-a3f8b2c1`). Collision probability is negligible even under parallel runs.
 - `.testplay-shadow-<run_id>/` — per-run shadow workspace created automatically when `Temp/UnityLockfile` is detected (Unity Editor open). Contains copied `Assets/`, `ProjectSettings/`, linked `Packages/`, and an empty `Library/` (Unity populates during the run). Removed automatically after each run via `ws.Cleanup()`. Excluded from git via `.gitignore` auto-patching (`testplay-shadow-*/`). Use `--reset-shadow` to force shadow mode (equivalent to `--shadow`; no persistent cache exists to reset).
 - `.testplay/ipc/<scenario_run_id>/bus.ndjson` — scenario-scoped IPC bus, created at the start of every `--scenario` run. Absolute path is exposed to every instance as the `TESTPLAY_IPC_BUS` env var; user code in any language appends NDJSON message lines and polls the file for incoming traffic. testplay's per-instance polling reader captures messages addressed to that role (or broadcast to `*`) and surfaces them in scenario JSON output and per-instance `events.ndjson`. Pruned under the same `retention.max_runs` policy as run artifacts; `.testplay/ipc/` is added to `.gitignore` automatically on first scenario run. Single-mode (`testplay run` without `--scenario`) does not create the file or inject the env var.
+- `.testplay/bridge/` (v0.10.0) — warm-editor bridge runtime, written by the `com.testplay.bridge` C# Editor package while it is opted in (never created otherwise). Layout: `ENABLE` (opt-in sentinel; alternatively `TESTPLAY_BRIDGE_ENABLE=1`), `handshake.json` (liveness/identity heartbeat the Go `bridge.Probe` gate reads — protocol version, project path, Unity version, editor PID, `bridge_session_id`, `updated_at`, `editor_state`), `requests/<run_id>.req.json` (Go-written, atomic) + `requests/<run_id>.cancel` (best-effort cancel marker), `responses/<run_id>.resp.json` (C#-written outcome), and `runs/<run_id>/` with `status.ndjson` (C#-appended progress the Go client translates into `testplay-status.json`) + `compile-errors.json` (sidecar mapping 1:1 to `errors[]` → exit 2). The bridge writes `results.xml` to the Go-assigned `.testplay/runs/<run_id>/results.xml` (NOT under `.testplay/bridge/`) so the existing `parseResults` pipeline is reused unchanged. The Go side never writes `testplay-status.json` from the bridge stream's `seq` — the single status writer owns `seq`. Use `--no-bridge` / `bridge.enabled: false` to keep the cold path. Greenfield C# lives at `unity/com.testplay.bridge/` (in-repo UPM, protocol-version-locked to the CLI).
 
 ## Agent Recommended Usage Flow
 
@@ -209,6 +219,7 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 10. `excerpt` (string) on test entries is present only when the test failed. Format: `"message (at filename.cs:line)"` or just `"message"` when no file info available. Absent for passing/skipped tests.
 11. `scenario_run_id` (string) is present at the top level of every scenario-mode output. Format matches per-instance run IDs (`YYYYMMDD-HHMMSS-xxxxxxxx`) but identifies the scenario as a whole, not any single instance. Absent in single-mode (`testplay run`) output.
 12. `instances[].ipc_messages` (array of Message objects) and `instances[].ipc_summary` (object with `sent_count` / `received_count` / `last_sent` / `last_received`) are present only when IPC capture was active for the scenario AND that instance saw at least one message. Absent otherwise.
+13. `backend` (string) is **always present** in `run` output (single-mode top level and each scenario `instances[]` entry). Value is `"process"` (cold batchmode against the real project), `"shadow"` (cold batchmode inside a per-run shadow workspace), or `"bridge"` (warm Editor via the TestPlay bridge). It is first-order provenance an agent should never have to infer — like `schema_version`, it is emitted unconditionally (additive/backward-compatible; existing parsers ignore unknown keys). When the warm bridge ran in a non-pristine-but-acceptable state (e.g. unsaved scenes), the disclosure is added to `warnings` (Rule 7); a *result-changing* divergence never lands in `warnings` — it falls back to the cold path instead.
 
 ## Known Limitations & Risks
 
@@ -319,6 +330,17 @@ Framework-agnostic instance-to-instance communication and cross-instance failure
 - **Retention + .gitignore** — IPC bus directories follow the same `retention.max_runs` policy as run artifacts (reuses `artifacts.Store.Prune`); `.testplay/ipc/` auto-added to `.gitignore` on first scenario run
 - **Scenario-mode safety** — list cache write-back skipped when `SkipCacheWriteBack` is set, matching Library cache discipline
 
+### v0.10.0 — The Warm-Editor Bridge (implemented on main; Tier B spikes validated on Unity 6 — see docs/25; LTS-Editor re-run pending before tag)
+Cuts the two physical bottlenecks of "Editor open" runs — the shadow-workspace byte copy (용량) and the cold domain reload (시간) — by running tests *through* the warm Editor instead of *around* it. Transparent backend; contract unchanged.
+- **3-tier auto backend** — `bridge → shadow → process`, selected in `runsvc.Service.Run` (new branch before the existing shadow/process block, no `Backend` interface). Correctness wins by default: the bridge self-demotes to cold on any Probe/Pristine-Gate failure.
+- **`internal/bridge`** — `Probe` 6-point handshake gate (protocol version, project-path match, Unity-version match, liveness/staleness, idle state) + file-based NDJSON `Client` (atomic request/response, status-stream tail, `.cancel` marker) over `<project>/.testplay/bridge/`.
+- **`unity.ExecuteBridge`** — sibling of `unity.Execute` returning the same `RunResult`/exit code; reuses `parseResults` (for the bridge-written `results.xml`) and the extracted `classifyNoResults` (for the compile-errors sidecar → exit 2 / build-failed → exit 6), and `handleContextErr` (timeout → 4 / signal → 8).
+- **`unity/com.testplay.bridge`** — greenfield C# Editor UPM package (EditMode only): opt-in `[InitializeOnLoad]` (`TESTPLAY_BRIDGE_ENABLE` / `ENABLE` sentinel, never in batchmode), `TestRunnerApi` driver writing the same NUnit `results.xml`, `CompilationPipeline` → `CSxxxx:`-prefixed compile-errors sidecar, `O_APPEND` progress stream, and the **Pristine Gate** (Play Mode refuse, compile-settle wait, dirty-scene disclosure).
+- **`backend` field + disclosure** — `"process" | "shadow" | "bridge"` always present (Output Design Rule #13); non-pristine states surfaced via `warnings`; `testplay-status.json` schema unchanged (reuses `compiling → running → done`).
+- **`--bridge` / `--no-bridge` flags + `bridge.enabled` config**; two-phase and scenario mode always run cold.
+- **Ship gate** — `e2e/bridge_parity_test.go` (`//go:build e2e`) asserts cold/bridge parity. Riskiest Unity behaviors (TestRunnerApi cancellation, `ToXml()` fidelity, compile-settle) are validated by the spikes in `RELEASE-PLAN.md` before tagging.
+- **Deferred:** PlayMode-warm, scenario/network warm orchestration, bridge-side hard cancellation.
+
 ### Remaining items (v1.0+)
 
-- **Network test configuration** — NGO/Mirror harness integration
+- **Network test configuration** — NGO/Mirror harness integration (the warm bridge + IPC bus are the substrate for multi-instance warm orchestration)

@@ -9,14 +9,24 @@ import (
 )
 
 var (
-	ErrConfigNotFound  = errors.New("testplay.json not found")
-	ErrConfigInvalid   = errors.New("testplay.json is invalid")
+	ErrConfigNotFound   = errors.New("testplay.json not found")
+	ErrConfigInvalid    = errors.New("testplay.json is invalid")
 	ErrUnityPathMissing = errors.New("unity_path not set and UNITY_PATH env var not found")
 )
 
 // RetentionConfig controls automatic cleanup of old run results and artifacts.
 type RetentionConfig struct {
 	MaxRuns *int `json:"max_runs,omitempty"` // max recent runs to keep; nil → default 30; 0 = disable pruning
+}
+
+// BridgeConfig controls the warm-editor bridge backend (tier-1 selection).
+// When absent or Enabled is nil, the bridge is allowed (default true) but is
+// still only selected when a live, compatible bridge handshake is present and
+// the Pristine Gate passes — otherwise execution falls back to shadow/process.
+// Set Enabled to false to forbid the warm bridge entirely (guaranteed cold
+// hermeticity, e.g. for conservative CI).
+type BridgeConfig struct {
+	Enabled *bool `json:"enabled,omitempty"` // nil → default true; false disables tier-1 bridge selection
 }
 
 type Config struct {
@@ -27,7 +37,17 @@ type Config struct {
 	ResultDir     string          `json:"result_dir"`
 	TestPlatform  string          `json:"test_platform"` // "edit_mode" (default) | "play_mode"
 	Retention     RetentionConfig `json:"retention"`
+	Bridge        *BridgeConfig   `json:"bridge,omitempty"` // warm-editor bridge backend; nil → enabled by default
 	configDir     string          // unexported: directory containing testplay.json
+}
+
+// BridgeEnabled reports whether the warm-editor bridge backend may be selected.
+// Defaults to true when the bridge config block (or its enabled field) is absent.
+func (c *Config) BridgeEnabled() bool {
+	if c.Bridge == nil || c.Bridge.Enabled == nil {
+		return true
+	}
+	return *c.Bridge.Enabled
 }
 
 // Timeouts holds timeout configuration for a testplay run.

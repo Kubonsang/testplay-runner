@@ -29,7 +29,7 @@ If your AI agent is iterating on Unity tests, testplay's whole job is making eac
 | No regression tracking | `--compare-run` populates `new_failures` |
 | Platform path differences | Absolute + relative paths in every response |
 | No test discovery without running | `testplay list` static-scans known attributes — incomplete for custom attributes (see Known Limitations) |
-| Unity Editor holds project lock | Shadow Workspace runs tests in `.testplay-shadow/` while editor stays open |
+| Unity Editor holds project lock | Warm-Editor Bridge runs tests in the open Editor (`backend: "bridge"`); falls back to a `.testplay-shadow/` workspace, then a fresh process |
 
 ## Installation
 
@@ -93,6 +93,8 @@ Per-run artifacts (`results.xml`, `summary.json`, `manifest.json`, `stdout.log`,
 - `compile_ms` + `test_ms`: **both must be set together** to enable two-phase execution — Unity runs compile-only first (`compile_ms` deadline), then runs tests (`test_ms` deadline). Phase-specific timeouts emit `timeout_type: "compile"` or `"test"`, while the outer `total_ms` may still emit `"total"`. Setting only one of the two is a config validation error.
 - When neither `compile_ms` nor `test_ms` is set, single-phase execution is used (compile + test in one Unity invocation, governed by `total_ms`).
 
+**Bridge configuration (v0.10.0):** an optional top-level `"bridge": { "enabled": false }` block disables the warm-editor bridge entirely (default when absent: enabled). Setting both `compile_ms` and `test_ms` (two-phase) also forces the cold path for that run. See [Warm-Editor Bridge](#warm-editor-bridge).
+
 > **Note:** PlayMode network harness and NGO orchestration are not yet supported.
 
 ## Commands
@@ -108,7 +110,7 @@ testplay version
 ```json
 {
   "schema_version": "1",
-  "version": "v0.9.2"
+  "version": "v0.10.0"
 }
 ```
 
@@ -218,10 +220,14 @@ testplay run --compare-run 20250301-102200-a3f8b2c1
 testplay run --config path/to/testplay.json
 testplay run --shadow              # force shadow workspace even without editor lock
 testplay run --clear-cache         # remove cached Library before shadow workspace creation
+testplay run --bridge              # prefer the warm-editor bridge (still gated by the Pristine Gate)
+testplay run --no-bridge           # force the cold shadow/process path
 testplay run --scenario scenario.json  # multi-instance concurrent execution
 ```
 
-When `--scenario` is used, `--filter`, `--category`, `--compare-run`, `--shadow`, and cache flags are forwarded to every scenario instance.
+When `--scenario` is used, `--filter`, `--category`, `--compare-run`, `--shadow`, and cache flags are forwarded to every scenario instance (scenario mode always runs cold).
+
+**`backend` field (v0.10.0):** every `run` result includes a `backend` field — `"process"`, `"shadow"`, or `"bridge"` — disclosing which engine produced it. It is always present (see [Warm-Editor Bridge](#warm-editor-bridge)).
 
 **All tests pass (exit 0):**
 
@@ -230,6 +236,7 @@ When `--scenario` is used, `--filter`, `--category`, `--compare-run`, `--shadow`
   "schema_version": "1",
   "run_id": "20250325-143000-a3f8b2c1",
   "exit_code": 0,
+  "backend": "process",
   "total": 2,
   "passed": 2,
   "failed": 0,
@@ -256,6 +263,7 @@ When `--scenario` is used, `--filter`, `--category`, `--compare-run`, `--shadow`
 {
   "schema_version": "1",
   "run_id": "20250325-143000-a3f8b2c1",
+  "backend": "process",
   "total": 10,
   "passed": 9,
   "failed": 1,
@@ -282,6 +290,7 @@ When `--scenario` is used, `--filter`, `--category`, `--compare-run`, `--shadow`
   "schema_version": "1",
   "run_id": "20250325-143000-a3f8b2c1",
   "exit_code": 2,
+  "backend": "process",
   "total": 0,
   "passed": 0,
   "failed": 0,
@@ -308,6 +317,7 @@ Returned when Unity's batch run exits without producing NUnit XML and without pa
   "schema_version": "1",
   "run_id": "20250325-143000-a3f8b2c1",
   "exit_code": 6,
+  "backend": "process",
   "tests": [],
   "errors": []
 }
@@ -327,7 +337,7 @@ Returned when preparing the per-run `.testplay-shadow-<run_id>/` workspace fails
 
 **Scenario mode (`--scenario`) — aggregated output:**
 
-Runs every instance concurrently and writes a single JSON object covering all of them. Fields new in v0.9: `scenario_run_id` (top-level), `instances[].ipc_messages`, `instances[].ipc_summary`. v0.9.1 also makes scenario JSON strict: unknown fields fail validation instead of being silently ignored.
+Runs every instance concurrently and writes a single JSON object covering all of them. Fields new in v0.9: `scenario_run_id` (top-level), `instances[].ipc_messages`, `instances[].ipc_summary`. v0.9.1 also makes scenario JSON strict: unknown fields fail validation instead of being silently ignored. v0.10 adds a per-instance `backend` field (always `"shadow"` or `"process"` — scenario mode always runs cold).
 
 ```json
 {
@@ -339,6 +349,7 @@ Runs every instance concurrently and writes a single JSON object covering all of
       "role": "host",
       "run_id": "20260424-130000-h1234567",
       "exit_code": 0,
+      "backend": "shadow",
       "total": 5, "passed": 5, "failed": 0, "skipped": 0,
       "tests": [],
       "errors": [],
@@ -358,6 +369,7 @@ Runs every instance concurrently and writes a single JSON object covering all of
       "role": "client",
       "run_id": "20260424-130000-c7654321",
       "exit_code": 0,
+      "backend": "shadow",
       "total": 3, "passed": 3, "failed": 0, "skipped": 0,
       "tests": [],
       "errors": [],
@@ -418,9 +430,34 @@ testplay result --last 3
 }
 ```
 
+## Warm-Editor Bridge
+
+When the Unity Editor is open, the cold path (below) has to copy the project into a shadow workspace and cold-start batch mode — paying both disk (the copy) and time (domain reload + reimport). The **warm-editor bridge** removes both: an opt-in C# Editor package (`unity/com.testplay.bridge`) runs your EditMode tests *in the already-open Editor* via `TestRunnerApi` and writes the same NUnit `results.xml` a cold run would. It is a **transparent backend** — same exit codes, same JSON — with a `backend` field disclosing which engine ran.
+
+**3-tier automatic selection** (correctness wins by default):
+
+```
+1. bridge   — a live, compatible, idle bridge is present AND the Pristine Gate passes
+2. shadow   — else the Editor holds the project lock (Temp/UnityLockfile)
+3. process  — else a fresh batch-mode process against the real project
+```
+
+If the bridge can't guarantee a result equivalent to a cold run, it falls back automatically. `--no-bridge` (or `"bridge": { "enabled": false }`) forbids it entirely; `--bridge` prefers it but still respects the Pristine Gate. `--shadow`/`--reset-shadow`/`--clear-cache`, two-phase configs (`compile_ms`+`test_ms`), and scenario mode all run cold.
+
+**Install + opt-in.** Add the in-repo UPM package `unity/com.testplay.bridge` to your project's `Packages/manifest.json`, then opt in (the bridge is dormant otherwise and never runs in batch mode):
+
+- `TESTPLAY_BRIDGE_ENABLE=1` environment variable when launching the Editor, **or**
+- an empty `<project>/.testplay/bridge/ENABLE` sentinel file.
+
+**Pristine Gate (correctness).** A warm result is returned only when the warm domain is equivalent to a fresh cold one for the code under test. The bridge refuses (→ cold) in Play Mode or for PlayMode requests, waits for compilation/import to settle (then reports compile errors as the same `exit 2` + `errors[]` a cold run would), and discloses non-result-changing states (e.g. unsaved scenes) via `warnings` — it never auto-saves your editor.
+
+**Runtime files** live under `<project>/.testplay/bridge/`: `handshake.json` (liveness heartbeat the CLI probes), `requests/`, `responses/`, and `runs/<run_id>/{status.ndjson, compile-errors.json}`. The bridge writes `results.xml` to the normal `.testplay/runs/<run_id>/` so the existing parse pipeline is reused unchanged.
+
+**Scope (v0.10.0):** EditMode only. PlayMode-warm and scenario/network warm orchestration are deferred; those always run cold for now. Exit codes (0–9) and the six-command interface are unchanged. See [`unity/com.testplay.bridge/README.md`](unity/com.testplay.bridge/README.md).
+
 ## Shadow Workspace
 
-When the Unity Editor has the project open, `Temp/UnityLockfile` exists and Unity's batch mode cannot run against the same project directory. `testplay run` detects this automatically and creates a per-run shadow workspace at `.testplay-shadow-<run_id>/` inside your project root:
+When the Unity Editor has the project open, `Temp/UnityLockfile` exists and Unity's batch mode cannot run against the same project directory. If no warm bridge is available, `testplay run` detects this automatically and creates a per-run shadow workspace at `.testplay-shadow-<run_id>/` inside your project root:
 
 | Directory | Strategy |
 |---|---|
@@ -508,6 +545,7 @@ Example JSON for a compile-phase timeout:
 {
   "schema_version": "1",
   "exit_code": 4,
+  "backend": "process",
   "timeout_type": "compile",
   "tests": [],
   "errors": []

@@ -1,0 +1,17 @@
+{
+  "name": "com.testplay.bridge",
+  "version": "0.10.0",
+  "displayName": "TestPlay Bridge",
+  "description": "Warm-editor bridge for the TestPlay Runner CLI (testplay). DORMANT by default: it activates only when opted in via the TESTPLAY_BRIDGE_ENABLE=1 environment variable or a .testplay/bridge/ENABLE sentinel file, and never in batchmode. When active, it runs EditMode tests in the already-open Editor via the TestRunnerApi and reports the same NUnit results.xml a cold batchmode run would produce, over a file-based protocol under <project>/.testplay/bridge/. This eliminates the shadow-workspace copy and the cold domain reload for agent/CI runs while preserving testplay's output contract.",
+  "unity": "2021.3",
+  "keywords": [
+    "testing",
+    "ci",
+    "automation",
+    "testplay",
+    "test-runner"
+  ],
+  "author": {
+    "name": "TestPlay Runner"
+  }
+}

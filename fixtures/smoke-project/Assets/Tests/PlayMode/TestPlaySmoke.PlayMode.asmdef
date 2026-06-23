@@ -1,10 +1,8 @@
 {
-    "name": "FastPlaySmoke.EditMode",
-    "rootNamespace": "FastPlaySmoke",
+    "name": "TestPlaySmoke.PlayMode",
+    "rootNamespace": "TestPlaySmoke",
     "references": [],
-    "includePlatforms": [
-        "Editor"
-    ],
+    "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": false,
