@@ -289,7 +289,7 @@
   2. C# compile errors 없는 compile invocation 실패는 exit 6 + 명확한 환경/Unity 진단 메시지를 반환할 것
   3. shadow cold import 비용 때문에 테스트 실패로 오독하지 않도록 README에 대응 경로가 문서화될 것
 
-## 🌉 v0.10.0 (The Warm-Editor Bridge) — 구현 완료 (main); Tier B spike 검증 통과 (Unity 6, docs/25); LTS 재실행 후 태깅 예정
+## ✅ v0.10.0 (The Warm-Editor Bridge) — shipped 2026-06-24
 **테마:** 에디터가 열려 있을 때의 두 가지 물리적 병목 — shadow workspace 바이트 복사(용량)와 cold domain reload(시간) — 를, 에디터를 *우회*하지 않고 *통과*해서 제거한다. 계약은 그대로 유지되는 투명한 backend.
 
 - **배경:** dogfooding에서 에디터가 열려 있으면(`Temp/UnityLockfile`) 매 실행마다 `Assets/`+`ProjectSettings/`+캐시된 `Library/`를 통째로 복사(`io.Copy`, reflink 없음)하고 batchmode를 cold start 한다. 자동 호출자(agent/CI)는 사람이 쓰는 Test Runner window를 쓸 수 없으므로 따뜻한 경로 자체가 없었다.
@@ -306,15 +306,15 @@
   - opt-in `[InitializeOnLoad]`(`TESTPLAY_BRIDGE_ENABLE` / `ENABLE` sentinel, batchmode에서는 절대 비활성), `TestRunnerApi` 드라이버가 cold와 동일한 NUnit `results.xml` 작성, `CompilationPipeline`→`CSxxxx:` 프리픽스 compile-errors sidecar, `O_APPEND` progress stream, **Pristine Gate**(Play Mode 거부, compile-settle 대기, dirty-scene 공개).
   ### 10-5. 공개(disclosure)
   - `backend` 필드(`process`|`shadow`|`bridge`) 항상 존재(Output Design Rule #13). 비-pristine 상태는 `warnings`로 공개(결과를 바꾸는 차이는 공개가 아니라 cold fallback). `testplay-status.json` 스키마 불변.
-- **릴리즈 게이트 (spike로 사전 검증 후 태깅):**
+- **릴리즈 게이트 (사전 검증 완료):**
   1. **Cold/bridge parity** — `e2e/bridge_parity_test.go`: 동일 fixture에서 `tests[]`·exit code·`errors[]`(절대경로 제외) 동일.
   2. **`ITestResultAdaptor.ToXml()` 충실도** — parameterized + 실패 케이스가 `parser.Parse`를 통해 cold `-testResults`와 동일 결과.
   3. **Compile-error parity** — `CSxxxx` 에러가 warm sidecar→`errors[]`로 cold stderr scrape와 동일(경로 제외).
   4. **TestRunnerApi 취소** — 긴 EditMode run 중단 시 에디터가 wedge되지 않고 다음 run이 신뢰 가능.
   5. **Windows atomic 파일** — `.testplay/bridge/`에서 1000회 req/resp 루프에 partial read/sharing violation 없음.
-  - **검증 결과 (2026-06-23, Unity 6000.3.8f1):** 1–5 모두 통과 — 1·2 byte-identical parity(parameterized+failing), 3 warm sidecar 정확(cold는 Unity 6에서 under-report → issue #31), 4 SIGINT→exit 8 + 에디터 복구, 5 Go atomic stress test(CI windows-latest)에서 0 torn. 증거: `docs/25_v0.10.0_bridge_validation.md`. **남은 것: LTS(2021.3/2022.3) 재실행.**
+  - **검증 결과 (Unity 6000.3.8f1 + 2022.3.62f3 LTS):** 스파이크 1–5 + #32(LTS) 모두 통과 — byte-identical parity(parameterized+failing), warm sidecar 정확(cold는 Unity 6에서 under-report → issue #31), SIGINT→exit 8 + 에디터 복구, CI windows-latest atomic 0 torn, 2022.3에서 ToXml(#7) 정상. 증거: `docs/25`. (선택: 2021.3 LTS 추가 검증.)
 - **명시적 비목표 (이후 버전):** PlayMode-warm, scenario/network warm orchestration, bridge-side hard cancellation.
-- **버전 규칙 준수:** 새 태그 `v0.10.0` 발행. 원격에 푸시된 태그는 절대 덮어쓰지 않는다.
+- **버전 규칙 준수:** 새 태그 `v0.10.0` 발행 완료 (2026-06-24, GoReleaser 크로스플랫폼 바이너리 배포). 원격에 푸시된 태그는 절대 덮어쓰지 않는다.
 
 ## 🚀 v1.0.0 (NGO Harness)
 **테마:** v0.9 primitives 위에 NGO(Netcode for GameObjects) 전용 sugar

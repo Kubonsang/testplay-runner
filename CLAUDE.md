@@ -330,7 +330,7 @@ Framework-agnostic instance-to-instance communication and cross-instance failure
 - **Retention + .gitignore** — IPC bus directories follow the same `retention.max_runs` policy as run artifacts (reuses `artifacts.Store.Prune`); `.testplay/ipc/` auto-added to `.gitignore` on first scenario run
 - **Scenario-mode safety** — list cache write-back skipped when `SkipCacheWriteBack` is set, matching Library cache discipline
 
-### v0.10.0 — The Warm-Editor Bridge (implemented on main; Tier B spikes validated on Unity 6 — see docs/25; LTS-Editor re-run pending before tag)
+### v0.10.0 ✅ — The Warm-Editor Bridge (shipped 2026-06-24)
 Cuts the two physical bottlenecks of "Editor open" runs — the shadow-workspace byte copy (용량) and the cold domain reload (시간) — by running tests *through* the warm Editor instead of *around* it. Transparent backend; contract unchanged.
 - **3-tier auto backend** — `bridge → shadow → process`, selected in `runsvc.Service.Run` (new branch before the existing shadow/process block, no `Backend` interface). Correctness wins by default: the bridge self-demotes to cold on any Probe/Pristine-Gate failure.
 - **`internal/bridge`** — `Probe` 6-point handshake gate (protocol version, project-path match, Unity-version match, liveness/staleness, idle state) + file-based NDJSON `Client` (atomic request/response, status-stream tail, `.cancel` marker) over `<project>/.testplay/bridge/`.
@@ -338,7 +338,7 @@ Cuts the two physical bottlenecks of "Editor open" runs — the shadow-workspace
 - **`unity/com.testplay.bridge`** — greenfield C# Editor UPM package (EditMode only): opt-in `[InitializeOnLoad]` (`TESTPLAY_BRIDGE_ENABLE` / `ENABLE` sentinel, never in batchmode), `TestRunnerApi` driver writing the same NUnit `results.xml`, `CompilationPipeline` → `CSxxxx:`-prefixed compile-errors sidecar, `O_APPEND` progress stream, and the **Pristine Gate** (Play Mode refuse, compile-settle wait, dirty-scene disclosure).
 - **`backend` field + disclosure** — `"process" | "shadow" | "bridge"` always present (Output Design Rule #13); non-pristine states surfaced via `warnings`; `testplay-status.json` schema unchanged (reuses `compiling → running → done`).
 - **`--bridge` / `--no-bridge` flags + `bridge.enabled` config**; two-phase and scenario mode always run cold.
-- **Ship gate** — `e2e/bridge_parity_test.go` (`//go:build e2e`) asserts cold/bridge parity. Riskiest Unity behaviors (TestRunnerApi cancellation, `ToXml()` fidelity, compile-settle) are validated by the spikes in `RELEASE-PLAN.md` before tagging.
+- **Ship gate** — `e2e/bridge_parity_test.go` (`//go:build e2e`) asserts cold/bridge parity. The riskiest Unity behaviors (TestRunnerApi cancellation, `ToXml()` fidelity, compile-settle) were validated against real Unity (6000.3.8f1 + 2022.3.62f3 LTS) before tagging — see `docs/25`.
 - **Deferred:** PlayMode-warm, scenario/network warm orchestration, bridge-side hard cancellation.
 
 ### Remaining items (v1.0+)
