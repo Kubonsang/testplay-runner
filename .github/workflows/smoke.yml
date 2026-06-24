@@ -7,7 +7,7 @@
 #   - Self-hosted runner with Unity installed and UNITY_PATH set.
 #
 # This workflow is intentionally separate from CI required checks.
-# It validates that fastplay run works end-to-end with a real Unity
+# It validates that testplay run works end-to-end with a real Unity
 # installation (EditMode + PlayMode).
 
 name: Unity Smoke Verification
