@@ -15,6 +15,7 @@ import (
 	"github.com/Kubonsang/testplay-runner/internal/artifacts"
 	"github.com/Kubonsang/testplay-runner/internal/config"
 	"github.com/Kubonsang/testplay-runner/internal/history"
+	"github.com/Kubonsang/testplay-runner/internal/listcache"
 	"github.com/Kubonsang/testplay-runner/internal/parser"
 	"github.com/Kubonsang/testplay-runner/internal/runsvc"
 	"github.com/Kubonsang/testplay-runner/internal/shadow"
@@ -72,11 +73,11 @@ func TestService_AllPass_ExitCode0(t *testing.T) {
 	fake := &fakeRunner{resultsXML: xmlData}
 
 	svc := &runsvc.Service{
-		Runner:    fake,
-		Store:     history.NewStore(cfg.ResultDir),
-		Artifacts: artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
+		Runner:       fake,
+		Store:        history.NewStore(cfg.ResultDir),
+		Artifacts:    artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
 		StatusWriter: status.NewWriter(filepath.Join(dir, "status.json")),
-		Clock:     func() time.Time { return time.Date(2026, 3, 26, 12, 0, 0, 0, time.UTC) },
+		Clock:        func() time.Time { return time.Date(2026, 3, 26, 12, 0, 0, 0, time.UTC) },
 	}
 
 	resp, err := svc.Run(context.Background(), runsvc.Request{Config: cfg})
@@ -892,5 +893,70 @@ func TestService_ZeroTestsNoFilter_Exit0WithWarning(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected a zero-test disclosure warning, got %v", resp.Warnings)
+	}
+}
+
+func TestService_FilteredRun_DoesNotWriteListCache(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+
+	svc := &runsvc.Service{
+		Runner:       fake,
+		Store:        history.NewStore(cfg.ResultDir),
+		Artifacts:    artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
+		StatusWriter: status.NewWriter(filepath.Join(dir, "status.json")),
+	}
+	resp, err := svc.Run(context.Background(), runsvc.Request{Config: cfg, Filter: "SampleTests"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.ExitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", resp.ExitCode)
+	}
+	if _, readErr := listcache.Read(cfg.ProjectPath); readErr == nil {
+		t.Fatal("filtered run must not write the list cache — a partial inventory would later be reported as complete: true")
+	}
+}
+
+func TestService_CategoryRun_DoesNotWriteListCache(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+
+	svc := &runsvc.Service{
+		Runner:       fake,
+		Store:        history.NewStore(cfg.ResultDir),
+		Artifacts:    artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
+		StatusWriter: status.NewWriter(filepath.Join(dir, "status.json")),
+	}
+	if _, err := svc.Run(context.Background(), runsvc.Request{Config: cfg, Category: "Perf"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, readErr := listcache.Read(cfg.ProjectPath); readErr == nil {
+		t.Fatal("category-filtered run must not write the list cache")
+	}
+}
+
+func TestService_UnfilteredRun_WritesListCache(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+
+	svc := &runsvc.Service{
+		Runner:       fake,
+		Store:        history.NewStore(cfg.ResultDir),
+		Artifacts:    artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
+		StatusWriter: status.NewWriter(filepath.Join(dir, "status.json")),
+	}
+	if _, err := svc.Run(context.Background(), runsvc.Request{Config: cfg}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	c, readErr := listcache.Read(cfg.ProjectPath)
+	if readErr != nil {
+		t.Fatalf("unfiltered run should write the list cache: %v", readErr)
+	}
+	if len(c.Tests) == 0 {
+		t.Error("expected cached test names from the full run")
 	}
 }

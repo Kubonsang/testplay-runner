@@ -365,8 +365,10 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	// Write list cache — persists the full test inventory so subsequent
 	// `testplay list` calls can return complete: true.
 	// Non-fatal: a failure here is a quality-of-life degradation, not a system error.
-	// Skipped in scenario mode (concurrent writes, mixed test sets per instance).
-	if !req.SkipCacheWriteBack && (exitCode == 0 || exitCode == 3) {
+	// Skipped in scenario mode (concurrent writes, mixed test sets per instance)
+	// and for filtered runs — a --filter/--category subset is not the full
+	// inventory and would poison the cache's complete: true claim.
+	if !req.SkipCacheWriteBack && req.Filter == "" && req.Category == "" && (exitCode == 0 || exitCode == 3) {
 		_ = listcache.Write(req.Config.ProjectPath, runID, result.Tests)
 	}
 
