@@ -136,6 +136,7 @@ func extractMethodName(line string) string {
 
 var listCmd = &cobra.Command{
 	Use:   "list",
+	Args:  cobra.NoArgs,
 	Short: "List candidate test names from source (static scan, may be incomplete)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deps := listDeps{projectPath: "."}

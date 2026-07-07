@@ -71,7 +71,7 @@ The warm bridge has two halves: the Go client in `internal/bridge` (handshake `P
 
 ## CLI Contract (stdout = JSON only)
 
-Every command outputs a single JSON object to stdout with a `schema_version` field. Nothing else ever goes to stdout.
+Every command outputs a single JSON object to stdout with a `schema_version` field. Nothing else ever goes to stdout. Cobra's human-facing paths are neutralized: a bare `testplay`, an unknown flag/command, or stray positional args emit a JSON error object and exit 5; `--help`/`help` print to stderr (stdout stays empty, exit 0); the auto-generated `completion` command is disabled.
 
 | Command | Purpose |
 |---|---|
@@ -117,7 +117,7 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 | 2 | Compile failure | Fix source code, see `errors[].absolute_path` + `line` | ✅ |
 | 3 | Test failure | Fix test logic, see `tests[].absolute_path` + `line` | ✅ |
 | 4 | Timeout | Check `timeout_type` — `"compile"`, `"test"`, or `"total"` | ✅ |
-| 5 | Config error (testplay.json missing/invalid) | Fix config file | ✅ |
+| 5 | Config/usage error (testplay.json missing/invalid, unknown key, unknown flag/command, bare invocation, stray positional args) | Fix config file or CLI invocation | ✅ |
 | 6 | Build failure (missing build target, license) | Fix build environment (Unity license activation, install build module) | ✅ |
 | 7 | Permission error (shadow workspace) | Fix path/permissions on project directory | ✅ |
 | 8 | Interrupted by signal | Retry without code changes | ✅ |

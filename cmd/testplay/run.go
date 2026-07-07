@@ -410,6 +410,7 @@ var scenarioPath string
 
 var runCmd = &cobra.Command{
 	Use:   "run",
+	Args:  cobra.NoArgs,
 	Short: "Execute Unity tests",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, causeCancel := context.WithCancelCause(context.Background())

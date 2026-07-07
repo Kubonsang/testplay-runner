@@ -43,6 +43,7 @@ var resultLast int
 
 var resultCmd = &cobra.Command{
 	Use:   "result",
+	Args:  cobra.NoArgs,
 	Short: "View stored test result history",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		resultDir := ".testplay/results"
