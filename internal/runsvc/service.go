@@ -320,8 +320,10 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 				result.NewFailures = make([]parser.TestCase, 0)
 			}
 		} else {
-			result.NewFailures = make([]parser.TestCase, 0)
-			warnings = append(warnings, fmt.Sprintf("compare-run %q not found: %v", req.CompareRun, loadErr))
+			// A comparison that never happened must read as "no comparison"
+			// (null), not "no regressions" (empty array) — Rule #6.
+			result.NewFailures = nil
+			warnings = append(warnings, fmt.Sprintf("compare-run %q not found: %v — new_failures is null (no comparison performed)", req.CompareRun, loadErr))
 		}
 	}
 

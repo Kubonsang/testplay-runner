@@ -225,7 +225,7 @@ testplay run --no-bridge           # cold shadow/process 경로 강제
 testplay run --scenario scenario.json  # 멀티 인스턴스 동시 실행
 ```
 
-`--scenario`와 함께 사용하면 `--filter`, `--category`, `--compare-run`, `--shadow`, 캐시 플래그가 모든 시나리오 인스턴스에 전파됩니다(시나리오 모드는 항상 cold 실행).
+`--scenario`와 함께 사용하면 `--filter`, `--category`, `--shadow`, 캐시 플래그가 모든 시나리오 인스턴스에 전파됩니다(시나리오 모드는 항상 cold 실행). 전역 `--compare-run` 플래그는 시나리오 모드에서 거부됩니다(exit 5) — baseline은 인스턴스별 저장소이므로, 시나리오 파일의 각 인스턴스에 해당 role 자신의 이전 `run_id`를 `"compare_run"` 필드로 지정하세요.
 
 **`backend` 필드 (v0.10.0):** 모든 `run` 결과에는 어떤 엔진이 결과를 만들었는지 알려주는 `backend` 필드(`"process"`, `"shadow"`, `"bridge"`)가 **항상** 포함됩니다([웜 에디터 브릿지](#웜-에디터-브릿지) 참조).
 

@@ -90,6 +90,8 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 
 **Scenario JSON `env` field:** Each instance in a scenario file can specify an `env` map of environment variables injected into the Unity process. Keys must be non-empty and must not contain `=`. Values override inherited environment variables.
 
+**Scenario JSON `compare_run` field:** Each instance may set `compare_run` to one of its own previous `run_id`s for per-instance regression comparison (`new_failures` per instance). This is the baseline-isolation answer to pre-existing failures polluting scenario exit codes: gate CI on each instance's `new_failures` (empty = no regression) instead of the aggregate exit code. The global `--compare-run` flag is rejected with `--scenario` (exit 5).
+
 ```json
 {
   "instances": [
@@ -213,7 +215,7 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 3. Every JSON response includes `schema_version`.
 4. All file path fields include both `file` (relative) and `absolute_path`.
 5. `hint` field is included only on exit 1 — the one case where an agent can auto-recover.
-6. `new_failures` in exit 3 is only populated when `--compare-run` is specified; otherwise `null`.
+6. `new_failures` in exit 3 is only populated when a comparison actually happened (`--compare-run` in single mode, per-instance `compare_run` in scenario mode); otherwise `null`. A specified-but-missing baseline also yields `null` plus a `warnings` entry — an empty array always means "compared, no regressions". The global `--compare-run` flag is rejected in scenario mode (exit 5).
 7. `warnings` (string array) is included only when non-fatal infrastructure issues occur (e.g. result save failed, summary write failed) or when a run executed zero tests (zero-test disclosure; always accompanies exit 10, and exit 0 with `total: 0`). Absent when no warnings.
 8. `orchestrator_errors` (string array) is included in scenario mode output only when a dependency wait fails (ready timeout or context cancellation). Absent when no orchestration errors occurred. When IPC was active and the waiting instance received any message from the failed dependency, the entry is enriched with a trailing `"X" last received from "Y": seq=N kind=K` clause.
 9. `parameterized_group` (string) on test entries is present only when the test-case is inside an NUnit `ParameterizedMethod` suite. Absent for non-parameterized tests.

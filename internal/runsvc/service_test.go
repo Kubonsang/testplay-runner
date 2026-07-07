@@ -960,3 +960,34 @@ func TestService_UnfilteredRun_WritesListCache(t *testing.T) {
 		t.Error("expected cached test names from the full run")
 	}
 }
+
+func TestService_CompareRunMissingBaseline_NullNewFailuresWithWarning(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+
+	svc := &runsvc.Service{
+		Runner:       fake,
+		Store:        history.NewStore(cfg.ResultDir),
+		Artifacts:    artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
+		StatusWriter: status.NewWriter(filepath.Join(dir, "status.json")),
+	}
+	resp, err := svc.Run(context.Background(), runsvc.Request{Config: cfg, CompareRun: "20990101-000000-deadbeef"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// A comparison that never happened must read as "no comparison" (null),
+	// not as "no regressions" (empty array) — Output Design Rule #6.
+	if resp.Result.NewFailures != nil {
+		t.Errorf("expected NewFailures nil when baseline is missing, got %v", resp.Result.NewFailures)
+	}
+	found := false
+	for _, w := range resp.Warnings {
+		if strings.Contains(w, "compare-run") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a compare-run warning, got %v", resp.Warnings)
+	}
+}

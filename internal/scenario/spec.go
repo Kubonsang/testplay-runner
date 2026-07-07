@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Kubonsang/testplay-runner/internal/runid"
 )
 
 // ErrScenarioInvalid is returned when a scenario file fails validation.
@@ -21,6 +23,7 @@ type InstanceSpec struct {
 	DependsOnPhase string            `json:"depends_on_phase,omitempty"` // phase the dependency must reach before this instance starts
 	ReadyPhase     string            `json:"ready_phase,omitempty"`      // phase to wait for in the depended-on instance
 	ReadyTimeoutMs int               `json:"ready_timeout_ms,omitempty"` // how long to wait for the dependency (ms)
+	CompareRun     string            `json:"compare_run,omitempty"`      // per-instance baseline run_id for regression comparison (this role's own store)
 	Env            map[string]string `json:"env,omitempty"`              // extra env vars merged with os.Environ() for this instance
 }
 
@@ -162,6 +165,9 @@ func Load(path string) (*ScenarioFile, error) {
 		}
 		if inst.ReadyTimeoutMs < 0 {
 			return nil, fmt.Errorf("%w: instances[%d].ready_timeout_ms must be non-negative (0 or omitted = default 30000)", ErrScenarioInvalid, i)
+		}
+		if inst.CompareRun != "" && !runid.IsValid(inst.CompareRun) {
+			return nil, fmt.Errorf("%w: instances[%d].compare_run %q is not a valid run ID (YYYYMMDD-HHMMSS-xxxxxxxx)", ErrScenarioInvalid, i, inst.CompareRun)
 		}
 		roles[inst.Role] = struct{}{}
 		instancesByRole[inst.Role] = inst

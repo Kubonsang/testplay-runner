@@ -488,3 +488,20 @@ func TestValidateSignalPhases_RunningWithTwoPhase_OK(t *testing.T) {
 		t.Errorf("two-phase dependency emitting \"running\" must validate, got: %v", err)
 	}
 }
+
+func TestLoad_InstanceCompareRun_Parsed(t *testing.T) {
+	t.Parallel()
+	sf, err := loadScenarioFrom(t, `{
+		"schema_version": "1",
+		"instances": [
+			{"role": "host", "config": "a.json", "compare_run": "20260701-120000-aabbccdd"},
+			{"role": "client", "config": "b.json", "depends_on": "host"}
+		]
+	}`)
+	if err != nil {
+		t.Fatalf("per-instance compare_run must parse (baselines are per-instance stores): %v", err)
+	}
+	if sf.Instances[0].CompareRun != "20260701-120000-aabbccdd" {
+		t.Errorf("compare_run not parsed, got %q", sf.Instances[0].CompareRun)
+	}
+}

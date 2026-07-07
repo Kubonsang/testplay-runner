@@ -162,6 +162,17 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 		return 5
 	}
 
+	// One global run ID cannot be a baseline for N per-instance history
+	// stores — broadcasting it silently compared most instances against
+	// nothing. Baselines are per-instance in scenario mode.
+	if deps.opts.CompareRun != "" {
+		writeJSON(w, map[string]any{
+			"schema_version": "1",
+			"error":          "--compare-run is not supported with --scenario; set a per-instance \"compare_run\" (that role's own run_id) in the scenario file instead",
+		})
+		return 5
+	}
+
 	// Generate scenario-level run ID up front so the IPC bus path can be
 	// computed and shared across instances. Each instance still gets its
 	// own per-instance run_id from runsvc.
@@ -273,7 +284,7 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 				Config:             cfg,
 				Filter:             deps.opts.Filter,
 				Category:           deps.opts.Category,
-				CompareRun:         deps.opts.CompareRun,
+				CompareRun:         instSpec.CompareRun,
 				ResetShadow:        deps.opts.ResetShadow,
 				ForceShadow:        deps.opts.ForceShadow || sharedProject[instSpec.Role],
 				ClearCache:         deps.clearCache || deps.opts.ClearCache,

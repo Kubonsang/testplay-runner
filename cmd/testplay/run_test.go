@@ -1101,3 +1101,92 @@ func TestRunScenario_SharedProject_ForcesShadowForAllInstances(t *testing.T) {
 		}
 	}
 }
+
+func TestRunScenario_GlobalCompareRun_RejectedExit5(t *testing.T) {
+	dir := t.TempDir()
+	scenarioContent, _ := json.Marshal(map[string]any{
+		"schema_version": "1",
+		"instances": []map[string]any{
+			{"role": "host", "config": "testplay.json"},
+		},
+	})
+	specPath := filepath.Join(dir, "scenario.json")
+	if err := os.WriteFile(specPath, scenarioContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	// One global run ID cannot be a baseline for N per-instance stores —
+	// broadcasting it silently compared against nothing.
+	code := runScenario(&buf, specPath, scenarioDeps{
+		opts: RunCmdOptions{CompareRun: "20260701-120000-aabbccdd"},
+	})
+	if code != 5 {
+		t.Fatalf("global --compare-run with --scenario must be rejected with exit 5, got %d\noutput: %s", code, buf.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, buf.String())
+	}
+	if out["error"] == nil {
+		t.Error("expected error field explaining per-instance compare_run")
+	}
+}
+
+func TestRunScenario_InstanceCompareRun_ForwardedToInstance(t *testing.T) {
+	dir := t.TempDir()
+	xmlData := mustReadXMLFixture(t, "../../internal/parser/testdata/passing.xml")
+	runner := &scenarioCapturingRunner{resultsXML: xmlData}
+	t.Cleanup(func() { _ = os.Remove("testplay-status-solo.json") })
+
+	projectDir := filepath.Join(dir, "project")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfgData, _ := json.Marshal(map[string]any{
+		"schema_version": "1",
+		"unity_path":     "/fake/unity",
+		"project_path":   projectDir,
+		"timeout":        map[string]any{"total_ms": 300000},
+	})
+	cfgPath := filepath.Join(projectDir, "testplay.json")
+	if err := os.WriteFile(cfgPath, cfgData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	scenarioContent, _ := json.Marshal(map[string]any{
+		"schema_version": "1",
+		"instances": []map[string]any{
+			{"role": "solo", "config": cfgPath, "compare_run": "20990101-000000-deadbeef"},
+		},
+	})
+	specPath := filepath.Join(dir, "scenario.json")
+	if err := os.WriteFile(specPath, scenarioContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	code := runScenario(&buf, specPath, scenarioDeps{runner: runner})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput: %s", code, buf.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	instances, _ := out["instances"].([]any)
+	if len(instances) != 1 {
+		t.Fatalf("expected 1 instance, got %d", len(instances))
+	}
+	inst := instances[0].(map[string]any)
+	warnings, _ := inst["warnings"].([]any)
+	foundWarning := false
+	for _, w := range warnings {
+		if s, ok := w.(string); ok && strings.Contains(s, "compare-run") {
+			foundWarning = true
+		}
+	}
+	if !foundWarning {
+		t.Errorf("instance compare_run must reach runsvc (expected a compare-run warning for the missing baseline), got warnings: %v", warnings)
+	}
+}

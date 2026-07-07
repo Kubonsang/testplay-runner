@@ -225,7 +225,7 @@ testplay run --no-bridge           # force the cold shadow/process path
 testplay run --scenario scenario.json  # multi-instance concurrent execution
 ```
 
-When `--scenario` is used, `--filter`, `--category`, `--compare-run`, `--shadow`, and cache flags are forwarded to every scenario instance (scenario mode always runs cold).
+When `--scenario` is used, `--filter`, `--category`, `--shadow`, and cache flags are forwarded to every scenario instance (scenario mode always runs cold). The global `--compare-run` flag is rejected in scenario mode (exit 5): baselines are per-instance stores, so set `"compare_run"` (that role's own previous `run_id`) on each instance in the scenario file instead.
 
 **`backend` field (v0.10.0):** every `run` result includes a `backend` field — `"process"`, `"shadow"`, or `"bridge"` — disclosing which engine produced it. It is always present (see [Warm-Editor Bridge](#warm-editor-bridge)).
 
