@@ -35,7 +35,7 @@ If your AI agent is iterating on Unity tests, testplay's whole job is making eac
 
 **Pre-built binaries (recommended):**
 
-Download from [GitHub Releases](https://github.com/Kubonsang/testplay-runner/releases) — darwin/linux/windows, amd64/arm64.
+Download from [GitHub Releases](https://github.com/Kubonsang/testplay-runner/releases) — darwin/linux (amd64/arm64), windows (amd64).
 
 **From source:**
 
@@ -80,13 +80,14 @@ Or create it manually in your project root:
 ```
 
 `unity_path` falls back to the `UNITY_PATH` environment variable if omitted.
-`project_path` defaults to the directory containing `testplay.json`.
+`project_path` defaults to the directory containing `testplay.json`; a relative `project_path` resolves against the config file's directory, not the process cwd.
 `test_platform` accepts `"edit_mode"` (default) or `"play_mode"`. This is passed as `-testPlatform EditMode|PlayMode` to Unity.
-`result_dir` controls the persisted history JSON used by `testplay result`.
+`result_dir` controls the persisted history JSON used by `testplay result`; a relative value (including the default `.testplay/results`) resolves against `project_path`, so history and artifacts always live together.
 Per-run artifacts (`results.xml`, `summary.json`, `manifest.json`, `stdout.log`,
 `stderr.log`, `events.ndjson`) are always written under
 `<project_path>/.testplay/runs/<run_id>/`.
 `retention.max_runs` controls automatic cleanup of old runs (default 30). Set to `0` to disable pruning.
+Unknown or typo'd keys anywhere in `testplay.json` are rejected (exit 5, the error names the key) instead of being silently ignored; `schema_version` must be `"1"`.
 
 **Timeout configuration:**
 - `total_ms` (default 300000): outer safety-net deadline for the entire run.
@@ -263,6 +264,7 @@ When `--scenario` is used, `--filter`, `--category`, `--shadow`, and cache flags
 {
   "schema_version": "1",
   "run_id": "20250325-143000-a3f8b2c1",
+  "exit_code": 3,
   "backend": "process",
   "total": 10,
   "passed": 9,
@@ -387,13 +389,13 @@ Minimal scenario file:
 {
   "schema_version": "1",
   "instances": [
-    {"role": "host", "config": "testplay.json", "ready_phase": "running"},
-    {"role": "client", "config": "testplay.json", "depends_on": "host", "depends_on_phase": "running", "ready_timeout_ms": 120000}
+    {"role": "host", "config": "testplay.json", "ready_phase": "compiling"},
+    {"role": "client", "config": "testplay.json", "depends_on": "host", "ready_timeout_ms": 120000}
   ]
 }
 ```
 
-`config` paths are resolved relative to the scenario file unless absolute. `depends_on_phase` controls the dependency phase a waiting instance requires; if omitted, the dependency's `ready_phase` is used, then `"compiling"` as the default.
+`config` paths are resolved relative to the scenario file unless absolute. `depends_on_phase` controls the dependency phase a waiting instance requires; if omitted, the dependency's `ready_phase` is used, then `"compiling"` as the default. Valid phases are `"compiling"`, `"running"`, and `"done"`; waiting for `"running"` requires the dependency's config to enable two-phase execution (`compile_ms` + `test_ms`) — single-phase runs never emit it, and the scenario is rejected up front (exit 5) instead of burning the ready timeout. Each instance may also set `"compare_run"` (one of that role's own previous run_ids) for per-instance regression comparison via `new_failures`.
 
 When dependency orchestration fails, an extra top-level `orchestrator_errors` array appears. Entries enriched with the last IPC message the waiting instance saw from the failed dependency:
 
@@ -525,11 +527,12 @@ if (!string.IsNullOrEmpty(bus)) {
 | 2 | Compile failure | Fix source, see `errors[].absolute_path` + `line` |
 | 3 | Test failure | Fix test, see `tests[].absolute_path` + `line` |
 | 4 | Timeout | Check `timeout_type` in the JSON result — see table below |
-| 5 | Config error | Fix or create `testplay.json` |
+| 5 | Config/usage error | Fix `testplay.json` (unknown/typo keys are rejected) or the CLI invocation (unknown flag/command, stray args) |
 | 6 | Build / Unity invocation failure | Check Unity license, installed build modules, editor logs, package import, and shadow cold import |
 | 7 | Permission error (shadow workspace) | Fix permissions on project directory |
 | 8 | Interrupted by signal | SIGINT/SIGTERM received — retry without code changes |
 | 9 | Runner system error | Result/artifact save failed — check disk space/permissions, see `warnings` field |
+| 10 | No tests matched `--filter`/`--category` | Nothing was executed — fix the filter or refresh candidates via `testplay list` |
 
 ### Exit 4 — timeout_type values
 
