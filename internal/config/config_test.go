@@ -2,6 +2,9 @@ package config_test
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Kubonsang/testplay-runner/internal/config"
@@ -270,5 +273,84 @@ func TestValidate_RetentionNegative_Rejected(t *testing.T) {
 	}
 	if !errors.Is(err, config.ErrConfigInvalid) {
 		t.Errorf("expected ErrConfigInvalid, got %v", err)
+	}
+}
+
+func TestLoad_UnknownTopLevelKey_Rejected(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "testplay.json")
+	// "test_platfrom" is a typo of test_platform — must not be silently dropped.
+	body := `{"schema_version":"1","unity_path":"/u","test_platfrom":"play_mode"}`
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := config.Load(path)
+	if err == nil {
+		t.Fatal("expected error for unknown key, got nil (typo silently dropped)")
+	}
+	if !errors.Is(err, config.ErrConfigInvalid) {
+		t.Errorf("expected ErrConfigInvalid, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "test_platfrom") {
+		t.Errorf("error should name the offending key, got: %v", err)
+	}
+}
+
+func TestLoad_UnknownNestedKey_Rejected(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "testplay.json")
+	// bridge.enable is a typo of bridge.enabled — silently dropping it would
+	// defeat a user's attempt at guaranteed cold hermeticity.
+	body := `{"schema_version":"1","unity_path":"/u","bridge":{"enable":false}}`
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := config.Load(path)
+	if err == nil {
+		t.Fatal("expected error for unknown nested key, got nil")
+	}
+	if !errors.Is(err, config.ErrConfigInvalid) {
+		t.Errorf("expected ErrConfigInvalid, got %v", err)
+	}
+}
+
+func TestLoad_UnsupportedSchemaVersion_Rejected(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "testplay.json")
+	body := `{"schema_version":"2","unity_path":"/u"}`
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := config.Load(path)
+	if err == nil {
+		t.Fatal("expected error for unsupported schema_version, got nil")
+	}
+	if !errors.Is(err, config.ErrConfigInvalid) {
+		t.Errorf("expected ErrConfigInvalid, got %v", err)
+	}
+}
+
+func TestLoad_AllKnownKeys_Accepted(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "testplay.json")
+	body := `{
+		"schema_version": "1",
+		"unity_path": "/u",
+		"project_path": "/p",
+		"test_platform": "play_mode",
+		"timeout": {"total_ms": 60000, "compile_ms": 10000, "test_ms": 20000},
+		"result_dir": ".testplay/results",
+		"retention": {"max_runs": 5},
+		"bridge": {"enabled": false}
+	}`
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("full valid config must load, got: %v", err)
+	}
+	if cfg.BridgeEnabled() {
+		t.Error("bridge.enabled=false must parse")
 	}
 }

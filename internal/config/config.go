@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -140,13 +141,20 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("%w: %v", ErrConfigInvalid, err)
 	}
 
+	// Strict decode: an unknown (typo'd) key silently falling back to a
+	// default is the most expensive failure class for an automated caller.
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
 	var cfg Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	if err := dec.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrConfigInvalid, err)
 	}
 
 	if cfg.SchemaVersion == "" {
 		return nil, fmt.Errorf("%w: schema_version is required", ErrConfigInvalid)
+	}
+	if cfg.SchemaVersion != "1" {
+		return nil, fmt.Errorf("%w: unsupported schema_version %q (this testplay understands \"1\")", ErrConfigInvalid, cfg.SchemaVersion)
 	}
 
 	// Store the directory containing the config file
