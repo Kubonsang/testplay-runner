@@ -26,6 +26,12 @@ const waitDelayAfterKill = 5 * time.Second
 type Runner interface {
 	// Run executes Unity with the given args, streaming stdout and stderr to the
 	// provided writers. Either writer may be nil (output is discarded).
+	//
+	// Contract: when ctx is canceled or its deadline expires while the process
+	// is running, Run must return an error satisfying errors.Is against
+	// context.Canceled/DeadlineExceeded — never the killed process's exit
+	// status. Executors depend on this to classify exit 4 (timeout) and
+	// exit 8 (signal); fakes must honor it too.
 	Run(ctx context.Context, args []string, stdout, stderr io.Writer) (exitCode int, err error)
 }
 
@@ -46,6 +52,13 @@ func (r *ProcessRunner) Run(ctx context.Context, args []string, stdout, stderr i
 	}
 	setSysProcAttr(cmd)
 	if err := cmd.Run(); err != nil {
+		// cmd.Wait prefers the killed process's own error ("signal: killed")
+		// over the context error, which would swallow the cancellation and
+		// leave timeouts/signals unclassifiable (exit 4/8 unreachable).
+		// The Runner contract requires surfacing ctx.Err() instead.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return -1, ctxErr
+		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return exitErr.ExitCode(), nil
 		}
