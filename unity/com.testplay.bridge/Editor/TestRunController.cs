@@ -21,6 +21,7 @@ namespace TestPlay.Bridge
         private readonly StatusStream _stream;
         private readonly Action _onFinished;
         private int _total;
+        private bool _done;
 
         public TestRunController(RequestDto req, string sessionId, string[] nonPristine, StatusStream stream, Action onFinished)
         {
@@ -51,6 +52,11 @@ namespace TestPlay.Bridge
 
         public void RunFinished(ITestResultAdaptor result)
         {
+            // Callbacks are global to the test runner; a leaked or late event
+            // from a subsequent run must never rewrite this run's outcome.
+            if (_done)
+                return;
+            _done = true;
             try
             {
                 ResultXmlWriter.Write(_req.results_xml, result);

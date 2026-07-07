@@ -56,6 +56,7 @@ namespace TestPlay.Bridge
                 SessionState.SetString(KeySession, GenerateSessionId());
 
             CompileErrorSidecar.Hook();
+            RunActivityMonitor.Hook();
 
             // A run that was mid-flight when the domain reloaded cannot be
             // recovered; mark it orphaned so the Go side falls back to cold.
@@ -96,7 +97,9 @@ namespace TestPlay.Bridge
             // editor_state and active_run_id never disagree (the Go Probe keys
             // on editor_state==idle).
             string active = SessionState.GetString(KeyActive, "");
-            bool busy = s_runningTests || !string.IsNullOrEmpty(active);
+            // A foreign run (Test Runner window) also makes the editor busy, so
+            // the Go Probe declines instead of queueing a request we would refuse.
+            bool busy = s_runningTests || !string.IsNullOrEmpty(active) || RunActivityMonitor.IsRunActive;
             HandshakeWriter.Write(
                 SessionState.GetString(KeySession, ""),
                 HandshakeWriter.CurrentState(busy),
@@ -231,6 +234,19 @@ namespace TestPlay.Bridge
                 return;
             }
 
+            // Sidecar is empty but the editor's last compilation FAILED: the
+            // loaded domain still runs stale last-good assemblies (the broken
+            // state predates this request, and the Refresh was a no-op). Running
+            // warm here would return green where cold exits 2 — reject so the
+            // cold path produces the authoritative compile errors.
+            if (EditorUtility.scriptCompilationFailed)
+            {
+                WriteTerminal(req.run_id, BridgeProtocol.OutcomeRejected, false, 0,
+                    "script compilation is failing in this editor (pre-existing broken state); cold run will report the compile errors");
+                ClearActive();
+                return;
+            }
+
             // A late transition into Play Mode invalidates equivalence.
             if (EditorApplication.isPlaying || EditorApplication.isPlayingOrWillChangePlaymode)
             {
@@ -280,6 +296,13 @@ namespace TestPlay.Bridge
         private static void OnRunFinished()
         {
             s_runningTests = false;
+            // Callbacks are global: left registered, this controller would keep
+            // receiving future runs' events (including human Test Runner runs)
+            // and rewrite this run's results.xml/response with foreign results.
+            if (s_api != null && s_controller != null)
+                s_api.UnregisterCallbacks(s_controller);
+            if (s_api != null)
+                UnityEngine.Object.DestroyImmediate(s_api);
             s_controller = null;
             s_api = null;
             CompileErrorSidecar.Clear(); // next run starts from a clean error slate
