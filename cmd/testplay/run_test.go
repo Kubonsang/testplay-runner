@@ -261,8 +261,12 @@ func TestRunScenario_FilterAndCategoryForwardedToInstances(t *testing.T) {
 	})
 
 	projectDir := filepath.Join(dir, "project")
-	if err := os.MkdirAll(projectDir, 0755); err != nil {
-		t.Fatal(err)
+	// Both instances share this project, so scenario mode forces shadow —
+	// the workspace copy requires the standard Unity project layout.
+	for _, sub := range []string{"Assets", "ProjectSettings"} {
+		if err := os.MkdirAll(filepath.Join(projectDir, sub), 0755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	resultDir := filepath.Join(projectDir, ".testplay", "results")
 	cfgData, _ := json.Marshal(map[string]any{
@@ -1033,5 +1037,67 @@ func TestRunCmd_LaunchFailure_Exit1WithHint(t *testing.T) {
 	}
 	if out["error"] == nil || out["error"] == "" {
 		t.Error("exit 1 output must include an error field describing the launch failure")
+	}
+}
+
+func TestRunScenario_SharedProject_ForcesShadowForAllInstances(t *testing.T) {
+	dir := t.TempDir()
+	xmlData := mustReadXMLFixture(t, "../../internal/parser/testdata/passing.xml")
+	runner := &scenarioCapturingRunner{resultsXML: xmlData}
+	t.Cleanup(func() {
+		_ = os.Remove("testplay-status-host.json")
+		_ = os.Remove("testplay-status-client.json")
+	})
+
+	projectDir := filepath.Join(dir, "project")
+	for _, sub := range []string{"Assets", "ProjectSettings"} {
+		if err := os.MkdirAll(filepath.Join(projectDir, sub), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfgData, _ := json.Marshal(map[string]any{
+		"schema_version": "1",
+		"unity_path":     "/fake/unity",
+		"project_path":   projectDir,
+		"timeout":        map[string]any{"total_ms": 300000},
+	})
+	cfgPath := filepath.Join(projectDir, "testplay.json")
+	if err := os.WriteFile(cfgPath, cfgData, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	scenarioContent, _ := json.Marshal(map[string]any{
+		"schema_version": "1",
+		"instances": []map[string]any{
+			{"role": "host", "config": cfgPath},
+			{"role": "client", "config": cfgPath},
+		},
+	})
+	specPath := filepath.Join(dir, "scenario.json")
+	if err := os.WriteFile(specPath, scenarioContent, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	code := runScenario(&buf, specPath, scenarioDeps{runner: runner})
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d\noutput: %s", code, buf.String())
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	instances, _ := out["instances"].([]any)
+	if len(instances) != 2 {
+		t.Fatalf("expected 2 instances, got %d", len(instances))
+	}
+	for _, raw := range instances {
+		inst := raw.(map[string]any)
+		// Two cold batchmode processes on ONE project directory race Unity's
+		// 'project already open' lock; sharing a project must force shadow.
+		if inst["backend"] != "shadow" {
+			t.Errorf("instance %v: expected backend \"shadow\" for shared project, got %v", inst["role"], inst["backend"])
+		}
 	}
 }

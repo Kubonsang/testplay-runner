@@ -231,6 +231,19 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 		ctx, scenarioCancel = context.WithTimeout(ctx, time.Duration(totalMs)*time.Millisecond)
 		defer scenarioCancel()
 
+		// Instances sharing one project directory would race two cold
+		// batchmode processes on Unity's single project lock (and the
+		// UnityLockfile heuristic cannot see the sibling that has not
+		// started yet) — force per-run shadow isolation for them.
+		sharedProject := make(map[string]bool, len(configs))
+		projectRefs := make(map[string]int, len(configs))
+		for _, cfg := range configs {
+			projectRefs[filepath.Clean(cfg.ProjectPath)]++
+		}
+		for role, cfg := range configs {
+			sharedProject[role] = projectRefs[filepath.Clean(cfg.ProjectPath)] > 1
+		}
+
 		run = func(ctx context.Context, instSpec scenario.InstanceSpec, readyCh chan<- struct{}) (runsvc.Response, error) {
 			cfg := configs[instSpec.Role]
 
@@ -262,7 +275,7 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 				Category:           deps.opts.Category,
 				CompareRun:         deps.opts.CompareRun,
 				ResetShadow:        deps.opts.ResetShadow,
-				ForceShadow:        deps.opts.ForceShadow,
+				ForceShadow:        deps.opts.ForceShadow || sharedProject[instSpec.Role],
 				ClearCache:         deps.clearCache || deps.opts.ClearCache,
 				SkipCacheWriteBack: true, // avoid concurrent writes to shared cache dir
 				DisableBridge:      true, // scenario-warm orchestration is deferred; instances run cold

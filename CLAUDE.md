@@ -204,7 +204,7 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 
 > `init → version → check → list → run → result` — this six-command interface is the agent's entire surface. If this flow breaks, the project breaks.
 
-**Shadow mode is transparent to agents.** When `Temp/UnityLockfile` is present, `testplay run` automatically uses a per-run `.testplay-shadow-<run_id>/` workspace and remaps all `absolute_path` fields in the JSON output back to source project paths. Agents do not need to detect or handle shadow mode explicitly.
+**Shadow mode is transparent to agents.** When `Temp/UnityLockfile` is present, `testplay run` automatically uses a per-run `.testplay-shadow-<run_id>/` workspace and remaps all `absolute_path` fields in the JSON output back to source project paths. Agents do not need to detect or handle shadow mode explicitly. In `--scenario` mode, instances whose configs point at the same `project_path` are also forced into shadow automatically — two cold batchmode processes must never race Unity's single project lock (the `backend` field discloses this as `"shadow"`).
 
 ## Output Design Rules
 
