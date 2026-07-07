@@ -189,6 +189,18 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 			totalMs += cfg.Timeout.TotalMs
 		}
 
+		// Cross-check dependency wait phases against each config's execution
+		// mode: "running" never fires for a single-phase instance, so a
+		// dependent waiting on it would deterministically time out.
+		twoPhase := make(map[string]bool, len(configs))
+		for role, cfg := range configs {
+			twoPhase[role] = cfg.Timeout.CompileMs > 0 && cfg.Timeout.TestMs > 0
+		}
+		if valErr := spec.ValidateSignalPhases(twoPhase); valErr != nil {
+			writeJSON(w, map[string]any{"schema_version": "1", "error": valErr.Error()})
+			return 5
+		}
+
 		// IPC bus lives under the first instance's project_path. All
 		// instances inherit the same absolute path through TESTPLAY_IPC_BUS.
 		// Skipped when the test harness already provided ipcBusPath.
