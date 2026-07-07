@@ -255,6 +255,17 @@ namespace TestPlay.Bridge
                 return;
             }
 
+            // Gate parity: a foreign run started during the settle window is as
+            // disqualifying as one caught at gate time — starting ours now would
+            // interleave global callbacks with the human's run.
+            if (RunActivityMonitor.IsRunActive)
+            {
+                WriteTerminal(req.run_id, BridgeProtocol.OutcomeRejected, false, 0,
+                    "another test run started while compilation was settling");
+                ClearActive();
+                return;
+            }
+
             StartRun(req);
         }
 
