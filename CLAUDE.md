@@ -153,7 +153,7 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 
 `test_platform` accepts `"edit_mode"` (default) or `"play_mode"`.
 
-`unity_path` falls back to `UNITY_PATH` env var if omitted. `project_path` defaults to the directory containing `testplay.json`.
+`unity_path` falls back to `UNITY_PATH` env var if omitted. `project_path` defaults to the directory containing `testplay.json`; a relative `project_path` is resolved against the config file's directory (not the process cwd). A relative `result_dir` (including the default `.testplay/results`) is resolved against `project_path`, so history and artifacts always live together regardless of where testplay is invoked from.
 
 **Two-phase execution:** when both `compile_ms` and `test_ms` are set (both > 0), two-phase execution is enabled. Both fields must be set together — setting only one is a validation error. When neither is set, single-phase execution uses only `total_ms`. Note: setting both also **disables the warm bridge** for that run (the warm Editor cannot honestly reproduce the strict compile/test phase split), so two-phase always runs cold.
 

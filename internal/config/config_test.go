@@ -70,8 +70,9 @@ func TestValidate_DefaultResultDir(t *testing.T) {
 	t.Setenv("UNITY_PATH", "/fake/unity")
 	cfg := &config.Config{SchemaVersion: "1", ProjectPath: "/tmp/proj"}
 	_ = cfg.Validate(true)
-	if cfg.ResultDir != ".testplay/results" {
-		t.Errorf("expected default result_dir, got %q", cfg.ResultDir)
+	want := filepath.Join("/tmp/proj", ".testplay", "results")
+	if cfg.ResultDir != want {
+		t.Errorf("expected default result_dir anchored to project_path (%q), got %q", want, cfg.ResultDir)
 	}
 }
 
@@ -352,5 +353,86 @@ func TestLoad_AllKnownKeys_Accepted(t *testing.T) {
 	}
 	if cfg.BridgeEnabled() {
 		t.Error("bridge.enabled=false must parse")
+	}
+}
+
+func TestValidate_RelativeProjectPath_AnchoredToConfigDir(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "UnityProj")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "testplay.json")
+	body := `{"schema_version":"1","unity_path":"/u","project_path":"UnityProj"}`
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(true); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ProjectPath != sub {
+		t.Errorf("relative project_path must anchor to the config file's directory:\ngot  %q\nwant %q", cfg.ProjectPath, sub)
+	}
+}
+
+func TestValidate_RelativeResultDir_AnchoredToProjectPath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "testplay.json")
+	body := `{"schema_version":"1","unity_path":"/u","result_dir":"custom/results"}`
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(true); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(dir, "custom", "results")
+	if cfg.ResultDir != want {
+		t.Errorf("relative result_dir must anchor to project_path:\ngot  %q\nwant %q", cfg.ResultDir, want)
+	}
+}
+
+func TestValidate_DefaultResultDir_AnchoredToProjectPath(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "testplay.json")
+	body := `{"schema_version":"1","unity_path":"/u"}`
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.Validate(true); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(dir, ".testplay", "results")
+	if cfg.ResultDir != want {
+		t.Errorf("default result_dir must anchor to project_path:\ngot  %q\nwant %q", cfg.ResultDir, want)
+	}
+}
+
+func TestValidate_AbsolutePaths_Unchanged(t *testing.T) {
+	dir := t.TempDir()
+	proj := filepath.Join(dir, "proj")
+	res := filepath.Join(dir, "elsewhere", "results")
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		UnityPath:     "/u",
+		ProjectPath:   proj,
+		ResultDir:     res,
+	}
+	if err := cfg.Validate(true); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ProjectPath != proj || cfg.ResultDir != res {
+		t.Errorf("absolute paths must pass through unchanged, got %q %q", cfg.ProjectPath, cfg.ResultDir)
 	}
 }

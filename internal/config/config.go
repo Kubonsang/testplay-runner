@@ -77,16 +77,26 @@ func (c *Config) Validate(requireUnity bool) error {
 		}
 	}
 
-	// Project path: default to directory containing config file
+	// Project path: default to directory containing config file.
+	// A relative project_path anchors to the config file's directory, not the
+	// process cwd — otherwise --config from another directory silently points
+	// at the wrong project.
 	if c.ProjectPath == "" {
 		if c.configDir != "" {
 			c.ProjectPath = c.configDir
 		}
+	} else if !filepath.IsAbs(c.ProjectPath) && c.configDir != "" {
+		c.ProjectPath = filepath.Join(c.configDir, c.ProjectPath)
 	}
 
-	// Default result dir
+	// Result dir: default, then anchor a relative path to the project.
+	// Anchoring to cwd would split history from artifacts (project-anchored)
+	// and make scenario instances share one mixed cwd-relative store.
 	if c.ResultDir == "" {
-		c.ResultDir = ".testplay/results"
+		c.ResultDir = filepath.Join(".testplay", "results")
+	}
+	if !filepath.IsAbs(c.ResultDir) && c.ProjectPath != "" {
+		c.ResultDir = filepath.Join(c.ProjectPath, c.ResultDir)
 	}
 
 	// Default total timeout
