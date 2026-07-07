@@ -766,3 +766,55 @@ func TestExecute_TwoPhase_LicenseFailure_ReturnsExit6(t *testing.T) {
 		t.Errorf("test phase must not run after license failure, got %d calls", callCount)
 	}
 }
+
+func TestExecute_FilterMatchedZeroTests_Returns10(t *testing.T) {
+	dir := t.TempDir()
+	xmlData := mustReadFixture(t, "../parser/testdata/empty_suite.xml")
+	fake := &fakeRunner{resultsXML: xmlData, exitCode: 0}
+
+	result, code := unity.Execute(context.Background(), fake, unity.ExecuteOptions{
+		ProjectPath:  dir,
+		ResultsFile:  filepath.Join(dir, "results.xml"),
+		StatusWriter: &spyWriter{},
+		Filter:       "RenamedOrTypoedTest",
+	})
+	if code != unity.ExitNoTestsMatched {
+		t.Fatalf("expected exit %d (no tests matched), got %d", unity.ExitNoTestsMatched, code)
+	}
+	if result.Total != 0 {
+		t.Errorf("expected total 0, got %d", result.Total)
+	}
+}
+
+func TestExecute_CategoryMatchedZeroTests_Returns10(t *testing.T) {
+	dir := t.TempDir()
+	xmlData := mustReadFixture(t, "../parser/testdata/empty_suite.xml")
+	fake := &fakeRunner{resultsXML: xmlData, exitCode: 0}
+
+	_, code := unity.Execute(context.Background(), fake, unity.ExecuteOptions{
+		ProjectPath:  dir,
+		ResultsFile:  filepath.Join(dir, "results.xml"),
+		StatusWriter: &spyWriter{},
+		Category:     "NoSuchCategory",
+	})
+	if code != unity.ExitNoTestsMatched {
+		t.Fatalf("expected exit %d (no tests matched), got %d", unity.ExitNoTestsMatched, code)
+	}
+}
+
+func TestExecute_ZeroTestsWithoutFilter_Returns0(t *testing.T) {
+	// An unfiltered run of a project with no tests is a legitimate no-op
+	// (disclosure happens via warnings at the runsvc layer), not an error.
+	dir := t.TempDir()
+	xmlData := mustReadFixture(t, "../parser/testdata/empty_suite.xml")
+	fake := &fakeRunner{resultsXML: xmlData, exitCode: 0}
+
+	_, code := unity.Execute(context.Background(), fake, unity.ExecuteOptions{
+		ProjectPath:  dir,
+		ResultsFile:  filepath.Join(dir, "results.xml"),
+		StatusWriter: &spyWriter{},
+	})
+	if code != 0 {
+		t.Fatalf("expected exit 0 for unfiltered empty suite, got %d", code)
+	}
+}

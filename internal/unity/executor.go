@@ -18,6 +18,12 @@ import (
 // distinguish signal interruption (exit 8) from timeout (exit 4).
 var ErrSignalInterrupt = errors.New("signal interrupt")
 
+// ExitNoTestsMatched (10) is returned when the run produced a valid result
+// with zero executed tests while an explicit --filter/--category was given.
+// Nothing was verified, so exit 0 ("all tests passed") would be a lie the
+// caller cannot detect — the declared most-expensive silent failure.
+const ExitNoTestsMatched = 10
+
 // noopStatusWriter implements status.WriterInterface but discards all writes.
 // It is used as a sentinel when ExecuteOptions.StatusWriter is nil so that
 // all call sites can write unconditionally without nil guards.
@@ -430,6 +436,10 @@ func parseResults(opts ExecuteOptions, stderrTail []byte) (*history.RunResult, i
 	exitCode := 0
 	if parseResult.Failed > 0 {
 		exitCode = 3
+	} else if parseResult.Total == 0 && (opts.Filter != "" || opts.Category != "") {
+		// An explicit selection that matched nothing verified nothing;
+		// exit 0 here would greenlight a run that never executed.
+		exitCode = ExitNoTestsMatched
 	}
 
 	_ = opts.StatusWriter.Write(status.Status{

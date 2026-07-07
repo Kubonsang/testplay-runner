@@ -51,6 +51,18 @@ func bridgeIdleDeadline(c *config.Config) int64 {
 	return idle
 }
 
+// describeSelection renders the explicit test selection flags for warnings.
+func describeSelection(filter, category string) string {
+	switch {
+	case filter != "" && category != "":
+		return fmt.Sprintf("--filter %q --category %q", filter, category)
+	case filter != "":
+		return fmt.Sprintf("--filter %q", filter)
+	default:
+		return fmt.Sprintf("--category %q", category)
+	}
+}
+
 // prefixWarnings tags each message with a source prefix (e.g. "bridge: ...").
 func prefixWarnings(prefix string, msgs []string) []string {
 	if len(msgs) == 0 {
@@ -283,6 +295,14 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	// correctness by falling back (force changes preference, never the bar).
 	if req.ForceBridge && !ranBridge && bridgeFallbackReason != "" {
 		warnings = append(warnings, fmt.Sprintf("bridge requested but unavailable: %s; ran %s backend instead", bridgeFallbackReason, result.Backend))
+	}
+
+	// Zero-test disclosure: a run that executed nothing must never look like
+	// a quiet success to an automated caller.
+	if exitCode == unity.ExitNoTestsMatched {
+		warnings = append(warnings, fmt.Sprintf("no tests matched %s; nothing was executed — refresh candidate names with 'testplay list'", describeSelection(req.Filter, req.Category)))
+	} else if exitCode == 0 && result.Total == 0 {
+		warnings = append(warnings, "test run executed 0 tests; exit 0 verified nothing")
 	}
 
 	finishedAt := clock()

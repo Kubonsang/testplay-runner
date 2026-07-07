@@ -836,3 +836,61 @@ func TestService_SkipCacheWriteBack(t *testing.T) {
 		t.Error("expected Library cache to NOT exist when SkipCacheWriteBack is set")
 	}
 }
+
+func TestService_FilterZeroTests_Exit10WithWarning(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/empty_suite.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+
+	svc := &runsvc.Service{
+		Runner:       fake,
+		Store:        history.NewStore(cfg.ResultDir),
+		Artifacts:    artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
+		StatusWriter: status.NewWriter(filepath.Join(dir, "status.json")),
+	}
+	resp, err := svc.Run(context.Background(), runsvc.Request{Config: cfg, Filter: "GoneTest"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.ExitCode != 10 {
+		t.Fatalf("expected exit 10 (no tests matched), got %d", resp.ExitCode)
+	}
+	found := false
+	for _, w := range resp.Warnings {
+		if strings.Contains(w, "no tests matched") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a 'no tests matched' warning, got %v", resp.Warnings)
+	}
+}
+
+func TestService_ZeroTestsNoFilter_Exit0WithWarning(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/empty_suite.xml")
+	fake := &fakeRunner{resultsXML: xmlData}
+
+	svc := &runsvc.Service{
+		Runner:       fake,
+		Store:        history.NewStore(cfg.ResultDir),
+		Artifacts:    artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
+		StatusWriter: status.NewWriter(filepath.Join(dir, "status.json")),
+	}
+	resp, err := svc.Run(context.Background(), runsvc.Request{Config: cfg})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.ExitCode != 0 {
+		t.Fatalf("expected exit 0 for unfiltered empty suite, got %d", resp.ExitCode)
+	}
+	found := false
+	for _, w := range resp.Warnings {
+		if strings.Contains(w, "0 tests") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a zero-test disclosure warning, got %v", resp.Warnings)
+	}
+}

@@ -215,6 +215,8 @@ func exitCodeLabel(code int) string {
 		return "interrupted"
 	case 9:
 		return "runner system error"
+	case 10:
+		return "no tests matched"
 	default:
 		return "unknown"
 	}

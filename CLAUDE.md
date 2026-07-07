@@ -122,6 +122,7 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 | 7 | Permission error (shadow workspace) | Fix path/permissions on project directory | ✅ |
 | 8 | Interrupted by signal | Retry without code changes | ✅ |
 | 9 | Runner system error (result/artifact save failed) | Check disk space/permissions; results may be lost, see `warnings` field | ✅ |
+| 10 | No tests matched `--filter`/`--category` (nothing was executed) | Fix the filter, or refresh candidate names via `testplay list` | ✅ |
 
 **timeout_type values for exit 4:**
 - `"compile"` — compile-only phase exceeded `compile_ms` deadline (two-phase mode)
@@ -213,7 +214,7 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 4. All file path fields include both `file` (relative) and `absolute_path`.
 5. `hint` field is included only on exit 1 — the one case where an agent can auto-recover.
 6. `new_failures` in exit 3 is only populated when `--compare-run` is specified; otherwise `null`.
-7. `warnings` (string array) is included only when non-fatal infrastructure issues occur (e.g. result save failed, summary write failed). Absent when no warnings.
+7. `warnings` (string array) is included only when non-fatal infrastructure issues occur (e.g. result save failed, summary write failed) or when a run executed zero tests (zero-test disclosure; always accompanies exit 10, and exit 0 with `total: 0`). Absent when no warnings.
 8. `orchestrator_errors` (string array) is included in scenario mode output only when a dependency wait fails (ready timeout or context cancellation). Absent when no orchestration errors occurred. When IPC was active and the waiting instance received any message from the failed dependency, the entry is enriched with a trailing `"X" last received from "Y": seq=N kind=K` clause.
 9. `parameterized_group` (string) on test entries is present only when the test-case is inside an NUnit `ParameterizedMethod` suite. Absent for non-parameterized tests.
 10. `excerpt` (string) on test entries is present only when the test failed. Format: `"message (at filename.cs:line)"` or just `"message"` when no file info available. Absent for passing/skipped tests.
