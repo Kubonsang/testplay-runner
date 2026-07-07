@@ -112,6 +112,12 @@ func runRun(w io.Writer, deps runDeps) int {
 	if result.TimeoutType != "" {
 		output["timeout_type"] = result.TimeoutType
 	}
+	if result.Error != "" {
+		output["error"] = result.Error
+	}
+	if result.Hint != "" {
+		output["hint"] = result.Hint
+	}
 	if len(resp.Warnings) > 0 {
 		for _, w2 := range resp.Warnings {
 			fmt.Fprintln(os.Stderr, "warning:", w2)

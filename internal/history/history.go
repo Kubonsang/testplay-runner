@@ -41,6 +41,12 @@ type RunResult struct {
 	Errors        []CompileError    `json:"errors,omitempty"`
 	NewFailures   []parser.TestCase `json:"new_failures"` // null when compare-run not specified
 
+	// Error and Hint describe a dependency failure (exit 1) such as a Unity
+	// binary that could not be launched. Hint is the agent-recoverable action
+	// (Output Design Rule #5: hint appears only on exit 1).
+	Error string `json:"error,omitempty"`
+	Hint  string `json:"hint,omitempty"`
+
 	// Backend identifies which execution engine produced this result:
 	// "process" (cold batchmode against the real project), "shadow" (cold
 	// batchmode inside a per-run shadow workspace), or "bridge" (warm editor

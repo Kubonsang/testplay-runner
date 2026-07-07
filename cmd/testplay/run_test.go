@@ -998,3 +998,40 @@ func TestRunScenario_OrchestratorErrorsInOutput(t *testing.T) {
 		t.Errorf("expected non-empty orchestrator_errors, got %v", errs)
 	}
 }
+
+func TestRunCmd_LaunchFailure_Exit1WithHint(t *testing.T) {
+	dir := t.TempDir()
+	launchErr := &os.PathError{Op: "fork/exec", Path: "/fake/unity", Err: os.ErrNotExist}
+	fake := runnerFunc(func(context.Context, []string, io.Writer, io.Writer) (int, error) {
+		return -1, launchErr
+	})
+
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		UnityPath:     "/fake/unity",
+		ProjectPath:   dir,
+		ResultDir:     filepath.Join(dir, "results"),
+		Timeout:       config.Timeouts{TotalMs: 300000},
+	}
+	var buf bytes.Buffer
+	code := runRun(&buf, runDeps{
+		loadConfig:  func(string) (*config.Config, error) { return cfg, nil },
+		runner:      fake,
+		statusPath:  filepath.Join(dir, "status.json"),
+		resultStore: history.NewStore(cfg.ResultDir),
+		opts:        RunCmdOptions{},
+	})
+	if code != 1 {
+		t.Fatalf("expected exit 1 (dependency error), got %d\noutput: %s", code, buf.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, buf.String())
+	}
+	if out["hint"] == nil || out["hint"] == "" {
+		t.Error("exit 1 output must include a hint field (Output Design Rule #5)")
+	}
+	if out["error"] == nil || out["error"] == "" {
+		t.Error("exit 1 output must include an error field describing the launch failure")
+	}
+}

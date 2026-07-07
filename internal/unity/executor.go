@@ -169,8 +169,11 @@ func executeSinglePhase(ctx context.Context, runner Runner, opts ExecuteOptions)
 	stdoutW, stderrW, tail := makeRunWriters(opts)
 	_, err := runner.Run(ctx, args, stdoutW, stderrW)
 
-	if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-		return handleContextErr(ctx, err, opts)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return handleContextErr(ctx, err, opts)
+		}
+		return classifyLaunchFailure(err, opts)
 	}
 
 	return parseResults(opts, tail.Bytes())
@@ -193,14 +196,9 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			return classifyPhaseContextErr(ctx, opts, status.PhaseTimeoutCompile, "compile")
 		}
-		// Non-context runner error (e.g. Unity binary missing) → compile failure.
-		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
-		return &history.RunResult{
-			SchemaVersion: "1",
-			ExitCode:      2,
-			Tests:         []parser.TestCase{},
-			Errors:        []history.CompileError{},
-		}, 2
+		// Non-context runner error: Unity never ran (binary missing, path is a
+		// directory, not executable) — a dependency error, not a compile failure.
+		return classifyLaunchFailure(err, opts)
 	}
 
 	// Compile errors in stderr → fail without running tests.
@@ -258,14 +256,8 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 		if errors.Is(testErr, context.DeadlineExceeded) || errors.Is(testErr, context.Canceled) {
 			return classifyPhaseContextErr(ctx, opts, status.PhaseTimeoutTest, "test")
 		}
-		// Non-context runner error in test phase → no results available.
-		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
-		return &history.RunResult{
-			SchemaVersion: "1",
-			ExitCode:      2,
-			Tests:         []parser.TestCase{},
-			Errors:        []history.CompileError{},
-		}, 2
+		// Non-context runner error in test phase: Unity never ran.
+		return classifyLaunchFailure(testErr, opts)
 	}
 
 	return parseResults(opts, testTail.Bytes())
@@ -345,6 +337,26 @@ func handleContextErr(ctx context.Context, err error, opts ExecuteOptions) (*his
 		Tests:         []parser.TestCase{},
 		Errors:        []history.CompileError{},
 	}, 4
+}
+
+// classifyLaunchFailure maps a non-context runner error — Unity could not be
+// started at all (binary missing, unity_path is a directory such as a macOS
+// .app bundle, not executable) — to exit 1 (dependency error) with a hint,
+// instead of a fabricated exit 2 "compile failure" with empty errors[].
+func classifyLaunchFailure(err error, opts ExecuteOptions) (*history.RunResult, int) {
+	_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
+	hint := "unity_path must point to the Unity executable itself (macOS: Unity.app/Contents/MacOS/Unity, not the .app bundle); verify with 'testplay check'"
+	if errors.Is(err, os.ErrNotExist) {
+		hint = "Unity binary not found — set unity_path in testplay.json (or the UNITY_PATH env var); verify with 'testplay check'"
+	}
+	return &history.RunResult{
+		SchemaVersion: "1",
+		ExitCode:      1,
+		Error:         fmt.Sprintf("failed to launch Unity: %v", err),
+		Hint:          hint,
+		Tests:         []parser.TestCase{},
+		Errors:        []history.CompileError{},
+	}, 1
 }
 
 // makeRunWriters returns the stdout writer, a tee'd stderr writer, and the
