@@ -234,18 +234,42 @@ func lastReceivedFrom(events []ipc.ReadEvent, role string) (ipc.Message, bool) {
 	return ipc.Message{}, false
 }
 
-// aggregateExitCode returns the maximum exit code across all instance results.
-// Infrastructure errors (Err != nil) are treated as exit 1.
+// aggregateExitCode returns the exit code of the most severe instance result.
+// Infrastructure errors without a more specific response code are treated as
+// exit 1. A non-zero response code (for example exit 7 from shadow permission
+// failure) remains authoritative even when Err carries additional detail.
+// Exit 10 means "nothing ran", so it must not hide a real failure in the 1..9
+// range merely because its numeric value is larger.
 func aggregateExitCode(results []InstanceResult) int {
-	max := 0
+	selected := 0
+	selectedSeverity := exitCodeSeverity(0)
 	for _, r := range results {
 		code := r.Response.ExitCode
-		if r.Err != nil {
+		if r.Err != nil && code == 0 {
 			code = 1
 		}
-		if code > max {
-			max = code
+		severity := exitCodeSeverity(code)
+		if severity > selectedSeverity {
+			selected = code
+			selectedSeverity = severity
 		}
 	}
-	return max
+	return selected
+}
+
+// exitCodeSeverity preserves the established ordering among 1..9 while
+// ranking exit 10 (no tests matched) below every actual error. Unknown non-zero
+// codes are ranked above documented outcomes so a new/invalid failure cannot
+// be silently hidden by an older code.
+func exitCodeSeverity(code int) int {
+	switch {
+	case code == 0:
+		return 0
+	case code == 10:
+		return 1
+	case code >= 1 && code <= 9:
+		return 10 + code
+	default:
+		return 100
+	}
 }

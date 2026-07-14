@@ -149,7 +149,7 @@ type scenarioDeps struct {
 }
 
 // runScenario loads a scenario file, runs all instances concurrently, and writes
-// the aggregated JSON result to w. Returns the scenario exit code (max of instances).
+// the aggregated JSON result to w. Returns the most severe instance exit code.
 func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 	ctx := deps.ctx
 	if ctx == nil {
@@ -246,14 +246,7 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 		// batchmode processes on Unity's single project lock (and the
 		// UnityLockfile heuristic cannot see the sibling that has not
 		// started yet) — force per-run shadow isolation for them.
-		sharedProject := make(map[string]bool, len(configs))
-		projectRefs := make(map[string]int, len(configs))
-		for _, cfg := range configs {
-			projectRefs[filepath.Clean(cfg.ProjectPath)]++
-		}
-		for role, cfg := range configs {
-			sharedProject[role] = projectRefs[filepath.Clean(cfg.ProjectPath)] > 1
-		}
+		sharedProject := sharedProjectRoles(configs)
 
 		run = func(ctx context.Context, instSpec scenario.InstanceSpec, readyCh chan<- struct{}) (runsvc.Response, error) {
 			cfg := configs[instSpec.Role]
@@ -319,9 +312,14 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 	instances := make([]map[string]any, len(scenarioResult.Instances))
 	for i, inst := range scenarioResult.Instances {
 		if inst.Err != nil {
+			effectiveExitCode := inst.Response.ExitCode
+			if effectiveExitCode == 0 {
+				effectiveExitCode = 1
+			}
 			instances[i] = map[string]any{
-				"role":  inst.Role,
-				"error": inst.Err.Error(),
+				"role":      inst.Role,
+				"exit_code": effectiveExitCode,
+				"error":     inst.Err.Error(),
 			}
 			continue
 		}
@@ -348,6 +346,12 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 		}
 		if r.TimeoutType != "" {
 			m["timeout_type"] = r.TimeoutType
+		}
+		if r.Error != "" {
+			m["error"] = r.Error
+		}
+		if r.Hint != "" {
+			m["hint"] = r.Hint
 		}
 		if len(inst.Response.Warnings) > 0 {
 			m["warnings"] = inst.Response.Warnings

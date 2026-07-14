@@ -22,6 +22,12 @@ func linkPackages(src, dst string) error {
 	if err := os.Symlink(src, dst); err == nil {
 		return nil
 	}
+	return createDirectoryJunction(src, dst)
+}
+
+// createDirectoryJunction is split from linkPackages so the no-Developer-Mode
+// fallback can be exercised directly in Windows tests.
+func createDirectoryJunction(src, dst string) error {
 	// Resolve 8.3 short names in src (must exist).
 	if long, err := filepath.EvalSymlinks(src); err == nil {
 		src = long
@@ -30,7 +36,11 @@ func linkPackages(src, dst string) error {
 	if long, err := filepath.EvalSymlinks(filepath.Dir(dst)); err == nil {
 		dst = filepath.Join(long, filepath.Base(dst))
 	}
-	cmd := exec.Command("cmd", "/c", fmt.Sprintf(`mklink /J "%s" "%s"`, dst, src))
+	// Pass mklink and each operand as a distinct argument. Supplying the whole
+	// command as one argument makes os/exec quote that argument; cmd.exe then
+	// strips the outer quote and mis-parses the nested path quotes. That failure
+	// is hidden on Developer Mode machines because os.Symlink succeeds first.
+	cmd := exec.Command("cmd.exe", "/d", "/c", "mklink", "/J", dst, src)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("mklink /J %q %q: %w: %s", dst, src, err, strings.TrimSpace(string(out)))
 	}

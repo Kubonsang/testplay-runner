@@ -676,6 +676,80 @@ func TestRunScenario_DispatchesScenarioRunner(t *testing.T) {
 	}
 }
 
+func TestRunScenario_SerializesPerInstanceResultErrorAndHint(t *testing.T) {
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "scenario.json")
+	writeScenarioFile(t, specPath, &scenario.ScenarioFile{
+		Instances: []scenario.InstanceSpec{{Role: "solo", Config: "./solo.json"}},
+	})
+
+	fakeRun := func(_ context.Context, _ scenario.InstanceSpec, _ chan<- struct{}) (runsvc.Response, error) {
+		return runsvc.Response{
+			RunID:    "20260326-143055-aabbccdd",
+			ExitCode: 1,
+			Result: &history.RunResult{
+				SchemaVersion: "1",
+				ExitCode:      1,
+				Error:         "Unity could not be launched",
+				Hint:          "verify unity_path in testplay.json",
+				Tests:         []parser.TestCase{},
+				Errors:        []history.CompileError{},
+			},
+		}, nil
+	}
+
+	var buf bytes.Buffer
+	code := runScenario(&buf, specPath, scenarioDeps{run: fakeRun})
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d\noutput: %s", code, buf.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	instances, _ := out["instances"].([]any)
+	if len(instances) != 1 {
+		t.Fatalf("expected one instance, got %v", out["instances"])
+	}
+	inst := instances[0].(map[string]any)
+	if inst["error"] != "Unity could not be launched" {
+		t.Errorf("instance error missing: %v", inst)
+	}
+	if inst["hint"] != "verify unity_path in testplay.json" {
+		t.Errorf("instance hint missing: %v", inst)
+	}
+}
+
+func TestRunScenario_SerializesEffectiveExitCodeForInfrastructureError(t *testing.T) {
+	dir := t.TempDir()
+	specPath := filepath.Join(dir, "scenario.json")
+	writeScenarioFile(t, specPath, &scenario.ScenarioFile{
+		Instances: []scenario.InstanceSpec{{Role: "solo", Config: "./solo.json"}},
+	})
+
+	fakeRun := func(_ context.Context, _ scenario.InstanceSpec, _ chan<- struct{}) (runsvc.Response, error) {
+		return runsvc.Response{ExitCode: 7}, fmt.Errorf("shadow workspace permission denied")
+	}
+
+	var buf bytes.Buffer
+	code := runScenario(&buf, specPath, scenarioDeps{run: fakeRun})
+	if code != 7 {
+		t.Fatalf("expected exit 7, got %d\noutput: %s", code, buf.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	instances, _ := out["instances"].([]any)
+	if len(instances) != 1 {
+		t.Fatalf("expected one instance, got %v", out["instances"])
+	}
+	inst := instances[0].(map[string]any)
+	if inst["exit_code"] != float64(7) || inst["error"] != "shadow workspace permission denied" {
+		t.Fatalf("specific exit code and error must both be serialized: %v", inst)
+	}
+}
+
 func writeScenarioFile(t *testing.T, path string, spec *scenario.ScenarioFile) {
 	t.Helper()
 	data, _ := json.Marshal(map[string]any{
@@ -739,7 +813,7 @@ func TestRunScenario_WritesPerRoleStatusFiles(t *testing.T) {
 	}
 }
 
-func TestRunScenario_ExitCodeMaxPropagated(t *testing.T) {
+func TestRunScenario_MostSevereExitCodePropagated(t *testing.T) {
 	dir := t.TempDir()
 	specPath := filepath.Join(dir, "scenario.json")
 	_ = os.WriteFile(specPath, []byte(`{
@@ -1140,8 +1214,13 @@ func TestRunScenario_InstanceCompareRun_ForwardedToInstance(t *testing.T) {
 	t.Cleanup(func() { _ = os.Remove("testplay-status-solo.json") })
 
 	projectDir := filepath.Join(dir, "project")
-	if err := os.MkdirAll(projectDir, 0755); err != nil {
-		t.Fatal(err)
+	// UNKNOWN project identity deliberately forces shadow isolation. Keep this
+	// fixture valid even on restricted Windows agents where identity proof is
+	// unavailable and the conservative shadow path is exercised.
+	for _, unityDir := range []string{"Assets", "ProjectSettings", "Packages"} {
+		if err := os.MkdirAll(filepath.Join(projectDir, unityDir), 0755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	cfgData, _ := json.Marshal(map[string]any{
 		"schema_version": "1",
