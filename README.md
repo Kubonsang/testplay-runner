@@ -29,7 +29,7 @@ If your AI agent is iterating on Unity tests, testplay's whole job is making eac
 | No regression tracking | `--compare-run` populates `new_failures` |
 | Platform path differences | Absolute + relative paths in every response |
 | No test discovery without running | `testplay list` static-scans known attributes — incomplete for custom attributes (see Known Limitations) |
-| Unity Editor holds project lock | Warm-Editor Bridge runs tests in the open Editor (`backend: "bridge"`); falls back to a `.testplay-shadow/` workspace, then a fresh process |
+| Unity Editor holds project lock | Warm-Editor Bridge runs eligible tests in the open Editor (`backend: "bridge"`); pre-start rejection may fall back to `.testplay-shadow/`, while a possibly-started ambiguity returns exit 9 without replay |
 
 ## Installation
 
@@ -444,7 +444,7 @@ When the Unity Editor is open, the cold path (below) has to copy the project int
 3. process  — else a fresh batch-mode process against the real project
 ```
 
-If the bridge can't guarantee a result equivalent to a cold run, it falls back automatically. `--no-bridge` (or `"bridge": { "enabled": false }`) forbids it entirely; `--bridge` prefers it but still respects the Pristine Gate. `--shadow`/`--reset-shadow`/`--clear-cache`, two-phase configs (`compile_ms`+`test_ms`), and scenario mode all run cold.
+If bridge eligibility fails before execution starts, testplay falls back automatically. Once a bridge run may have started, an ownership or completion ambiguity returns exit 9 and is never cold-rerun. `--no-bridge` (or `"bridge": { "enabled": false }`) forbids it entirely; `--bridge` prefers it but still respects the Pristine Gate. `--shadow`/`--reset-shadow`/`--clear-cache`, two-phase configs (`compile_ms`+`test_ms`), and scenario mode all run cold.
 
 **Install + opt-in.** Add the in-repo UPM package `unity/com.testplay.bridge` to your project's `Packages/manifest.json`, then opt in (the bridge is dormant otherwise and never runs in batch mode):
 
@@ -464,10 +464,11 @@ tombstones, and `runs/<run_id>/{status.ndjson, compile-errors.json}`. The bridge
 writes `results.xml` to the normal `.testplay/runs/<run_id>/` so the existing
 parse pipeline is reused unchanged.
 
-**Scope (v0.11.0):** EditMode only. PlayMode-warm and scenario/network warm
-orchestration are deferred; those always run cold for now. Exit codes are 0–10
-and the six-command interface is unchanged. If a bridge run may have started but
-cannot be proven complete, testplay returns exit 9 and never cold-reruns it.
+**Scope (v0.11.0):** the protocol-2 warm bridge requires Unity 6 (6000.3+) and
+supports EditMode only. PlayMode-warm and scenario/network warm orchestration are
+deferred; those always run cold for now. Exit codes are 0–10 and the six-command
+interface is unchanged. If a bridge run may have started but cannot be proven
+complete, testplay returns exit 9 and never cold-reruns it.
 See [`unity/com.testplay.bridge/README.md`](unity/com.testplay.bridge/README.md).
 
 ## Shadow Workspace

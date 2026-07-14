@@ -29,7 +29,7 @@ AI 에이전트가 Unity 테스트를 반복 실행한다면, testplay의 모든
 | 회귀 추적 불가 | `--compare-run`으로 `new_failures` 비교 |
 | 플랫폼별 경로 차이 | 모든 응답에 절대경로 + 상대경로 동시 제공 |
 | 실행 없이 테스트 탐색 불가 | `testplay list`로 알려진 어트리뷰트 정적 스캔 — 커스텀 어트리뷰트 누락 (Known Limitations 참조) |
-| Unity 에디터가 프로젝트 잠금 보유 | 웜 에디터 브릿지가 열린 에디터에서 테스트 실행(`backend: "bridge"`); 없으면 `.testplay-shadow/` 워크스페이스, 그다음 새 프로세스로 폴백 |
+| Unity 에디터가 프로젝트 잠금 보유 | 적격 테스트는 열린 에디터에서 실행(`backend: "bridge"`); 실행 전 거절은 `.testplay-shadow/`로 폴백할 수 있지만, 실행 가능성이 생긴 뒤의 불명확성은 재실행 없이 exit 9 |
 
 ## 설치
 
@@ -444,7 +444,7 @@ testplay result --last 3
 3. process  — 아니면 실제 프로젝트에 대해 새 배치 모드 프로세스
 ```
 
-cold 실행과 동등한 결과를 보장할 수 없으면 브릿지는 자동으로 폴백합니다. `--no-bridge`(또는 `"bridge": { "enabled": false }`)는 완전히 금지하고, `--bridge`는 선호하되 Pristine Gate는 여전히 존중합니다. `--shadow`/`--reset-shadow`/`--clear-cache`, two-phase 설정(`compile_ms`+`test_ms`), 시나리오 모드는 모두 cold로 실행됩니다.
+실행이 시작되기 전에 브릿지 적격성 검사가 실패하면 자동으로 cold 경로로 폴백합니다. 브릿지 실행이 시작됐을 가능성이 생긴 뒤 소유권이나 완료를 증명할 수 없으면 exit 9로 끝내고 cold로 재실행하지 않습니다. `--no-bridge`(또는 `"bridge": { "enabled": false }`)는 완전히 금지하고, `--bridge`는 선호하되 Pristine Gate는 여전히 존중합니다. `--shadow`/`--reset-shadow`/`--clear-cache`, two-phase 설정(`compile_ms`+`test_ms`), 시나리오 모드는 모두 cold로 실행됩니다.
 
 **설치 + opt-in.** in-repo UPM 패키지 `unity/com.testplay.bridge`를 프로젝트 `Packages/manifest.json`에 추가한 뒤 opt-in 합니다(그 전에는 휴면 상태이며 배치 모드에서는 절대 실행되지 않음):
 
@@ -465,12 +465,12 @@ Framework run에 결속하며, v0.10의 protocol 1 패키지와 의도적으로 
 브릿지는 `results.xml`을 기존 `.testplay/runs/<run_id>/`에 작성하므로 기존
 파싱 파이프라인이 그대로 재사용됩니다.
 
-**범위 (v0.11.0):** EditMode 전용. PlayMode-warm과 시나리오/네트워크 warm
-오케스트레이션은 deferred이며 당분간 cold로 실행됩니다. exit code는
-0–10이고 6-command 인터페이스는 변경 없습니다. 브릿지 run이 시작됐을 수
-있지만 완료를 증명할 수 없으면 exit 9로 끝내며 cold로 자동 재실행하지
-않습니다. [`unity/com.testplay.bridge/README.md`](unity/com.testplay.bridge/README.md)
-참조.
+**범위 (v0.11.0):** protocol 2 warm 브릿지는 Unity 6(6000.3+)의 EditMode
+전용입니다. PlayMode-warm과 시나리오/네트워크 warm 오케스트레이션은
+deferred이며 당분간 cold로 실행됩니다. exit code는 0–10이고 6-command
+인터페이스는 변경 없습니다. 브릿지 run이 시작됐을 수 있지만 완료를
+증명할 수 없으면 exit 9로 끝내며 cold로 자동 재실행하지 않습니다.
+[`unity/com.testplay.bridge/README.md`](unity/com.testplay.bridge/README.md) 참조.
 
 ## 섀도우 워크스페이스
 

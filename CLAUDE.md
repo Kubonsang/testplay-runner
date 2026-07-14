@@ -12,7 +12,7 @@ Agents interact via six commands: `version`, `check`, `list`, `run`, `result`, `
 
 **Identity anchor:** testplay is a *contract layer* (call it "the honest contract" internally — see commit history). It is NOT a speed layer for human TDD. Speed-vs-correctness trade-offs always resolve in favor of correctness/clarity for automated callers. When evaluating feature requests like "make it faster in the editor", the answer is: that's the Test Runner window's job, not testplay's. Cite this paragraph. **Bridge corollary (v0.10.0):** the warm-editor bridge does not violate this — the Test Runner window is a human GUI that automated callers *cannot* use, so the bridge gives agents/CI the warm path humans already have, *only* as a transparent backend behind the unchanged JSON/exit-code contract. It is enforced by a resolution rule, not intent: the warm path is forbidden whenever warm-vs-cold could change *results*, and the Pristine Gate self-demotes to the cold path. Speed/disk savings are a side effect of reusing a warm domain, never a promised capability.
 
-**Current version:** `v0.11.0` (main). Honest-Contract Hardening — the v0.10 warm bridge now uses protocol 2 session binding and owned Test Framework run GUIDs; ambiguous or possibly-started executions terminate as exit 9 and are never replayed through the cold path. CLI/config/list/scenario contracts fail closed: strict single-value config decode, exit 10 for a filtered zero-test run, schema-2 inventory cache, filesystem-aware project identity, and per-instance scenario baselines. The 3-tier backend remains `bridge → shadow → process`; two-phase configs and scenario mode always run cold. **Identity locked at v0.8.0:** contract layer for agents+CI, not a TDD speed tool — see Identity anchor above.
+**Current version candidate:** `v0.11.0` (preflight and immutable tag pending). Honest-Contract Hardening — the v0.10 warm bridge now uses protocol 2 session binding and owned Test Framework run GUIDs; ambiguous or possibly-started executions terminate as exit 9 and are never replayed through the cold path. The protocol-2 warm bridge requires Unity 6 (6000.3+). CLI/config/list/scenario contracts fail closed: strict single-value config decode, exit 10 for a filtered zero-test run, schema-2 inventory cache, filesystem-aware project identity, and per-instance scenario baselines. The 3-tier backend remains `bridge → shadow → process`; two-phase configs and scenario mode always run cold. **Identity locked at v0.8.0:** contract layer for agents+CI, not a TDD speed tool — see Identity anchor above.
 
 **Ultimate goal:** PlayMode + network environment testing.
 
@@ -93,7 +93,7 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 
 **`--clear-cache`**: Removes the cached Library (`.testplay/cache/`) before shadow workspace creation, forcing Unity to reimport from scratch. Use when the cache might be corrupted or when troubleshooting import-related failures.
 
-**`--bridge` / `--no-bridge`** (v0.10.0): backend-selection overrides for the warm-editor bridge. By default the bridge is auto-selected as tier-1 (`bridge → shadow → process`) when a live, compatible, idle bridge handshake is present and the Pristine Gate passes; otherwise execution falls back to the cold path automatically. `--no-bridge` (or `bridge.enabled: false` in config) forbids the bridge entirely for guaranteed cold hermeticity. `--bridge` *prefers* the bridge even on a soft probe failure but still respects the Pristine Gate — force changes preference, never the correctness bar (if it cannot run cleanly it falls back to cold with a disclosed `warnings` entry). `--shadow`/`--reset-shadow`/`--clear-cache` and two-phase configs (`compile_ms`+`test_ms`) bypass the bridge. Scenario mode always runs cold (scenario-warm orchestration is deferred).
+**`--bridge` / `--no-bridge`** (v0.10.0): backend-selection overrides for the warm-editor bridge. By default the bridge is auto-selected as tier-1 (`bridge → shadow → process`) when a live, compatible, idle bridge handshake is present and the Pristine Gate passes; a rejection proved before execution starts may fall back to the cold path automatically. Once bridge execution may have started, ambiguity returns exit 9 and is never replayed. `--no-bridge` (or `bridge.enabled: false` in config) forbids the bridge entirely for guaranteed cold hermeticity. `--bridge` *prefers* the bridge even on a soft probe failure but still respects the Pristine Gate — force changes preference, never the correctness bar. `--shadow`/`--reset-shadow`/`--clear-cache` and two-phase configs (`compile_ms`+`test_ms`) bypass the bridge. Scenario mode always runs cold (scenario-warm orchestration is deferred).
 
 **Scenario JSON `env` field:** Each instance in a scenario file can specify an `env` map of environment variables injected into the Unity process. Keys must be non-empty and must not contain `=`. Values override inherited environment variables.
 
@@ -166,7 +166,7 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 
 **Two-phase execution:** when both `compile_ms` and `test_ms` are set (both > 0), two-phase execution is enabled. Both fields must be set together — setting only one is a validation error. When neither is set, single-phase execution uses only `total_ms`. Note: setting both also **disables the warm bridge** for that run (the warm Editor cannot honestly reproduce the strict compile/test phase split), so two-phase always runs cold.
 
-**Bridge config (v0.10.0):** an optional top-level `"bridge": { "enabled": false }` block forbids the warm-editor bridge entirely (default when absent: enabled). Even when enabled, the bridge is only *selected* when a live, compatible, idle bridge handshake is present and the Pristine Gate passes — otherwise the run falls back to shadow/process automatically.
+**Bridge config (v0.10.0):** an optional top-level `"bridge": { "enabled": false }` block forbids the warm-editor bridge entirely (default when absent: enabled). Even when enabled, the bridge is only *selected* when a live, compatible, idle bridge handshake is present and the Pristine Gate passes. A pre-start rejection may fall back to shadow/process; a `possibly_started` ambiguity is terminal exit 9 with no replay.
 
 **Config path:** Loaded from the path given by `--config <path>` (default: `"testplay.json"` in cwd). When `--config` is omitted, behaviour is unchanged from v0.2.
 
@@ -229,7 +229,7 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 10. `excerpt` (string) on test entries is present only when the test failed. Format: `"message (at filename.cs:line)"` or just `"message"` when no file info available. Absent for passing/skipped tests.
 11. `scenario_run_id` (string) is present at the top level of every scenario-mode output. Format matches per-instance run IDs (`YYYYMMDD-HHMMSS-xxxxxxxx`) but identifies the scenario as a whole, not any single instance. Absent in single-mode (`testplay run`) output.
 12. `instances[].ipc_messages` (array of Message objects) and `instances[].ipc_summary` (object with `sent_count` / `received_count` / `last_sent` / `last_received`) are present only when IPC capture was active for the scenario AND that instance saw at least one message. Absent otherwise.
-13. `backend` (string) is **always present** in `run` output (single-mode top level and each scenario `instances[]` entry). Value is `"process"` (cold batchmode against the real project), `"shadow"` (cold batchmode inside a per-run shadow workspace), or `"bridge"` (warm Editor via the TestPlay bridge). It is first-order provenance an agent should never have to infer — like `schema_version`, it is emitted unconditionally (additive/backward-compatible; existing parsers ignore unknown keys). When the warm bridge ran in a non-pristine-but-acceptable state (e.g. unsaved scenes), the disclosure is added to `warnings` (Rule 7); a *result-changing* divergence never lands in `warnings` — it falls back to the cold path instead.
+13. `backend` (string) is **always present** in `run` output (single-mode top level and each scenario `instances[]` entry). Value is `"process"` (cold batchmode against the real project), `"shadow"` (cold batchmode inside a per-run shadow workspace), or `"bridge"` (warm Editor via the TestPlay bridge). It is first-order provenance an agent should never have to infer — like `schema_version`, it is emitted unconditionally (additive/backward-compatible; existing parsers ignore unknown keys). When the warm bridge ran in a non-pristine-but-acceptable state (e.g. unsaved scenes), the disclosure is added to `warnings` (Rule 7). A result-changing divergence proved before execution starts may cold-fallback; after execution may have started, ambiguity is exit 9 with no replay.
 
 ## Known Limitations & Risks
 
@@ -351,7 +351,7 @@ Cuts the two physical bottlenecks of "Editor open" runs — the shadow-workspace
 - **Ship gate** — `e2e/bridge_parity_test.go` (`//go:build e2e`) asserts cold/bridge parity. The riskiest Unity behaviors (TestRunnerApi cancellation, `ToXml()` fidelity, compile-settle) were validated against real Unity (6000.3.8f1 + 2022.3.62f3 LTS) before tagging — see `docs/25`.
 - **Deferred:** PlayMode-warm, scenario/network warm orchestration, bridge-side hard cancellation.
 
-### v0.11.0 ✅ — The Honest Contract Hardening (shipped 2026-07-14)
+### v0.11.0 — The Honest Contract Hardening (release candidate prepared 2026-07-14)
 Closes the silent-wrong and duplicate-execution paths found by the pre-v1.0 audit.
 - **Exit honesty** — cold timeout/signal returns 4/8; filtered zero-test returns
   10; launch failures return 1 + hint; malformed config/CLI usage returns 5.
@@ -366,6 +366,8 @@ Closes the silent-wrong and duplicate-execution paths found by the pre-v1.0 audi
   terminal exit-9/no-replay result for any `possibly_started` ambiguity.
 - **Release safety** — independent 3-OS CI, Go 1.26.4 Darwin/release builds, and
   a pre-tag artifact/`LC_UUID` preflight. CLI and UPM package upgrade together.
+- **Supported warm Editor** — protocol 2 requires Unity 6 (6000.3+) because its
+  run-ownership proof uses per-run GUID activity and cancellation APIs.
 - **Evidence** — Unity 6000.3.10f1 package tests 11/11; real warm sequential,
   foreign-run, domain-reload, editor-restart, broken-compile recovery, and GNF_
   1/1 + 3/3 + 49/49 + exit-10 gates. See `docs/27_v0.11.0_validation.md`.

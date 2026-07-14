@@ -10,12 +10,16 @@ already-warm Editor** via the `TestRunnerApi`, writing the *same* NUnit
 `results.xml` — so the CLI's JSON/exit-code contract is unchanged while the copy
 and the cold domain reload are eliminated.
 
-It is a **transparent backend**: agents and CI see identical output, plus a
-`backend: "bridge"` field disclosing which engine ran.
+For authoritatively completed runs it is a **transparent backend**: agents and
+CI see the same structured result contract, plus a `backend: "bridge"` field.
+If execution may have started but ownership or completion cannot be proved,
+protocol 2 returns exit 9 and does not replay the run through a cold backend.
 
 ## Requirements
 
-- Unity 2021.3+ with the Test Framework package (`com.unity.test-framework`).
+- Unity 6 (6000.3+) with the Test Framework package
+  (`com.unity.test-framework`). Protocol 2 depends on per-run GUID activity and
+  cancellation APIs that are not available in Unity 2022.3.
 - TestPlay Runner v0.11.0 with the matching protocol-2 bridge package.
 
 ## Install (in-repo UPM)
@@ -50,9 +54,9 @@ opted in, and **never** in batchmode:
 
 When active, the Editor writes a heartbeat to `<project>/.testplay/bridge/handshake.json`.
 `testplay run` probes it and, if a live, compatible, idle bridge is present and
-the **Pristine Gate** passes, routes the run through the Editor. Otherwise it
-falls back to the cold shadow/process path automatically — correctness wins by
-default.
+the **Pristine Gate** passes, routes the run through the Editor. A rejection
+proved before execution starts may fall back to the cold shadow/process path.
+Once execution may have started, ambiguity returns exit 9 and is never replayed.
 
 ## Scope (v0.11.0)
 
