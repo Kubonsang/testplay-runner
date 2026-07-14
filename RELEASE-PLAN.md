@@ -316,7 +316,7 @@
 - **명시적 비목표 (이후 버전):** PlayMode-warm, scenario/network warm orchestration, bridge-side hard cancellation.
 - **버전 규칙 준수:** 새 태그 `v0.10.0` 발행 완료 (2026-06-24, GoReleaser 크로스플랫폼 바이너리 배포). 원격에 푸시된 태그는 절대 덮어쓰지 않는다.
 
-## v0.11.0 (The Honest Contract Hardening) — release candidate prepared 2026-07-14
+## ✅ v0.11.0 (The Honest Contract Hardening) — shipped 2026-07-14
 **테마:** AI agent에게 틀린 성공이나 중복 실행을 보여 주는 silent-wrong 경로를 fail-closed 계약으로 전환한다.
 
 - **CLI·config 정직성:** cold 실행의 timeout/signal이 exit 4/8로 복구되고,
