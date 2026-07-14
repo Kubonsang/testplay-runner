@@ -16,7 +16,7 @@ import (
 // ProtocolVersion is the wire-protocol version the Go client speaks. The C#
 // bridge advertises its own version in the handshake; a mismatch makes Probe
 // fall back rather than risk speaking an unknown protocol.
-const ProtocolVersion = 1
+const ProtocolVersion = 2
 
 // Editor states reported in the handshake's editor_state field.
 const (
@@ -58,6 +58,7 @@ type requestFile struct {
 	SchemaVersion         string `json:"schema_version"`
 	BridgeProtocolVersion int    `json:"bridge_protocol_version"`
 	RunID                 string `json:"run_id"`
+	BridgeSessionID       string `json:"bridge_session_id"`
 	TestPlatform          string `json:"test_platform"`
 	Filter                string `json:"filter,omitempty"`
 	Category              string `json:"category,omitempty"`
@@ -79,6 +80,18 @@ type responseFile struct {
 	CompileErrorCount     int      `json:"compile_error_count"`
 	NonPristine           []string `json:"non_pristine"` // disclosure reasons → run warnings
 	FinishedAt            string   `json:"finished_at"`
+}
+
+// tombstoneFile is a durable transport-failure marker written next to a
+// request when the Unity bridge cannot publish its terminal response. It also
+// seals requests that were canceled before they could be claimed, preventing a
+// later editor restart from replaying them.
+type tombstoneFile struct {
+	SchemaVersion         string `json:"schema_version"`
+	BridgeProtocolVersion int    `json:"bridge_protocol_version"`
+	RunID                 string `json:"run_id"`
+	Reason                string `json:"reason"`
+	CreatedAt             string `json:"created_at"`
 }
 
 // progressLine is one NDJSON line the bridge appends to status.ndjson. The

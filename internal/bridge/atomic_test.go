@@ -20,6 +20,7 @@ import (
 func TestAtomicWriteRead_NoTornReads(t *testing.T) {
 	dir := t.TempDir()
 	const runID = "20260101-000000-deadbeef"
+	const sessionID = "20260101-000000-session0"
 	respPath := filepath.Join(dir, "responses", runID+".resp.json")
 
 	const iterations = 1000
@@ -33,6 +34,7 @@ func TestAtomicWriteRead_NoTornReads(t *testing.T) {
 				SchemaVersion:         "1",
 				BridgeProtocolVersion: ProtocolVersion,
 				RunID:                 runID,
+				BridgeSessionID:       sessionID,
 				Outcome:               OutcomeCompleted,
 				ResultsXMLWritten:     true,
 				CompileErrorCount:     i, // varies every write so a torn read is detectable
@@ -47,7 +49,7 @@ func TestAtomicWriteRead_NoTornReads(t *testing.T) {
 	check := func() {
 		// readResponse guards against torn reads by failing json.Unmarshal, so an
 		// ok=true read MUST be a fully-formed response for this runID.
-		if r, ok := readResponse(respPath, runID); ok {
+		if r, ok := readResponse(respPath, runID, sessionID); ok {
 			if r.SchemaVersion == "1" && r.RunID == runID && r.Outcome == OutcomeCompleted && r.ResultsXMLWritten {
 				valid++
 			} else {
@@ -86,6 +88,7 @@ func TestAtomicWriteRead_NoTornReads(t *testing.T) {
 func TestAtomicRequestRoundTrip_NoTornReads(t *testing.T) {
 	dir := t.TempDir()
 	const runID = "20260101-000001-feedface"
+	const sessionID = "20260101-000001-session1"
 	reqPath := filepath.Join(dir, "requests", runID+".req.json")
 
 	const iterations = 1000
@@ -99,6 +102,7 @@ func TestAtomicRequestRoundTrip_NoTornReads(t *testing.T) {
 				SchemaVersion:         "1",
 				BridgeProtocolVersion: ProtocolVersion,
 				RunID:                 runID,
+				BridgeSessionID:       sessionID,
 				TestPlatform:          "edit_mode",
 				ResultsXML:            "/x/results.xml",
 				IdleDeadlineMs:        int64(i),
@@ -119,7 +123,7 @@ func TestAtomicRequestRoundTrip_NoTornReads(t *testing.T) {
 		if json.Unmarshal(raw, &rf) != nil {
 			t.Fatalf("torn request read: unmarshal failed on %d bytes", len(raw))
 		}
-		if rf.RunID != runID || rf.BridgeProtocolVersion != ProtocolVersion {
+		if rf.RunID != runID || rf.BridgeProtocolVersion != ProtocolVersion || rf.BridgeSessionID != sessionID {
 			t.Fatalf("torn request read: %+v", rf)
 		}
 		reads++

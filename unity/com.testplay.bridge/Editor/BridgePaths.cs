@@ -21,6 +21,7 @@ namespace TestPlay.Bridge
 
         public static string RequestPath(string runId) => Path.Combine(RequestsDir, runId + ".req.json");
         public static string CancelPath(string runId) => Path.Combine(RequestsDir, runId + ".cancel");
+        public static string TombstonePath(string runId) => Path.Combine(RequestsDir, runId + ".tombstone.json");
         public static string ResponsePath(string runId) => Path.Combine(ResponsesDir, runId + ".resp.json");
         public static string RunDir(string runId) => Path.Combine(RunsDir, runId);
     }

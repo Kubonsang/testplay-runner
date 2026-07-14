@@ -210,11 +210,11 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		(req.Config.BridgeEnabled() || req.ForceBridge)
 	if bridgeEligible {
 		expectedVer := bridge.ExpectedUnityVersion(req.Config.UnityPath, req.Config.ProjectPath)
-		_, probeOK, reason := bridge.Probe(req.Config.ProjectPath, expectedVer, clock(), 0)
-		// --bridge forces an attempt even on a soft probe failure; the C#-side
-		// Pristine Gate remains the authoritative correctness bar and the bridge
-		// answers busy/rejected (→ FellBack) when it cannot run cleanly.
-		if probeOK || req.ForceBridge {
+		handshake, probeOK, reason := bridge.Probe(req.Config.ProjectPath, expectedVer, clock(), 0)
+		// --bridge enables the preferred tier even when config disables it, but
+		// never bypasses Probe. Protocol/session/project identity failures must
+		// fall back before a request is published.
+		if probeOK {
 			bridgeOpts := unity.ExecuteOptions{
 				ProjectPath:  req.Config.ProjectPath,
 				ResultsFile:  resultsFile,
@@ -224,7 +224,13 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 				Category:     req.Category,
 				TestPlatform: req.Config.TestPlatform,
 			}
-			br := unity.ExecuteBridge(ctx, bridge.NewClient(req.Config.ProjectPath), bridgeOpts, runID, bridgeIdleDeadline(req.Config))
+			br := unity.ExecuteBridge(
+				ctx,
+				bridge.NewClient(req.Config.ProjectPath, handshake.BridgeSessionID),
+				bridgeOpts,
+				runID,
+				bridgeIdleDeadline(req.Config),
+			)
 			if br.FellBack {
 				bridgeFallbackReason = "bridge declined the run (busy or could not guarantee a pristine domain)"
 			} else {

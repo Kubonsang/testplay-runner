@@ -53,6 +53,9 @@ func Probe(projectPath, expectedUnityVersion string, now time.Time, staleWindow 
 	if h.BridgeProtocolVersion != ProtocolVersion {
 		return &h, false, fmt.Sprintf("bridge protocol version mismatch (handshake=%d, want=%d)", h.BridgeProtocolVersion, ProtocolVersion)
 	}
+	if h.BridgeSessionID == "" {
+		return &h, false, "bridge handshake has no session identity"
+	}
 	if !samePath(projectPath, h.ProjectPathReal) && !samePath(projectPath, h.ProjectPath) {
 		return &h, false, "bridge handshake project path does not match"
 	}
