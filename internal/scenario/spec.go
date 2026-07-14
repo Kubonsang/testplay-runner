@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Kubonsang/testplay-runner/internal/runid"
 )
 
 // ErrScenarioInvalid is returned when a scenario file fails validation.
@@ -21,6 +23,7 @@ type InstanceSpec struct {
 	DependsOnPhase string            `json:"depends_on_phase,omitempty"` // phase the dependency must reach before this instance starts
 	ReadyPhase     string            `json:"ready_phase,omitempty"`      // phase to wait for in the depended-on instance
 	ReadyTimeoutMs int               `json:"ready_timeout_ms,omitempty"` // how long to wait for the dependency (ms)
+	CompareRun     string            `json:"compare_run,omitempty"`      // per-instance baseline run_id for regression comparison (this role's own store)
 	Env            map[string]string `json:"env,omitempty"`              // extra env vars merged with os.Environ() for this instance
 }
 
@@ -87,6 +90,37 @@ func (f *ScenarioFile) SignalPhase(inst InstanceSpec) string {
 	return inst.EffectiveReadyPhase()
 }
 
+// validPhaseTarget reports whether p is a phase a dependent can meaningfully
+// wait for. Only phases the runner actually emits qualify: "compiling"
+// (always), "running" (two-phase mode only), "done" (terminal). Timeout and
+// interrupted phases are failure states, not ready signals.
+func validPhaseTarget(p string) bool {
+	switch p {
+	case "", "compiling", "running", "done":
+		return true
+	}
+	return false
+}
+
+// ValidateSignalPhases cross-checks dependency wait phases against each
+// dependency's execution mode. twoPhaseByRole maps role → whether that
+// instance's config enables two-phase execution (compile_ms + test_ms).
+// The "running" phase is emitted only in two-phase mode, so waiting for it
+// on a single-phase dependency would deterministically burn the full ready
+// timeout and fail — a validation error, not a runtime timeout.
+func (f *ScenarioFile) ValidateSignalPhases(twoPhaseByRole map[string]bool) error {
+	for _, inst := range f.Instances {
+		if inst.DependsOn == "" {
+			continue
+		}
+		if phase := f.DependencyPhase(inst); phase == "running" && !twoPhaseByRole[inst.DependsOn] {
+			return fmt.Errorf("%w: instance %q waits for %q to reach phase \"running\", but %q's config is single-phase and never emits it — enable two-phase execution (compile_ms + test_ms) in that testplay.json, or wait for \"compiling\"",
+				ErrScenarioInvalid, inst.Role, inst.DependsOn, inst.DependsOn)
+		}
+	}
+	return nil
+}
+
 // Load reads, parses, and validates a scenario file from path.
 func Load(path string) (*ScenarioFile, error) {
 	data, err := os.ReadFile(path)
@@ -122,6 +156,18 @@ func Load(path string) (*ScenarioFile, error) {
 		}
 		if _, dup := roles[inst.Role]; dup {
 			return nil, fmt.Errorf("%w: instances[%d].role %q is not unique", ErrScenarioInvalid, i, inst.Role)
+		}
+		if !validPhaseTarget(inst.ReadyPhase) {
+			return nil, fmt.Errorf("%w: instances[%d].ready_phase %q is not a valid phase (use \"compiling\", \"running\", or \"done\")", ErrScenarioInvalid, i, inst.ReadyPhase)
+		}
+		if !validPhaseTarget(inst.DependsOnPhase) {
+			return nil, fmt.Errorf("%w: instances[%d].depends_on_phase %q is not a valid phase (use \"compiling\", \"running\", or \"done\")", ErrScenarioInvalid, i, inst.DependsOnPhase)
+		}
+		if inst.ReadyTimeoutMs < 0 {
+			return nil, fmt.Errorf("%w: instances[%d].ready_timeout_ms must be non-negative (0 or omitted = default 30000)", ErrScenarioInvalid, i)
+		}
+		if inst.CompareRun != "" && !runid.IsValid(inst.CompareRun) {
+			return nil, fmt.Errorf("%w: instances[%d].compare_run %q is not a valid run ID (YYYYMMDD-HHMMSS-xxxxxxxx)", ErrScenarioInvalid, i, inst.CompareRun)
 		}
 		roles[inst.Role] = struct{}{}
 		instancesByRole[inst.Role] = inst

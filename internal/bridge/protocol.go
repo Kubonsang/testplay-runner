@@ -16,7 +16,7 @@ import (
 // ProtocolVersion is the wire-protocol version the Go client speaks. The C#
 // bridge advertises its own version in the handshake; a mismatch makes Probe
 // fall back rather than risk speaking an unknown protocol.
-const ProtocolVersion = 1
+const ProtocolVersion = 2
 
 // Editor states reported in the handshake's editor_state field.
 const (
@@ -36,6 +36,12 @@ const (
 	OutcomeBuildFailed   Outcome = "build_failed"   // license/build-target issue; exit 6
 	OutcomeBusy          Outcome = "busy"           // another run is in flight; caller falls back to cold
 	OutcomeRejected      Outcome = "rejected"       // Pristine Gate refused (e.g. in PlayMode); fall back
+	OutcomeIndeterminate Outcome = "indeterminate"  // execution may have started; exit 9, never rerun
+)
+
+const (
+	ExecutionStateNotStarted      = "not_started"
+	ExecutionStatePossiblyStarted = "possibly_started"
 )
 
 // Handshake is the liveness + identity document the bridge writes atomically to
@@ -58,6 +64,7 @@ type requestFile struct {
 	SchemaVersion         string `json:"schema_version"`
 	BridgeProtocolVersion int    `json:"bridge_protocol_version"`
 	RunID                 string `json:"run_id"`
+	BridgeSessionID       string `json:"bridge_session_id"`
 	TestPlatform          string `json:"test_platform"`
 	Filter                string `json:"filter,omitempty"`
 	Category              string `json:"category,omitempty"`
@@ -79,6 +86,31 @@ type responseFile struct {
 	CompileErrorCount     int      `json:"compile_error_count"`
 	NonPristine           []string `json:"non_pristine"` // disclosure reasons → run warnings
 	FinishedAt            string   `json:"finished_at"`
+}
+
+// tombstoneFile is a durable transport-failure marker written next to a
+// request when the Unity bridge cannot publish its terminal response. It also
+// seals requests that were canceled before they could be claimed, preventing a
+// later editor restart from replaying them.
+type tombstoneFile struct {
+	SchemaVersion         string `json:"schema_version"`
+	BridgeProtocolVersion int    `json:"bridge_protocol_version"`
+	RunID                 string `json:"run_id"`
+	ExecutionState        string `json:"execution_state"`
+	Reason                string `json:"reason"`
+	CreatedAt             string `json:"created_at"`
+}
+
+// IndeterminateRunError means Unity may have executed some or all selected
+// tests but could not publish a trustworthy terminal result. Callers must not
+// cold-fallback, because doing so could repeat test side effects.
+type IndeterminateRunError struct {
+	RunID  string
+	Reason string
+}
+
+func (e *IndeterminateRunError) Error() string {
+	return "bridge: run " + e.RunID + " may have executed but its terminal result is indeterminate: " + e.Reason
 }
 
 // progressLine is one NDJSON line the bridge appends to status.ndjson. The

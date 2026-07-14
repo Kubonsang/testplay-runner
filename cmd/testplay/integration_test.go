@@ -119,7 +119,7 @@ public class MyTest {
 	}
 	var resultOut struct {
 		Runs []struct {
-			RunID string           `json:"run_id"`
+			RunID string            `json:"run_id"`
 			Tests []parser.TestCase `json:"tests"`
 		} `json:"runs"`
 	}

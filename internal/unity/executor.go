@@ -18,6 +18,12 @@ import (
 // distinguish signal interruption (exit 8) from timeout (exit 4).
 var ErrSignalInterrupt = errors.New("signal interrupt")
 
+// ExitNoTestsMatched (10) is returned when the run produced a valid result
+// with zero executed tests while an explicit --filter/--category was given.
+// Nothing was verified, so exit 0 ("all tests passed") would be a lie the
+// caller cannot detect — the declared most-expensive silent failure.
+const ExitNoTestsMatched = 10
+
 // noopStatusWriter implements status.WriterInterface but discards all writes.
 // It is used as a sentinel when ExecuteOptions.StatusWriter is nil so that
 // all call sites can write unconditionally without nil guards.
@@ -163,8 +169,11 @@ func executeSinglePhase(ctx context.Context, runner Runner, opts ExecuteOptions)
 	stdoutW, stderrW, tail := makeRunWriters(opts)
 	_, err := runner.Run(ctx, args, stdoutW, stderrW)
 
-	if err != nil && (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
-		return handleContextErr(ctx, err, opts)
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return handleContextErr(ctx, err, opts)
+		}
+		return classifyLaunchFailure(err, opts)
 	}
 
 	return parseResults(opts, tail.Bytes())
@@ -187,14 +196,9 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			return classifyPhaseContextErr(ctx, opts, status.PhaseTimeoutCompile, "compile")
 		}
-		// Non-context runner error (e.g. Unity binary missing) → compile failure.
-		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
-		return &history.RunResult{
-			SchemaVersion: "1",
-			ExitCode:      2,
-			Tests:         []parser.TestCase{},
-			Errors:        []history.CompileError{},
-		}, 2
+		// Non-context runner error: Unity never ran (binary missing, path is a
+		// directory, not executable) — a dependency error, not a compile failure.
+		return classifyLaunchFailure(err, opts)
 	}
 
 	// Compile errors in stderr → fail without running tests.
@@ -252,14 +256,8 @@ func executeTwoPhase(ctx context.Context, runner Runner, opts ExecuteOptions) (*
 		if errors.Is(testErr, context.DeadlineExceeded) || errors.Is(testErr, context.Canceled) {
 			return classifyPhaseContextErr(ctx, opts, status.PhaseTimeoutTest, "test")
 		}
-		// Non-context runner error in test phase → no results available.
-		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
-		return &history.RunResult{
-			SchemaVersion: "1",
-			ExitCode:      2,
-			Tests:         []parser.TestCase{},
-			Errors:        []history.CompileError{},
-		}, 2
+		// Non-context runner error in test phase: Unity never ran.
+		return classifyLaunchFailure(testErr, opts)
 	}
 
 	return parseResults(opts, testTail.Bytes())
@@ -341,6 +339,26 @@ func handleContextErr(ctx context.Context, err error, opts ExecuteOptions) (*his
 	}, 4
 }
 
+// classifyLaunchFailure maps a non-context runner error — Unity could not be
+// started at all (binary missing, unity_path is a directory such as a macOS
+// .app bundle, not executable) — to exit 1 (dependency error) with a hint,
+// instead of a fabricated exit 2 "compile failure" with empty errors[].
+func classifyLaunchFailure(err error, opts ExecuteOptions) (*history.RunResult, int) {
+	_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
+	hint := "unity_path must point to the Unity executable itself (macOS: Unity.app/Contents/MacOS/Unity, not the .app bundle); verify with 'testplay check'"
+	if errors.Is(err, os.ErrNotExist) {
+		hint = "Unity binary not found — set unity_path in testplay.json (or the UNITY_PATH env var); verify with 'testplay check'"
+	}
+	return &history.RunResult{
+		SchemaVersion: "1",
+		ExitCode:      1,
+		Error:         fmt.Sprintf("failed to launch Unity: %v", err),
+		Hint:          hint,
+		Tests:         []parser.TestCase{},
+		Errors:        []history.CompileError{},
+	}, 1
+}
+
 // makeRunWriters returns the stdout writer, a tee'd stderr writer, and the
 // underlying tail buffer. The tail buffer captures the last maxTailBytes of
 // stderr for compile-error detection regardless of whether StderrWriter is set.
@@ -394,11 +412,24 @@ func classifyNoResults(compileErrors []history.CompileError, buildFailure bool) 
 // parseResults reads the XML results file and returns the run result.
 // It is shared between single-phase and two-phase executors.
 func parseResults(opts ExecuteOptions, stderrTail []byte) (*history.RunResult, int) {
+	return parseResultsCore(opts, stderrTail, true)
+}
+
+// parseResultsWithoutStatus lets the warm bridge classify the XML before it
+// emits exactly one terminal status. A completed bridge response with missing
+// or invalid XML becomes exit 9, not the cold parser's preliminary exit 2.
+func parseResultsWithoutStatus(opts ExecuteOptions, stderrTail []byte) (*history.RunResult, int) {
+	return parseResultsCore(opts, stderrTail, false)
+}
+
+func parseResultsCore(opts ExecuteOptions, stderrTail []byte, writeTerminalStatus bool) (*history.RunResult, int) {
 	// Check for results XML
 	xmlData, xmlErr := os.ReadFile(opts.ResultsFile)
 	if xmlErr != nil {
 		// No XML file — determine cause from stderr.
-		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
+		if writeTerminalStatus {
+			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
+		}
 		compileErrors := ParseCompileErrorsWithProject(stderrTail, opts.ProjectPath)
 		return classifyNoResults(compileErrors, ParseBuildFailure(stderrTail))
 	}
@@ -407,7 +438,9 @@ func parseResults(opts ExecuteOptions, stderrTail []byte) (*history.RunResult, i
 	// (Unity can emit compile errors and produce a partial/empty XML)
 	compileErrors := ParseCompileErrorsWithProject(stderrTail, opts.ProjectPath)
 	if len(compileErrors) > 0 {
-		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
+		if writeTerminalStatus {
+			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
+		}
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      2,
@@ -430,15 +463,21 @@ func parseResults(opts ExecuteOptions, stderrTail []byte) (*history.RunResult, i
 	exitCode := 0
 	if parseResult.Failed > 0 {
 		exitCode = 3
+	} else if parseResult.Total == 0 && (opts.Filter != "" || opts.Category != "") {
+		// An explicit selection that matched nothing verified nothing;
+		// exit 0 here would greenlight a run that never executed.
+		exitCode = ExitNoTestsMatched
 	}
 
-	_ = opts.StatusWriter.Write(status.Status{
-		Phase:    status.PhaseDone,
-		Total:    parseResult.Total,
-		Passed:   parseResult.Passed,
-		Failed:   parseResult.Failed,
-		ExitCode: &exitCode,
-	})
+	if writeTerminalStatus {
+		_ = opts.StatusWriter.Write(status.Status{
+			Phase:    status.PhaseDone,
+			Total:    parseResult.Total,
+			Passed:   parseResult.Passed,
+			Failed:   parseResult.Failed,
+			ExitCode: &exitCode,
+		})
+	}
 
 	return &history.RunResult{
 		SchemaVersion: "1",

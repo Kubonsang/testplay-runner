@@ -51,6 +51,18 @@ func bridgeIdleDeadline(c *config.Config) int64 {
 	return idle
 }
 
+// describeSelection renders the explicit test selection flags for warnings.
+func describeSelection(filter, category string) string {
+	switch {
+	case filter != "" && category != "":
+		return fmt.Sprintf("--filter %q --category %q", filter, category)
+	case filter != "":
+		return fmt.Sprintf("--filter %q", filter)
+	default:
+		return fmt.Sprintf("--category %q", category)
+	}
+}
+
 // prefixWarnings tags each message with a source prefix (e.g. "bridge: ...").
 func prefixWarnings(prefix string, msgs []string) []string {
 	if len(msgs) == 0 {
@@ -198,11 +210,11 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		(req.Config.BridgeEnabled() || req.ForceBridge)
 	if bridgeEligible {
 		expectedVer := bridge.ExpectedUnityVersion(req.Config.UnityPath, req.Config.ProjectPath)
-		_, probeOK, reason := bridge.Probe(req.Config.ProjectPath, expectedVer, clock(), 0)
-		// --bridge forces an attempt even on a soft probe failure; the C#-side
-		// Pristine Gate remains the authoritative correctness bar and the bridge
-		// answers busy/rejected (→ FellBack) when it cannot run cleanly.
-		if probeOK || req.ForceBridge {
+		handshake, probeOK, reason := bridge.Probe(req.Config.ProjectPath, expectedVer, clock(), 0)
+		// --bridge enables the preferred tier even when config disables it, but
+		// never bypasses Probe. Protocol/session/project identity failures must
+		// fall back before a request is published.
+		if probeOK {
 			bridgeOpts := unity.ExecuteOptions{
 				ProjectPath:  req.Config.ProjectPath,
 				ResultsFile:  resultsFile,
@@ -212,7 +224,13 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 				Category:     req.Category,
 				TestPlatform: req.Config.TestPlatform,
 			}
-			br := unity.ExecuteBridge(ctx, bridge.NewClient(req.Config.ProjectPath), bridgeOpts, runID, bridgeIdleDeadline(req.Config))
+			br := unity.ExecuteBridge(
+				ctx,
+				bridge.NewClient(req.Config.ProjectPath, handshake.BridgeSessionID),
+				bridgeOpts,
+				runID,
+				bridgeIdleDeadline(req.Config),
+			)
 			if br.FellBack {
 				bridgeFallbackReason = "bridge declined the run (busy or could not guarantee a pristine domain)"
 			} else {
@@ -285,6 +303,14 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		warnings = append(warnings, fmt.Sprintf("bridge requested but unavailable: %s; ran %s backend instead", bridgeFallbackReason, result.Backend))
 	}
 
+	// Zero-test disclosure: a run that executed nothing must never look like
+	// a quiet success to an automated caller.
+	if exitCode == unity.ExitNoTestsMatched {
+		warnings = append(warnings, fmt.Sprintf("no tests matched %s; nothing was executed — refresh candidate names with 'testplay list'", describeSelection(req.Filter, req.Category)))
+	} else if exitCode == 0 && result.Total == 0 {
+		warnings = append(warnings, "test run executed 0 tests; exit 0 verified nothing")
+	}
+
 	finishedAt := clock()
 
 	result.RunID = runID
@@ -300,8 +326,10 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 				result.NewFailures = make([]parser.TestCase, 0)
 			}
 		} else {
-			result.NewFailures = make([]parser.TestCase, 0)
-			warnings = append(warnings, fmt.Sprintf("compare-run %q not found: %v", req.CompareRun, loadErr))
+			// A comparison that never happened must read as "no comparison"
+			// (null), not "no regressions" (empty array) — Rule #6.
+			result.NewFailures = nil
+			warnings = append(warnings, fmt.Sprintf("compare-run %q not found: %v — new_failures is null (no comparison performed)", req.CompareRun, loadErr))
 		}
 	}
 
@@ -345,9 +373,14 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	// Write list cache — persists the full test inventory so subsequent
 	// `testplay list` calls can return complete: true.
 	// Non-fatal: a failure here is a quality-of-life degradation, not a system error.
-	// Skipped in scenario mode (concurrent writes, mixed test sets per instance).
-	if !req.SkipCacheWriteBack && (exitCode == 0 || exitCode == 3) {
-		_ = listcache.Write(req.Config.ProjectPath, runID, result.Tests)
+	// Skipped in scenario mode (concurrent writes, mixed test sets per instance)
+	// and for filtered runs — a --filter/--category subset is not the full
+	// inventory and would poison the cache's complete: true claim.
+	if !req.SkipCacheWriteBack && req.Filter == "" && req.Category == "" && (exitCode == 0 || exitCode == 3) {
+		_ = listcache.Write(req.Config.ProjectPath, runID, result.Tests, listcache.Metadata{
+			FullInventory: true,
+			TestPlatform:  req.Config.TestPlatform,
+		})
 	}
 
 	// Override exit code for runner infrastructure failures.

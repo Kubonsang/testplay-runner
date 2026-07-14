@@ -11,7 +11,14 @@ namespace TestPlay.Bridge
     internal static class BridgeProtocol
     {
         // MUST equal internal/bridge.ProtocolVersion on the Go side.
-        public const int Version = 1;
+        public const int Version = 2;
+
+        public static bool IsRequestForSession(RequestDto request, string currentSessionId)
+        {
+            return request != null &&
+                   !string.IsNullOrEmpty(currentSessionId) &&
+                   string.Equals(request.bridge_session_id, currentSessionId, StringComparison.Ordinal);
+        }
 
         // editor_state values.
         public const string StateIdle = "idle";
@@ -26,6 +33,10 @@ namespace TestPlay.Bridge
         public const string OutcomeBuildFailed = "build_failed";
         public const string OutcomeBusy = "busy";
         public const string OutcomeRejected = "rejected";
+        public const string OutcomeIndeterminate = "indeterminate";
+
+        public const string ExecutionNotStarted = "not_started";
+        public const string ExecutionPossiblyStarted = "possibly_started";
     }
 
     [Serializable]
@@ -49,6 +60,7 @@ namespace TestPlay.Bridge
         public string schema_version;
         public int bridge_protocol_version;
         public string run_id;
+        public string bridge_session_id;
         public string test_platform;
         public string filter;
         public string category;
@@ -71,6 +83,29 @@ namespace TestPlay.Bridge
         public int compile_error_count;
         public string[] non_pristine = new string[0];
         public string finished_at;
+    }
+
+    [Serializable]
+    internal class TombstoneDto
+    {
+        public string schema_version = "1";
+        public int bridge_protocol_version = BridgeProtocol.Version;
+        public string run_id;
+        public string execution_state;
+        public string reason;
+        public string created_at;
+    }
+
+    [Serializable]
+    internal class CancellationMarkerDto
+    {
+        public string schema_version = "1";
+        public int bridge_protocol_version = BridgeProtocol.Version;
+        public string run_id;
+        public string owned_run_guid;
+        public string execution_state;
+        public string reason;
+        public string created_at;
     }
 
     [Serializable]

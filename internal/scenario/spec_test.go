@@ -370,3 +370,138 @@ func TestLoad_UnknownInstanceFieldRejected(t *testing.T) {
 		t.Errorf("expected ErrScenarioInvalid, got %v", err)
 	}
 }
+
+func loadScenarioFrom(t *testing.T, content string) (*scenario.ScenarioFile, error) {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scenario.json")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return scenario.Load(path)
+}
+
+func TestLoad_InvalidReadyPhase_Rejected(t *testing.T) {
+	t.Parallel()
+	_, err := loadScenarioFrom(t, `{
+		"schema_version": "1",
+		"instances": [
+			{"role": "host", "config": "a.json", "ready_phase": "runnning"},
+			{"role": "client", "config": "b.json", "depends_on": "host"}
+		]
+	}`)
+	if err == nil {
+		t.Fatal("expected error for typo'd ready_phase (a dependent would silently burn the full ready timeout)")
+	}
+	if !errors.Is(err, scenario.ErrScenarioInvalid) {
+		t.Errorf("expected ErrScenarioInvalid, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "runnning") {
+		t.Errorf("error should name the offending phase, got: %v", err)
+	}
+}
+
+func TestLoad_InvalidDependsOnPhase_Rejected(t *testing.T) {
+	t.Parallel()
+	_, err := loadScenarioFrom(t, `{
+		"schema_version": "1",
+		"instances": [
+			{"role": "host", "config": "a.json"},
+			{"role": "client", "config": "b.json", "depends_on": "host", "depends_on_phase": "compilng"}
+		]
+	}`)
+	if err == nil {
+		t.Fatal("expected error for typo'd depends_on_phase")
+	}
+	if !errors.Is(err, scenario.ErrScenarioInvalid) {
+		t.Errorf("expected ErrScenarioInvalid, got %v", err)
+	}
+}
+
+func TestLoad_ValidPhaseTargets_Accepted(t *testing.T) {
+	t.Parallel()
+	for _, phase := range []string{"compiling", "running", "done"} {
+		_, err := loadScenarioFrom(t, `{
+			"schema_version": "1",
+			"instances": [
+				{"role": "host", "config": "a.json", "ready_phase": "`+phase+`"},
+				{"role": "client", "config": "b.json", "depends_on": "host"}
+			]
+		}`)
+		if err != nil {
+			t.Errorf("phase %q must be accepted, got: %v", phase, err)
+		}
+	}
+}
+
+func TestLoad_NegativeReadyTimeout_Rejected(t *testing.T) {
+	t.Parallel()
+	_, err := loadScenarioFrom(t, `{
+		"schema_version": "1",
+		"instances": [
+			{"role": "host", "config": "a.json"},
+			{"role": "client", "config": "b.json", "depends_on": "host", "ready_timeout_ms": -5}
+		]
+	}`)
+	if err == nil {
+		t.Fatal("expected error for negative ready_timeout_ms (was silently coerced to the 30000 default)")
+	}
+	if !errors.Is(err, scenario.ErrScenarioInvalid) {
+		t.Errorf("expected ErrScenarioInvalid, got %v", err)
+	}
+}
+
+func TestValidateSignalPhases_RunningWithoutTwoPhase_Error(t *testing.T) {
+	t.Parallel()
+	sf, err := loadScenarioFrom(t, `{
+		"schema_version": "1",
+		"instances": [
+			{"role": "host", "config": "a.json", "ready_phase": "running"},
+			{"role": "client", "config": "b.json", "depends_on": "host"}
+		]
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = sf.ValidateSignalPhases(map[string]bool{"host": false, "client": false})
+	if err == nil {
+		t.Fatal("waiting for \"running\" on a single-phase dependency can never fire — must be a validation error, not a guaranteed timeout")
+	}
+	if !strings.Contains(err.Error(), "two-phase") {
+		t.Errorf("error should explain the two-phase requirement, got: %v", err)
+	}
+}
+
+func TestValidateSignalPhases_RunningWithTwoPhase_OK(t *testing.T) {
+	t.Parallel()
+	sf, err := loadScenarioFrom(t, `{
+		"schema_version": "1",
+		"instances": [
+			{"role": "host", "config": "a.json", "ready_phase": "running"},
+			{"role": "client", "config": "b.json", "depends_on": "host"}
+		]
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sf.ValidateSignalPhases(map[string]bool{"host": true, "client": false}); err != nil {
+		t.Errorf("two-phase dependency emitting \"running\" must validate, got: %v", err)
+	}
+}
+
+func TestLoad_InstanceCompareRun_Parsed(t *testing.T) {
+	t.Parallel()
+	sf, err := loadScenarioFrom(t, `{
+		"schema_version": "1",
+		"instances": [
+			{"role": "host", "config": "a.json", "compare_run": "20260701-120000-aabbccdd"},
+			{"role": "client", "config": "b.json", "depends_on": "host"}
+		]
+	}`)
+	if err != nil {
+		t.Fatalf("per-instance compare_run must parse (baselines are per-instance stores): %v", err)
+	}
+	if sf.Instances[0].CompareRun != "20260701-120000-aabbccdd" {
+		t.Errorf("compare_run not parsed, got %q", sf.Instances[0].CompareRun)
+	}
+}

@@ -22,13 +22,21 @@ const defaultPollInterval = 100 * time.Millisecond
 // streamed progress into status writes. A Client is single-use per run but
 // cheap to construct; it holds no open handles between calls.
 type Client struct {
-	dir          string // <project>/.testplay/bridge
-	pollInterval time.Duration
+	dir             string // <project>/.testplay/bridge
+	bridgeSessionID string // handshake identity this request is bound to
+	pollInterval    time.Duration
 }
 
 // NewClient returns a Client targeting the bridge runtime dir of projectPath.
-func NewClient(projectPath string) *Client {
-	return &Client{dir: BridgeDir(projectPath), pollInterval: defaultPollInterval}
+// bridgeSessionID must come from the Probe handshake immediately preceding the
+// run. Binding every request and response to that identity prevents an editor
+// restart from replaying a request that the previous process may have started.
+func NewClient(projectPath, bridgeSessionID string) *Client {
+	return &Client{
+		dir:             BridgeDir(projectPath),
+		bridgeSessionID: bridgeSessionID,
+		pollInterval:    defaultPollInterval,
+	}
 }
 
 // Run submits req to the bridge and blocks until the bridge writes a response,
@@ -40,6 +48,12 @@ func NewClient(projectPath string) *Client {
 // marker and returns ctx.Err() so the caller maps it to the same exit 4/8 a
 // cold run would.
 func (c *Client) Run(ctx context.Context, req RunRequest, sw status.WriterInterface) (RunOutcome, error) {
+	if err := ctx.Err(); err != nil {
+		return RunOutcome{}, err
+	}
+	if c.bridgeSessionID == "" {
+		return RunOutcome{}, fmt.Errorf("bridge: expected bridge session id is empty")
+	}
 	if sw == nil {
 		sw = noopWriter{}
 	}
@@ -55,6 +69,7 @@ func (c *Client) Run(ctx context.Context, req RunRequest, sw status.WriterInterf
 		SchemaVersion:         "1",
 		BridgeProtocolVersion: ProtocolVersion,
 		RunID:                 req.RunID,
+		BridgeSessionID:       c.bridgeSessionID,
 		TestPlatform:          req.TestPlatform,
 		Filter:                req.Filter,
 		Category:              req.Category,
@@ -69,6 +84,7 @@ func (c *Client) Run(ctx context.Context, req RunRequest, sw status.WriterInterf
 	}
 
 	respPath := filepath.Join(c.dir, "responses", req.RunID+".resp.json")
+	tombstonePath := filepath.Join(c.dir, "requests", req.RunID+".tombstone.json")
 	var statusOffset int64
 
 	interval := c.pollInterval
@@ -83,8 +99,14 @@ func (c *Client) Run(ctx context.Context, req RunRequest, sw status.WriterInterf
 		// context still ships the final batch (mirrors ipc.PollingReader).
 		statusOffset = c.drainProgress(statusPath, statusOffset, sw)
 
-		if resp, ok := readResponse(respPath, req.RunID); ok {
+		if resp, ok := readResponse(respPath, req.RunID, c.bridgeSessionID); ok {
 			return finishOutcome(resp, compileErrPath), nil
+		}
+		if tombstone, ok := readTombstone(tombstonePath, req.RunID); ok {
+			if tombstone.ExecutionState != ExecutionStateNotStarted {
+				return RunOutcome{}, &IndeterminateRunError{RunID: req.RunID, Reason: tombstone.Reason}
+			}
+			return RunOutcome{}, fmt.Errorf("bridge: transport failure for run %s: %s", req.RunID, tombstone.Reason)
 		}
 
 		select {
@@ -95,6 +117,24 @@ func (c *Client) Run(ctx context.Context, req RunRequest, sw status.WriterInterf
 		case <-tick.C:
 		}
 	}
+}
+
+// readTombstone validates the durable transport marker for runID. As with
+// responses, partial, malformed, or foreign files are ignored and retried on a
+// later poll.
+func readTombstone(path, runID string) (tombstoneFile, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return tombstoneFile{}, false
+	}
+	var tombstone tombstoneFile
+	if err := json.Unmarshal(data, &tombstone); err != nil {
+		return tombstoneFile{}, false
+	}
+	if tombstone.RunID != runID {
+		return tombstoneFile{}, false
+	}
+	return tombstone, true
 }
 
 // finishOutcome builds the Go-side outcome from the bridge response, reading the
@@ -170,7 +210,7 @@ func progressToStatus(p progressLine) (status.Status, bool) {
 // readResponse reads and validates the response file. It returns ok=false (so
 // the caller keeps polling) when the file is absent, partially written, or
 // carries a different run_id (a stale/foreign response can never be misread).
-func readResponse(path, runID string) (responseFile, bool) {
+func readResponse(path, runID, bridgeSessionID string) (responseFile, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return responseFile{}, false
@@ -179,7 +219,7 @@ func readResponse(path, runID string) (responseFile, bool) {
 	if err := json.Unmarshal(data, &r); err != nil {
 		return responseFile{}, false
 	}
-	if r.RunID != runID {
+	if r.RunID != runID || r.BridgeProtocolVersion != ProtocolVersion || r.BridgeSessionID != bridgeSessionID {
 		return responseFile{}, false
 	}
 	return r, true

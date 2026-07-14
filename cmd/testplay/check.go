@@ -60,6 +60,7 @@ func runCheck(w io.Writer, deps checkDeps) int {
 
 var checkCmd = &cobra.Command{
 	Use:   "check",
+	Args:  cobra.NoArgs,
 	Short: "Validate Unity path, project path, and testplay.json",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		deps := checkDeps{

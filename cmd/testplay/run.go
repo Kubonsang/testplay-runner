@@ -112,6 +112,12 @@ func runRun(w io.Writer, deps runDeps) int {
 	if result.TimeoutType != "" {
 		output["timeout_type"] = result.TimeoutType
 	}
+	if result.Error != "" {
+		output["error"] = result.Error
+	}
+	if result.Hint != "" {
+		output["hint"] = result.Hint
+	}
 	if len(resp.Warnings) > 0 {
 		for _, w2 := range resp.Warnings {
 			fmt.Fprintln(os.Stderr, "warning:", w2)
@@ -143,7 +149,7 @@ type scenarioDeps struct {
 }
 
 // runScenario loads a scenario file, runs all instances concurrently, and writes
-// the aggregated JSON result to w. Returns the scenario exit code (max of instances).
+// the aggregated JSON result to w. Returns the most severe instance exit code.
 func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 	ctx := deps.ctx
 	if ctx == nil {
@@ -153,6 +159,17 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 	spec, err := scenario.Load(specPath)
 	if err != nil {
 		writeJSON(w, map[string]any{"schema_version": "1", "error": err.Error()})
+		return 5
+	}
+
+	// One global run ID cannot be a baseline for N per-instance history
+	// stores — broadcasting it silently compared most instances against
+	// nothing. Baselines are per-instance in scenario mode.
+	if deps.opts.CompareRun != "" {
+		writeJSON(w, map[string]any{
+			"schema_version": "1",
+			"error":          "--compare-run is not supported with --scenario; set a per-instance \"compare_run\" (that role's own run_id) in the scenario file instead",
+		})
 		return 5
 	}
 
@@ -181,6 +198,18 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 			}
 			configs[inst.Role] = cfg
 			totalMs += cfg.Timeout.TotalMs
+		}
+
+		// Cross-check dependency wait phases against each config's execution
+		// mode: "running" never fires for a single-phase instance, so a
+		// dependent waiting on it would deterministically time out.
+		twoPhase := make(map[string]bool, len(configs))
+		for role, cfg := range configs {
+			twoPhase[role] = cfg.Timeout.CompileMs > 0 && cfg.Timeout.TestMs > 0
+		}
+		if valErr := spec.ValidateSignalPhases(twoPhase); valErr != nil {
+			writeJSON(w, map[string]any{"schema_version": "1", "error": valErr.Error()})
+			return 5
 		}
 
 		// IPC bus lives under the first instance's project_path. All
@@ -213,6 +242,12 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 		ctx, scenarioCancel = context.WithTimeout(ctx, time.Duration(totalMs)*time.Millisecond)
 		defer scenarioCancel()
 
+		// Instances sharing one project directory would race two cold
+		// batchmode processes on Unity's single project lock (and the
+		// UnityLockfile heuristic cannot see the sibling that has not
+		// started yet) — force per-run shadow isolation for them.
+		sharedProject := sharedProjectRoles(configs)
+
 		run = func(ctx context.Context, instSpec scenario.InstanceSpec, readyCh chan<- struct{}) (runsvc.Response, error) {
 			cfg := configs[instSpec.Role]
 
@@ -242,9 +277,9 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 				Config:             cfg,
 				Filter:             deps.opts.Filter,
 				Category:           deps.opts.Category,
-				CompareRun:         deps.opts.CompareRun,
+				CompareRun:         instSpec.CompareRun,
 				ResetShadow:        deps.opts.ResetShadow,
-				ForceShadow:        deps.opts.ForceShadow,
+				ForceShadow:        deps.opts.ForceShadow || sharedProject[instSpec.Role],
 				ClearCache:         deps.clearCache || deps.opts.ClearCache,
 				SkipCacheWriteBack: true, // avoid concurrent writes to shared cache dir
 				DisableBridge:      true, // scenario-warm orchestration is deferred; instances run cold
@@ -277,9 +312,14 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 	instances := make([]map[string]any, len(scenarioResult.Instances))
 	for i, inst := range scenarioResult.Instances {
 		if inst.Err != nil {
+			effectiveExitCode := inst.Response.ExitCode
+			if effectiveExitCode == 0 {
+				effectiveExitCode = 1
+			}
 			instances[i] = map[string]any{
-				"role":  inst.Role,
-				"error": inst.Err.Error(),
+				"role":      inst.Role,
+				"exit_code": effectiveExitCode,
+				"error":     inst.Err.Error(),
 			}
 			continue
 		}
@@ -306,6 +346,12 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 		}
 		if r.TimeoutType != "" {
 			m["timeout_type"] = r.TimeoutType
+		}
+		if r.Error != "" {
+			m["error"] = r.Error
+		}
+		if r.Hint != "" {
+			m["hint"] = r.Hint
 		}
 		if len(inst.Response.Warnings) > 0 {
 			m["warnings"] = inst.Response.Warnings
@@ -404,6 +450,7 @@ var scenarioPath string
 
 var runCmd = &cobra.Command{
 	Use:   "run",
+	Args:  cobra.NoArgs,
 	Short: "Execute Unity tests",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, causeCancel := context.WithCancelCause(context.Background())

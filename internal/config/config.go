@@ -1,9 +1,11 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -76,16 +78,26 @@ func (c *Config) Validate(requireUnity bool) error {
 		}
 	}
 
-	// Project path: default to directory containing config file
+	// Project path: default to directory containing config file.
+	// A relative project_path anchors to the config file's directory, not the
+	// process cwd — otherwise --config from another directory silently points
+	// at the wrong project.
 	if c.ProjectPath == "" {
 		if c.configDir != "" {
 			c.ProjectPath = c.configDir
 		}
+	} else if !filepath.IsAbs(c.ProjectPath) && c.configDir != "" {
+		c.ProjectPath = filepath.Join(c.configDir, c.ProjectPath)
 	}
 
-	// Default result dir
+	// Result dir: default, then anchor a relative path to the project.
+	// Anchoring to cwd would split history from artifacts (project-anchored)
+	// and make scenario instances share one mixed cwd-relative store.
 	if c.ResultDir == "" {
-		c.ResultDir = ".testplay/results"
+		c.ResultDir = filepath.Join(".testplay", "results")
+	}
+	if !filepath.IsAbs(c.ResultDir) && c.ProjectPath != "" {
+		c.ResultDir = filepath.Join(c.ProjectPath, c.ResultDir)
 	}
 
 	// Default total timeout
@@ -140,13 +152,29 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("%w: %v", ErrConfigInvalid, err)
 	}
 
+	// Strict decode: an unknown (typo'd) key silently falling back to a
+	// default is the most expensive failure class for an automated caller.
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
 	var cfg Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	if err := dec.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrConfigInvalid, err)
+	}
+	// Decode exactly one JSON value. Decoder.Decode accepts a valid object
+	// followed by another value unless callers explicitly require EOF; without
+	// this check a generated config such as `{} {}` is only partially read.
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			err = errors.New("multiple JSON values")
+		}
+		return nil, fmt.Errorf("%w: trailing data after config object: %v", ErrConfigInvalid, err)
 	}
 
 	if cfg.SchemaVersion == "" {
 		return nil, fmt.Errorf("%w: schema_version is required", ErrConfigInvalid)
+	}
+	if cfg.SchemaVersion != "1" {
+		return nil, fmt.Errorf("%w: unsupported schema_version %q (this testplay understands \"1\")", ErrConfigInvalid, cfg.SchemaVersion)
 	}
 
 	// Store the directory containing the config file

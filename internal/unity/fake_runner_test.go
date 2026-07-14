@@ -8,10 +8,10 @@ import (
 
 // fakeRunner implements Runner for testing.
 type fakeRunner struct {
-	stdout     []byte
-	stderr     []byte
-	exitCode   int
-	err        error
+	stdout   []byte
+	stderr   []byte
+	exitCode int
+	err      error
 	// resultsXML, if non-nil, will be written to the resultsFilePath arg
 	resultsXML []byte
 	// runFn, if non-nil, overrides all other fields and is called directly.

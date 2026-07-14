@@ -6,6 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Kubonsang/testplay-runner/internal/listcache"
+	"github.com/Kubonsang/testplay-runner/internal/parser"
 )
 
 func TestListCmd_FindsTestMethods(t *testing.T) {
@@ -326,5 +329,103 @@ public class Complex {
 	}
 	if len(out.Tests) != 2 {
 		t.Fatalf("expected 2 tests, got %d: %v", len(out.Tests), out.Tests)
+	}
+}
+
+func TestListCmd_UsesOnlyCompleteCacheForConfiguredPlatform(t *testing.T) {
+	dir := t.TempDir()
+	if err := listcache.Write(dir, "full-run", []parser.TestCase{{Name: "Cached.FullName"}}, listcache.Metadata{
+		FullInventory: true,
+		TestPlatform:  "edit_mode",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if code := runList(&buf, listDeps{projectPath: dir, testPlatform: "edit_mode"}); code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, buf.String())
+	}
+	var out struct {
+		Tests    []string `json:"tests"`
+		Complete bool     `json:"complete"`
+		Source   string   `json:"source"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.Complete || out.Source != "run_cache" || len(out.Tests) != 1 || out.Tests[0] != "Cached.FullName" {
+		t.Fatalf("trusted cache not returned: %+v", out)
+	}
+}
+
+func TestListCmd_LegacyCacheFallsBackToIncompleteStaticScan(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "StaticTests.cs"), []byte(`
+using NUnit.Framework;
+public class StaticTests { [Test]
+public void Current() {} }
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cachePath := listcache.CachePath(dir)
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"schema_version":"1","cached_run_id":"filtered","cached_at":"2026-04-09T12:00:00Z","tests":["Poisoned.Subset"]}`
+	if err := os.WriteFile(cachePath, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+	if code := runList(&buf, listDeps{projectPath: dir, testPlatform: "edit_mode"}); code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, buf.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["complete"] != false || out["source"] != "static_scan" {
+		t.Fatalf("legacy cache must not claim completeness: %v", out)
+	}
+}
+
+func TestRunListCommand_ConfigErrorsAreJSONExit5(t *testing.T) {
+	tests := map[string]string{
+		"malformed":  `{"schema_version":"1",`,
+		"unknown":    `{"schema_version":"1","unknown_key":true}`,
+		"validation": `{"schema_version":"1","test_platform":"invalid"}`,
+	}
+	for name, body := range tests {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "testplay.json")
+			if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var buf bytes.Buffer
+			if code := runListCommand(&buf, path); code != 5 {
+				t.Fatalf("exit = %d, want 5; output = %s", code, buf.String())
+			}
+			var out map[string]any
+			if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+				t.Fatalf("not JSON: %v; output = %s", err, buf.String())
+			}
+			if out["schema_version"] != "1" || out["error"] == nil {
+				t.Fatalf("missing error contract: %v", out)
+			}
+		})
+	}
+}
+
+func TestRunListCommand_MissingConfigIsExplicitStaticFallback(t *testing.T) {
+	var buf bytes.Buffer
+	if code := runListCommand(&buf, filepath.Join(t.TempDir(), "missing.json")); code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, buf.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out["source"] != "static_scan" || out["complete"] != false {
+		t.Fatalf("missing config should use explicit incomplete fallback: %v", out)
 	}
 }

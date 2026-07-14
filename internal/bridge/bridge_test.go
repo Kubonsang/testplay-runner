@@ -77,6 +77,7 @@ func TestProbe_Failures(t *testing.T) {
 	}{
 		{name: "missing", write: false, wantFrag: "no bridge handshake"},
 		{name: "protocol mismatch", write: true, mutate: func(_ string, h *Handshake) { h.BridgeProtocolVersion = 99 }, wantFrag: "protocol version mismatch"},
+		{name: "missing session identity", write: true, mutate: func(_ string, h *Handshake) { h.BridgeSessionID = "" }, wantFrag: "no session identity"},
 		{name: "project mismatch", write: true, mutate: func(_ string, h *Handshake) { h.ProjectPathReal = "/somewhere/else"; h.ProjectPath = "/somewhere/else" }, wantFrag: "project path does not match"},
 		{name: "version mismatch", write: true, expectVer: "2022.3.10f1", mutate: func(_ string, h *Handshake) { h.UnityVersion = "2021.3.0f1" }, wantFrag: "Unity version mismatch"},
 		{name: "stale", write: true, mutate: func(_ string, h *Handshake) {

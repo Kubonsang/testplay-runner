@@ -62,7 +62,7 @@ func TestRunScenario_AllInstancesRun(t *testing.T) {
 	}
 }
 
-func TestRunScenario_ExitCodeIsMaxOfInstances(t *testing.T) {
+func TestRunScenario_ExitCodeUsesFailureSeverity(t *testing.T) {
 	t.Parallel()
 	spec := &scenario.ScenarioFile{
 		Instances: []scenario.InstanceSpec{
@@ -80,7 +80,73 @@ func TestRunScenario_ExitCodeIsMaxOfInstances(t *testing.T) {
 
 	result, _ := scenario.RunScenario(context.Background(), spec, run, "")
 	if result.ExitCode != 3 {
-		t.Errorf("expected exit code 3 (max), got %d", result.ExitCode)
+		t.Errorf("expected exit code 3, got %d", result.ExitCode)
+	}
+}
+
+func TestRunScenario_NoTestsDoesNotMaskRealFailure(t *testing.T) {
+	t.Parallel()
+	spec := &scenario.ScenarioFile{
+		Instances: []scenario.InstanceSpec{
+			{Role: "NoMatch", Config: "./no-match.json"},
+			{Role: "Failure", Config: "./failure.json"},
+		},
+	}
+
+	run := func(_ context.Context, inst scenario.InstanceSpec, _ chan<- struct{}) (runsvc.Response, error) {
+		if inst.Role == "NoMatch" {
+			return fakeResult(10), nil
+		}
+		return fakeResult(3), nil
+	}
+
+	result, _ := scenario.RunScenario(context.Background(), spec, run, "")
+	if result.ExitCode != 3 {
+		t.Errorf("exit 10 must not mask exit 3; got %d", result.ExitCode)
+	}
+}
+
+func TestRunScenario_NoTestsDoesNotMaskInfrastructureError(t *testing.T) {
+	t.Parallel()
+	spec := &scenario.ScenarioFile{
+		Instances: []scenario.InstanceSpec{
+			{Role: "NoMatch", Config: "./no-match.json"},
+			{Role: "Infra", Config: "./infra.json"},
+		},
+	}
+
+	run := func(_ context.Context, inst scenario.InstanceSpec, _ chan<- struct{}) (runsvc.Response, error) {
+		if inst.Role == "NoMatch" {
+			return fakeResult(10), nil
+		}
+		return runsvc.Response{}, fmt.Errorf("disk full")
+	}
+
+	result, _ := scenario.RunScenario(context.Background(), spec, run, "")
+	if result.ExitCode != 1 {
+		t.Errorf("exit 10 must not mask infrastructure exit 1; got %d", result.ExitCode)
+	}
+}
+
+func TestRunScenario_NoTestsReturnedWhenItIsOnlyNonZeroOutcome(t *testing.T) {
+	t.Parallel()
+	spec := &scenario.ScenarioFile{
+		Instances: []scenario.InstanceSpec{
+			{Role: "Pass", Config: "./pass.json"},
+			{Role: "NoMatch", Config: "./no-match.json"},
+		},
+	}
+
+	run := func(_ context.Context, inst scenario.InstanceSpec, _ chan<- struct{}) (runsvc.Response, error) {
+		if inst.Role == "NoMatch" {
+			return fakeResult(10), nil
+		}
+		return fakeResult(0), nil
+	}
+
+	result, _ := scenario.RunScenario(context.Background(), spec, run, "")
+	if result.ExitCode != 10 {
+		t.Errorf("expected exit 10 when no real failure exists; got %d", result.ExitCode)
 	}
 }
 
@@ -102,6 +168,25 @@ func TestRunScenario_InfraErrorTreatedAsExit1(t *testing.T) {
 	}
 	if result.Instances[0].Err == nil {
 		t.Error("expected Err to be non-nil for infra error")
+	}
+}
+
+func TestRunScenario_InfraErrorPreservesSpecificResponseExitCode(t *testing.T) {
+	t.Parallel()
+	spec := &scenario.ScenarioFile{
+		Instances: []scenario.InstanceSpec{{Role: "Host", Config: "./host.json"}},
+	}
+
+	run := func(_ context.Context, _ scenario.InstanceSpec, _ chan<- struct{}) (runsvc.Response, error) {
+		return runsvc.Response{ExitCode: 7}, fmt.Errorf("shadow workspace permission denied")
+	}
+
+	result, _ := scenario.RunScenario(context.Background(), spec, run, "")
+	if result.ExitCode != 7 {
+		t.Fatalf("specific infrastructure exit must be preserved; got %d, want 7", result.ExitCode)
+	}
+	if result.Instances[0].Err == nil {
+		t.Fatal("expected infrastructure error detail to be retained")
 	}
 }
 

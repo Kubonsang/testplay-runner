@@ -3,8 +3,10 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +19,8 @@ type recorder struct {
 	mu     sync.Mutex
 	writes []status.Status
 }
+
+const testBridgeSessionID = "20260101-110000-cafebabe"
 
 func (r *recorder) Write(s status.Status) error {
 	r.mu.Lock()
@@ -67,7 +71,7 @@ func appendNDJSON(t *testing.T, path string, v any) {
 }
 
 func newFastClient(projectPath string) *Client {
-	c := NewClient(projectPath)
+	c := NewClient(projectPath, testBridgeSessionID)
 	c.pollInterval = 5 * time.Millisecond
 	return c
 }
@@ -87,6 +91,7 @@ func TestClientRun_Completed(t *testing.T) {
 			SchemaVersion:         "1",
 			BridgeProtocolVersion: ProtocolVersion,
 			RunID:                 runID,
+			BridgeSessionID:       testBridgeSessionID,
 			Outcome:               OutcomeCompleted,
 			ResultsXMLWritten:     true,
 		})
@@ -138,6 +143,7 @@ func TestClientRun_CompileFailedReadsSidecar(t *testing.T) {
 			SchemaVersion:         "1",
 			BridgeProtocolVersion: ProtocolVersion,
 			RunID:                 runID,
+			BridgeSessionID:       testBridgeSessionID,
 			Outcome:               OutcomeCompileFailed,
 			CompileFailed:         true,
 			CompileErrorCount:     1,
@@ -168,6 +174,7 @@ func TestClientRun_NonPristineWarnings(t *testing.T) {
 			SchemaVersion:         "1",
 			BridgeProtocolVersion: ProtocolVersion,
 			RunID:                 runID,
+			BridgeSessionID:       testBridgeSessionID,
 			Outcome:               OutcomeCompleted,
 			ResultsXMLWritten:     true,
 			NonPristine:           []string{"editor had unsaved changes in 1 scene"},
@@ -203,5 +210,122 @@ func TestClientRun_ContextCancelWritesCancelMarker(t *testing.T) {
 	cancelPath := filepath.Join(c.dir, "requests", runID+".cancel")
 	if _, statErr := os.Stat(cancelPath); statErr != nil {
 		t.Fatalf("expected cancel marker at %s: %v", cancelPath, statErr)
+	}
+}
+
+func TestClientRun_PreCanceledContextDoesNotPublishRequest(t *testing.T) {
+	dir := t.TempDir()
+	c := newFastClient(dir)
+	runID := "20260101-120003-deadbee9"
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := c.Run(ctx, RunRequest{RunID: runID, TestPlatform: "edit_mode"}, nil)
+	if err != context.Canceled {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	requestPath := filepath.Join(c.dir, "requests", runID+".req.json")
+	if _, statErr := os.Stat(requestPath); !os.IsNotExist(statErr) {
+		t.Fatalf("pre-canceled run must not publish request, stat err=%v", statErr)
+	}
+}
+
+func TestClientRun_IgnoresResponseFromDifferentBridgeSession(t *testing.T) {
+	dir := t.TempDir()
+	c := newFastClient(dir)
+	runID := "20260101-120003-deadbeea"
+	reqPath := filepath.Join(c.dir, "requests", runID+".req.json")
+
+	go func() {
+		waitForRequest(t, reqPath)
+		responsePath := filepath.Join(c.dir, "responses", runID+".resp.json")
+		_ = writeAtomicJSON(responsePath, responseFile{
+			SchemaVersion:         "1",
+			BridgeProtocolVersion: ProtocolVersion,
+			RunID:                 runID,
+			BridgeSessionID:       "different-editor-session",
+			Outcome:               OutcomeCompleted,
+			ResultsXMLWritten:     true,
+		})
+		time.Sleep(30 * time.Millisecond)
+		_ = writeAtomicJSON(responsePath, responseFile{
+			SchemaVersion:         "1",
+			BridgeProtocolVersion: ProtocolVersion,
+			RunID:                 runID,
+			BridgeSessionID:       testBridgeSessionID,
+			Outcome:               OutcomeCompleted,
+			ResultsXMLWritten:     true,
+		})
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	started := time.Now()
+	out, err := c.Run(ctx, RunRequest{RunID: runID, TestPlatform: "edit_mode"}, nil)
+	if err != nil || out.Outcome != OutcomeCompleted {
+		t.Fatalf("expected current-session completion, outcome=%q err=%v", out.Outcome, err)
+	}
+	if elapsed := time.Since(started); elapsed < 25*time.Millisecond {
+		t.Fatalf("foreign-session response was accepted too early; elapsed=%s", elapsed)
+	}
+}
+
+func TestClientRun_TombstoneReturnsTransportFailureImmediately(t *testing.T) {
+	dir := t.TempDir()
+	c := newFastClient(dir)
+	runID := "20260101-120004-deadbee3"
+	reqPath := filepath.Join(c.dir, "requests", runID+".req.json")
+
+	go func() {
+		waitForRequest(t, reqPath)
+		_ = writeAtomicJSON(filepath.Join(c.dir, "requests", runID+".tombstone.json"), tombstoneFile{
+			SchemaVersion:         "1",
+			BridgeProtocolVersion: ProtocolVersion,
+			RunID:                 runID,
+			ExecutionState:        ExecutionStateNotStarted,
+			Reason:                "terminal response could not be persisted",
+			CreatedAt:             time.Now().UTC().Format(time.RFC3339),
+		})
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	started := time.Now()
+	_, err := c.Run(ctx, RunRequest{RunID: runID, TestPlatform: "edit_mode"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "transport failure") || !strings.Contains(err.Error(), "could not be persisted") {
+		t.Fatalf("expected bridge transport failure with tombstone reason, got %v", err)
+	}
+	if elapsed := time.Since(started); elapsed >= time.Second {
+		t.Fatalf("tombstone should fail promptly instead of waiting for timeout; elapsed=%s", elapsed)
+	}
+}
+
+func TestClientRun_PossiblyStartedTombstoneIsIndeterminate(t *testing.T) {
+	dir := t.TempDir()
+	c := newFastClient(dir)
+	runID := "20260101-120005-deadbee4"
+	reqPath := filepath.Join(c.dir, "requests", runID+".req.json")
+
+	go func() {
+		waitForRequest(t, reqPath)
+		_ = writeAtomicJSON(filepath.Join(c.dir, "requests", runID+".tombstone.json"), tombstoneFile{
+			SchemaVersion:         "1",
+			BridgeProtocolVersion: ProtocolVersion,
+			RunID:                 runID,
+			ExecutionState:        ExecutionStatePossiblyStarted,
+			Reason:                "owned run ended but terminal response could not be persisted",
+			CreatedAt:             time.Now().UTC().Format(time.RFC3339),
+		})
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err := c.Run(ctx, RunRequest{RunID: runID, TestPlatform: "edit_mode"}, nil)
+	var indeterminate *IndeterminateRunError
+	if !errors.As(err, &indeterminate) {
+		t.Fatalf("expected IndeterminateRunError, got %T: %v", err, err)
+	}
+	if indeterminate.RunID != runID || !strings.Contains(indeterminate.Reason, "could not be persisted") {
+		t.Fatalf("unexpected indeterminate error: %+v", indeterminate)
 	}
 }

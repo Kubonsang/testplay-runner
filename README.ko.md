@@ -35,7 +35,7 @@ AI 에이전트가 Unity 테스트를 반복 실행한다면, testplay의 모든
 
 **사전 빌드 바이너리 (권장):**
 
-[GitHub Releases](https://github.com/Kubonsang/testplay-runner/releases)에서 다운로드 — darwin/linux/windows, amd64/arm64.
+[GitHub Releases](https://github.com/Kubonsang/testplay-runner/releases)에서 다운로드 — darwin/linux (amd64/arm64), windows (amd64).
 
 **소스에서 빌드:**
 
@@ -80,13 +80,14 @@ testplay init --unity-path /path/to/Unity
 ```
 
 `unity_path`를 생략하면 `UNITY_PATH` 환경변수로 폴백합니다.
-`project_path`를 생략하면 `testplay.json`이 위치한 디렉터리가 기본값이 됩니다.
+`project_path`를 생략하면 `testplay.json`이 위치한 디렉터리가 기본값이 됩니다. 상대 경로 `project_path`는 프로세스 cwd가 아닌 config 파일의 디렉터리 기준으로 해석됩니다.
 `test_platform`은 `"edit_mode"` (기본값) 또는 `"play_mode"`를 허용합니다. Unity CLI에 `-testPlatform EditMode|PlayMode`로 전달됩니다.
-`result_dir`는 `testplay result`가 읽는 실행 이력 JSON 저장 위치를 제어합니다.
+`result_dir`는 `testplay result`가 읽는 실행 이력 JSON 저장 위치를 제어합니다. 상대 경로(기본값 `.testplay/results` 포함)는 `project_path` 기준으로 해석되어 history와 아티팩트가 항상 같은 곳에 위치합니다.
 반면 run별 아티팩트(`results.xml`, `summary.json`, `manifest.json`, `stdout.log`,
 `stderr.log`, `events.ndjson`)는 항상
 `<project_path>/.testplay/runs/<run_id>/` 아래에 저장됩니다.
 `retention.max_runs`는 오래된 run 결과/아티팩트의 자동 정리를 제어합니다 (기본값 30). `0`으로 설정하면 정리를 비활성화합니다.
+`testplay.json`의 알 수 없는(오타) 키는 조용히 무시되지 않고 거부됩니다(exit 5, 에러가 해당 키를 명시). `schema_version`은 `"1"`이어야 합니다.
 
 **타임아웃 설정:**
 - `total_ms` (기본값 300000): 전체 실행의 외부 안전망 데드라인.
@@ -225,7 +226,7 @@ testplay run --no-bridge           # cold shadow/process 경로 강제
 testplay run --scenario scenario.json  # 멀티 인스턴스 동시 실행
 ```
 
-`--scenario`와 함께 사용하면 `--filter`, `--category`, `--compare-run`, `--shadow`, 캐시 플래그가 모든 시나리오 인스턴스에 전파됩니다(시나리오 모드는 항상 cold 실행).
+`--scenario`와 함께 사용하면 `--filter`, `--category`, `--shadow`, 캐시 플래그가 모든 시나리오 인스턴스에 전파됩니다(시나리오 모드는 항상 cold 실행). 전역 `--compare-run` 플래그는 시나리오 모드에서 거부됩니다(exit 5) — baseline은 인스턴스별 저장소이므로, 시나리오 파일의 각 인스턴스에 해당 role 자신의 이전 `run_id`를 `"compare_run"` 필드로 지정하세요.
 
 **`backend` 필드 (v0.10.0):** 모든 `run` 결과에는 어떤 엔진이 결과를 만들었는지 알려주는 `backend` 필드(`"process"`, `"shadow"`, `"bridge"`)가 **항상** 포함됩니다([웜 에디터 브릿지](#웜-에디터-브릿지) 참조).
 
@@ -263,6 +264,7 @@ testplay run --scenario scenario.json  # 멀티 인스턴스 동시 실행
 {
   "schema_version": "1",
   "run_id": "20250325-143000-a3f8b2c1",
+  "exit_code": 3,
   "backend": "process",
   "total": 10,
   "passed": 9,
@@ -387,13 +389,13 @@ per-run `.testplay-shadow-<run_id>/` 워크스페이스 준비가 파일시스�
 {
   "schema_version": "1",
   "instances": [
-    {"role": "host", "config": "testplay.json", "ready_phase": "running"},
-    {"role": "client", "config": "testplay.json", "depends_on": "host", "depends_on_phase": "running", "ready_timeout_ms": 120000}
+    {"role": "host", "config": "testplay.json", "ready_phase": "compiling"},
+    {"role": "client", "config": "testplay.json", "depends_on": "host", "ready_timeout_ms": 120000}
   ]
 }
 ```
 
-`config` 경로는 절대 경로가 아니면 시나리오 파일 위치 기준으로 해석됩니다. `depends_on_phase`는 대기 중인 인스턴스가 의존 대상에게 요구하는 phase입니다. 생략하면 의존 대상의 `ready_phase`, 그마저 없으면 기본값 `"compiling"`을 사용합니다.
+`config` 경로는 절대 경로가 아니면 시나리오 파일 위치 기준으로 해석됩니다. `depends_on_phase`는 대기 중인 인스턴스가 의존 대상에게 요구하는 phase입니다. 생략하면 의존 대상의 `ready_phase`, 그마저 없으면 기본값 `"compiling"`을 사용합니다. 유효한 phase는 `"compiling"`, `"running"`, `"done"`입니다. `"running"` 대기는 의존 대상 config의 two-phase 실행(`compile_ms` + `test_ms`)이 켜져 있어야 합니다 — single-phase 실행은 이 phase를 절대 emit하지 않으므로, ready timeout을 태우는 대신 시나리오 로드 시점에 거부됩니다(exit 5). 각 인스턴스에 `"compare_run"`(해당 role 자신의 이전 run_id)을 지정하면 인스턴스별 `new_failures` 회귀 비교가 수행됩니다.
 
 의존성 오케스트레이션이 실패하면 top-level `orchestrator_errors` 배열이 추가됩니다. v0.9부터 각 항목은 대기 인스턴스가 실패한 의존성으로부터 마지막으로 본 IPC 메시지로 보강됩니다:
 
@@ -525,11 +527,12 @@ if (!string.IsNullOrEmpty(bus)) {
 | 2 | 컴파일 실패 | 소스 수정, `errors[].absolute_path` + `line` 참조 |
 | 3 | 테스트 실패 | 테스트 수정, `tests[].absolute_path` + `line` 참조 |
 | 4 | 타임아웃 | JSON 결과의 `timeout_type` 확인 — 아래 표 참조 |
-| 5 | 설정 오류 | `testplay.json` 수정 또는 생성 |
+| 5 | 설정/사용법 오류 | `testplay.json` 수정(알 수 없는/오타 키는 거부됨) 또는 CLI 호출 수정(알 수 없는 플래그·커맨드, 불필요한 인자) |
 | 6 | 빌드 / Unity invocation 실패 | Unity 라이선스, 빌드 모듈, 에디터 로그, 패키지 import, shadow cold import 확인 |
 | 7 | 권한 오류 (섀도우 워크스페이스) | 프로젝트 디렉토리 권한 수정 |
 | 8 | 시그널 중단 | SIGINT/SIGTERM 수신 — 코드 변경 없이 재시도 |
 | 9 | 러너 시스템 오류 | 결과/아티팩트 저장 실패 — 디스크 용량/권한 확인, `warnings` 필드 참조 |
+| 10 | `--filter`/`--category`에 매칭된 테스트 없음 | 아무것도 실행되지 않음 — 필터를 고치거나 `testplay list`로 후보를 갱신 |
 
 ### Exit 4 — timeout_type 값
 

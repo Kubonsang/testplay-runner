@@ -48,6 +48,23 @@ namespace TestPlay.Bridge
                 return r;
             }
 
+            // C5 — a test run is already in flight (e.g. started from the Test
+            // Runner window): hard refuse. ICallbacks are global, so running now
+            // would capture the foreign run's results as this run's results.
+            if (!RunActivityMonitor.TryGetIsRunActive(out bool runActive))
+            {
+                r.Decision = GateDecision.Refuse;
+                r.RefuseReason = "cannot verify Test Framework active-run state in this editor";
+                return r;
+            }
+
+            if (runActive)
+            {
+                r.Decision = GateDecision.Refuse;
+                r.RefuseReason = "another test run is already in progress in this editor";
+                return r;
+            }
+
             // C2 — compile/import in flight: wait for it to settle (bounded by
             // the request's idle deadline, enforced by the server).
             if (EditorApplication.isCompiling || EditorApplication.isUpdating)

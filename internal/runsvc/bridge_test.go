@@ -68,8 +68,9 @@ func simulateBridge(t *testing.T, projectPath string, resultsXML []byte) {
 					continue
 				}
 				var req struct {
-					RunID      string `json:"run_id"`
-					ResultsXML string `json:"results_xml"`
+					RunID           string `json:"run_id"`
+					BridgeSessionID string `json:"bridge_session_id"`
+					ResultsXML      string `json:"results_xml"`
 				}
 				if json.Unmarshal(data, &req) != nil || req.RunID == "" {
 					continue
@@ -79,6 +80,7 @@ func simulateBridge(t *testing.T, projectPath string, resultsXML []byte) {
 					"schema_version":          "1",
 					"bridge_protocol_version": bridge.ProtocolVersion,
 					"run_id":                  req.RunID,
+					"bridge_session_id":       req.BridgeSessionID,
 					"outcome":                 "completed",
 					"results_xml_written":     true,
 				}
@@ -174,5 +176,53 @@ func TestService_NoHandshakeFallsBackToProcess(t *testing.T) {
 	}
 	if resp.Result.Backend != "process" {
 		t.Fatalf("backend = %q, want process (no bridge handshake)", resp.Result.Backend)
+	}
+}
+
+func TestService_ForceBridgeCannotBypassProtocolMismatch(t *testing.T) {
+	cfg, dir := baseConfig(t)
+	now := time.Date(2026, 3, 26, 12, 0, 0, 0, time.UTC)
+	writeBridgeHandshake(t, dir, now)
+
+	data, err := os.ReadFile(bridge.HandshakePath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var handshake bridge.Handshake
+	if err := json.Unmarshal(data, &handshake); err != nil {
+		t.Fatal(err)
+	}
+	handshake.BridgeProtocolVersion = 1
+	data, _ = json.MarshalIndent(handshake, "", "  ")
+	if err := os.WriteFile(bridge.HandshakePath(dir), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
+	cold := &fakeRunner{resultsXML: xmlData}
+	svc := &runsvc.Service{
+		Runner:       cold,
+		Store:        history.NewStore(cfg.ResultDir),
+		Artifacts:    artifacts.NewStore(filepath.Join(dir, ".testplay", "runs")),
+		StatusWriter: status.NewWriter(filepath.Join(dir, "status.json")),
+		Clock:        func() time.Time { return now },
+	}
+
+	resp, err := svc.Run(context.Background(), runsvc.Request{Config: cfg, ForceBridge: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Result.Backend != "process" {
+		t.Fatalf("backend = %q, want process for incompatible bridge", resp.Result.Backend)
+	}
+	requestDir := filepath.Join(bridge.BridgeDir(dir), "requests")
+	entries, readErr := os.ReadDir(requestDir)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		t.Fatal(readErr)
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".req.json") {
+			t.Fatalf("protocol-mismatched forced bridge must not publish request: %s", entry.Name())
+		}
 	}
 }

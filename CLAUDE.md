@@ -71,7 +71,7 @@ The warm bridge has two halves: the Go client in `internal/bridge` (handshake `P
 
 ## CLI Contract (stdout = JSON only)
 
-Every command outputs a single JSON object to stdout with a `schema_version` field. Nothing else ever goes to stdout.
+Every command outputs a single JSON object to stdout with a `schema_version` field. Nothing else ever goes to stdout. Cobra's human-facing paths are neutralized: a bare `testplay`, an unknown flag/command, or stray positional args emit a JSON error object and exit 5; `--help`/`help` print to stderr (stdout stays empty, exit 0); the auto-generated `completion` command is disabled.
 
 | Command | Purpose |
 |---|---|
@@ -89,6 +89,8 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 **`--bridge` / `--no-bridge`** (v0.10.0): backend-selection overrides for the warm-editor bridge. By default the bridge is auto-selected as tier-1 (`bridge → shadow → process`) when a live, compatible, idle bridge handshake is present and the Pristine Gate passes; otherwise execution falls back to the cold path automatically. `--no-bridge` (or `bridge.enabled: false` in config) forbids the bridge entirely for guaranteed cold hermeticity. `--bridge` *prefers* the bridge even on a soft probe failure but still respects the Pristine Gate — force changes preference, never the correctness bar (if it cannot run cleanly it falls back to cold with a disclosed `warnings` entry). `--shadow`/`--reset-shadow`/`--clear-cache` and two-phase configs (`compile_ms`+`test_ms`) bypass the bridge. Scenario mode always runs cold (scenario-warm orchestration is deferred).
 
 **Scenario JSON `env` field:** Each instance in a scenario file can specify an `env` map of environment variables injected into the Unity process. Keys must be non-empty and must not contain `=`. Values override inherited environment variables.
+
+**Scenario JSON `compare_run` field:** Each instance may set `compare_run` to one of its own previous `run_id`s for per-instance regression comparison (`new_failures` per instance). This is the baseline-isolation answer to pre-existing failures polluting scenario exit codes: gate CI on each instance's `new_failures` (empty = no regression) instead of the aggregate exit code. The global `--compare-run` flag is rejected with `--scenario` (exit 5).
 
 ```json
 {
@@ -117,11 +119,12 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 | 2 | Compile failure | Fix source code, see `errors[].absolute_path` + `line` | ✅ |
 | 3 | Test failure | Fix test logic, see `tests[].absolute_path` + `line` | ✅ |
 | 4 | Timeout | Check `timeout_type` — `"compile"`, `"test"`, or `"total"` | ✅ |
-| 5 | Config error (testplay.json missing/invalid) | Fix config file | ✅ |
+| 5 | Config/usage error (testplay.json missing/invalid, unknown key, unknown flag/command, bare invocation, stray positional args) | Fix config file or CLI invocation | ✅ |
 | 6 | Build failure (missing build target, license) | Fix build environment (Unity license activation, install build module) | ✅ |
 | 7 | Permission error (shadow workspace) | Fix path/permissions on project directory | ✅ |
 | 8 | Interrupted by signal | Retry without code changes | ✅ |
 | 9 | Runner system error (result/artifact save failed) | Check disk space/permissions; results may be lost, see `warnings` field | ✅ |
+| 10 | No tests matched `--filter`/`--category` (nothing was executed) | Fix the filter, or refresh candidate names via `testplay list` | ✅ |
 
 **timeout_type values for exit 4:**
 - `"compile"` — compile-only phase exceeded `compile_ms` deadline (two-phase mode)
@@ -152,7 +155,7 @@ Every command outputs a single JSON object to stdout with a `schema_version` fie
 
 `test_platform` accepts `"edit_mode"` (default) or `"play_mode"`.
 
-`unity_path` falls back to `UNITY_PATH` env var if omitted. `project_path` defaults to the directory containing `testplay.json`.
+`unity_path` falls back to `UNITY_PATH` env var if omitted. `project_path` defaults to the directory containing `testplay.json`; a relative `project_path` is resolved against the config file's directory (not the process cwd). A relative `result_dir` (including the default `.testplay/results`) is resolved against `project_path`, so history and artifacts always live together regardless of where testplay is invoked from.
 
 **Two-phase execution:** when both `compile_ms` and `test_ms` are set (both > 0), two-phase execution is enabled. Both fields must be set together — setting only one is a validation error. When neither is set, single-phase execution uses only `total_ms`. Note: setting both also **disables the warm bridge** for that run (the warm Editor cannot honestly reproduce the strict compile/test phase split), so two-phase always runs cold.
 
@@ -203,7 +206,7 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 
 > `init → version → check → list → run → result` — this six-command interface is the agent's entire surface. If this flow breaks, the project breaks.
 
-**Shadow mode is transparent to agents.** When `Temp/UnityLockfile` is present, `testplay run` automatically uses a per-run `.testplay-shadow-<run_id>/` workspace and remaps all `absolute_path` fields in the JSON output back to source project paths. Agents do not need to detect or handle shadow mode explicitly.
+**Shadow mode is transparent to agents.** When `Temp/UnityLockfile` is present, `testplay run` automatically uses a per-run `.testplay-shadow-<run_id>/` workspace and remaps all `absolute_path` fields in the JSON output back to source project paths. Agents do not need to detect or handle shadow mode explicitly. In `--scenario` mode, instances whose configs point at the same `project_path` are also forced into shadow automatically — two cold batchmode processes must never race Unity's single project lock (the `backend` field discloses this as `"shadow"`).
 
 ## Output Design Rules
 
@@ -212,8 +215,8 @@ Run `testplay result` to review the `run_id` list and decide the `--compare-run`
 3. Every JSON response includes `schema_version`.
 4. All file path fields include both `file` (relative) and `absolute_path`.
 5. `hint` field is included only on exit 1 — the one case where an agent can auto-recover.
-6. `new_failures` in exit 3 is only populated when `--compare-run` is specified; otherwise `null`.
-7. `warnings` (string array) is included only when non-fatal infrastructure issues occur (e.g. result save failed, summary write failed). Absent when no warnings.
+6. `new_failures` in exit 3 is only populated when a comparison actually happened (`--compare-run` in single mode, per-instance `compare_run` in scenario mode); otherwise `null`. A specified-but-missing baseline also yields `null` plus a `warnings` entry — an empty array always means "compared, no regressions". The global `--compare-run` flag is rejected in scenario mode (exit 5).
+7. `warnings` (string array) is included only when non-fatal infrastructure issues occur (e.g. result save failed, summary write failed) or when a run executed zero tests (zero-test disclosure; always accompanies exit 10, and exit 0 with `total: 0`). Absent when no warnings.
 8. `orchestrator_errors` (string array) is included in scenario mode output only when a dependency wait fails (ready timeout or context cancellation). Absent when no orchestration errors occurred. When IPC was active and the waiting instance received any message from the failed dependency, the entry is enriched with a trailing `"X" last received from "Y": seq=N kind=K` clause.
 9. `parameterized_group` (string) on test entries is present only when the test-case is inside an NUnit `ParameterizedMethod` suite. Absent for non-parameterized tests.
 10. `excerpt` (string) on test entries is present only when the test failed. Format: `"message (at filename.cs:line)"` or just `"message"` when no file info available. Absent for passing/skipped tests.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Kubonsang/testplay-runner/internal/bridge"
@@ -18,6 +19,35 @@ type fakeBridgeClient struct {
 	err        error
 	writeXML   string // when non-empty, written to req.ResultsXML before returning
 	gotRequest bridge.RunRequest
+}
+
+type bridgeStatusRecorder struct {
+	writes []status.Status
+}
+
+func (r *bridgeStatusRecorder) Write(s status.Status) error {
+	r.writes = append(r.writes, s)
+	return nil
+}
+
+func (r *bridgeStatusRecorder) assertIndeterminateDone(t *testing.T) {
+	t.Helper()
+	if len(r.writes) == 0 {
+		t.Fatal("expected status writes")
+	}
+	last := r.writes[len(r.writes)-1]
+	if last.Phase != status.PhaseDone || last.ExitCode == nil || *last.ExitCode != 9 {
+		t.Fatalf("last status = %+v, want done with exit 9", last)
+	}
+	doneCount := 0
+	for _, write := range r.writes {
+		if write.Phase == status.PhaseDone {
+			doneCount++
+		}
+	}
+	if doneCount != 1 {
+		t.Fatalf("done status count = %d, want exactly 1; writes=%+v", doneCount, r.writes)
+	}
 }
 
 func (f *fakeBridgeClient) Run(_ context.Context, req bridge.RunRequest, sw status.WriterInterface) (bridge.RunOutcome, error) {
@@ -90,25 +120,31 @@ func TestExecuteBridge_CompletedFail(t *testing.T) {
 	}
 }
 
-func TestExecuteBridge_CompletedWithoutResultsXMLFallsBack(t *testing.T) {
+func TestExecuteBridge_CompletedWithoutResultsXMLIsIndeterminate(t *testing.T) {
 	opts := baseOpts(t)
+	recorder := &bridgeStatusRecorder{}
+	opts.StatusWriter = recorder
 	// Bridge reports completed but did NOT write results.xml.
 	client := &fakeBridgeClient{outcome: bridge.RunOutcome{Outcome: bridge.OutcomeCompleted, ResultsXMLWritten: false}}
 	res := ExecuteBridge(context.Background(), client, opts, "20260101-120000-11111111", 30000)
-	if !res.FellBack {
-		t.Fatal("completed outcome with results_xml_written=false must fall back to cold")
+	if res.FellBack || res.ExitCode != 9 {
+		t.Fatalf("completed outcome without XML must be terminal exit 9, got %+v", res)
 	}
+	recorder.assertIndeterminateDone(t)
 }
 
-func TestExecuteBridge_CompletedButUnparseableXMLFallsBack(t *testing.T) {
+func TestExecuteBridge_CompletedButUnparseableXMLIsIndeterminate(t *testing.T) {
 	opts := baseOpts(t)
+	recorder := &bridgeStatusRecorder{}
+	opts.StatusWriter = recorder
 	// Claims it wrote results.xml, but the file is absent → parseResults exit 2;
-	// must fall back, NOT report a phantom compile failure.
+	// must not rerun a completed test or report a phantom compile failure.
 	client := &fakeBridgeClient{outcome: bridge.RunOutcome{Outcome: bridge.OutcomeCompleted, ResultsXMLWritten: true}}
 	res := ExecuteBridge(context.Background(), client, opts, "20260101-120000-22222222", 30000)
-	if !res.FellBack {
-		t.Fatalf("completed+claimed but missing XML must fall back, got exit %d", res.ExitCode)
+	if res.FellBack || res.ExitCode != 9 {
+		t.Fatalf("completed+claimed but missing XML must be exit 9, got %+v", res)
 	}
+	recorder.assertIndeterminateDone(t)
 }
 
 func TestExecuteBridge_CompileFailed(t *testing.T) {
@@ -153,6 +189,42 @@ func TestExecuteBridge_TransportErrorFallsBack(t *testing.T) {
 	if !res.FellBack {
 		t.Fatal("transport error should fall back to cold")
 	}
+}
+
+func TestExecuteBridge_IndeterminateTransportDoesNotFallback(t *testing.T) {
+	opts := baseOpts(t)
+	recorder := &bridgeStatusRecorder{}
+	opts.StatusWriter = recorder
+	client := &fakeBridgeClient{err: &bridge.IndeterminateRunError{
+		RunID:  "20260101-120000-12121212",
+		Reason: "terminal response was lost after execution",
+	}}
+	res := ExecuteBridge(context.Background(), client, opts, "20260101-120000-12121212", 30000)
+	if res.FellBack {
+		t.Fatal("possibly-started run must never cold-fallback")
+	}
+	if res.ExitCode != 9 || res.Result == nil || !strings.Contains(strings.Join(res.Warnings, "\n"), "not rerun") {
+		t.Fatalf("unexpected indeterminate result: %+v", res)
+	}
+	recorder.assertIndeterminateDone(t)
+}
+
+func TestExecuteBridge_IndeterminateOutcomeDoesNotFallback(t *testing.T) {
+	opts := baseOpts(t)
+	recorder := &bridgeStatusRecorder{}
+	opts.StatusWriter = recorder
+	client := &fakeBridgeClient{outcome: bridge.RunOutcome{
+		Outcome:     bridge.OutcomeIndeterminate,
+		NonPristine: []string{"run orphaned after tests may have started"},
+	}}
+	res := ExecuteBridge(context.Background(), client, opts, "20260101-120000-13131313", 30000)
+	if res.FellBack || res.ExitCode != 9 {
+		t.Fatalf("indeterminate outcome must be terminal exit 9, got %+v", res)
+	}
+	if !strings.Contains(strings.Join(res.Warnings, "\n"), "orphaned") {
+		t.Fatalf("missing indeterminate reason: %+v", res.Warnings)
+	}
+	recorder.assertIndeterminateDone(t)
 }
 
 func TestExecuteBridge_TimeoutMapsToExit4(t *testing.T) {
