@@ -20,7 +20,9 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # Go 1.24+ emits Mach-O LC_UUID, required by macOS 26 for the
+          # cross-compiled Darwin artifacts while the module remains Go 1.22 compatible.
+          go-version: "1.26.4"
 
       - uses: goreleaser/goreleaser-action@v6
         with:
