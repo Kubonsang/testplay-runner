@@ -1,0 +1,139 @@
+name: Release Preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Candidate tag, including the leading v
+        required: true
+        default: v0.11.0
+      previous_tag:
+        description: Previous release tag used for changelog calculation
+        required: true
+        default: v0.10.0
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build snapshot and verify inventory
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.4"
+
+      - name: Confirm metadata and toolchain
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = "go1.26.4"
+          source_version="$(sed -n 's/^var version = "\(v[^"]*\)"$/\1/p' cmd/testplay/version.go)"
+          package_version="$(jq -r .version unity/com.testplay.bridge/package.json)"
+          test "$source_version" = "$RELEASE_VERSION"
+          test "$package_version" = "${RELEASE_VERSION#v}"
+
+      - name: Run tests and vet
+        run: |
+          go test ./...
+          go vet ./...
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "v2.17.0"
+          args: release --snapshot --clean
+        env:
+          GORELEASER_CURRENT_TAG: ${{ inputs.version }}
+          GORELEASER_PREVIOUS_TAG: ${{ inputs.previous_tag }}
+
+      - name: Verify archives and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -e '
+            ([.[] | select(.type == "Archive") |
+              (.goos + "/" + .goarch + "/" +
+                (if (.name | endswith(".zip")) then "zip" else "tar.gz" end))
+             ] | sort)
+            ==
+            [
+              "darwin/amd64/tar.gz",
+              "darwin/arm64/tar.gz",
+              "linux/amd64/tar.gz",
+              "linux/arm64/tar.gz",
+              "windows/amd64/zip"
+            ]
+          ' dist/artifacts.json
+          test "$(awk 'NF { n++ } END { print n+0 }' dist/checksums.txt)" -eq 5
+          diff -u \
+            <(jq -r '.[] | select(.type == "Archive") | .name' dist/artifacts.json | sort) \
+            <(awk '{print $2}' dist/checksums.txt | sort)
+          (cd dist && sha256sum --check checksums.txt)
+
+      - name: Execute Linux candidate
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          archive="$(find dist -maxdepth 1 -name 'testplay_*_linux_amd64.tar.gz' -print -quit)"
+          mkdir extracted-linux
+          tar -xzf "$archive" -C extracted-linux
+          ./extracted-linux/testplay version | jq -e \
+            --arg prefix "${RELEASE_VERSION}-SNAPSHOT-" '
+            .schema_version == "1"
+            and (.version | startswith($prefix))
+            and (.commit | length > 0)
+            and (.date | length > 0)
+          '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-preflight-dist
+          path: dist/**
+          if-no-files-found: error
+          retention-days: 3
+
+  verify-darwin:
+    name: Verify Darwin Mach-O artifacts
+    needs: build
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-preflight-dist
+          path: dist
+
+      - name: Verify LC_UUID and execute arm64 candidate
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            archive="$(find dist -maxdepth 1 -name "testplay_*_darwin_${arch}.tar.gz" -print -quit)"
+            out="$RUNNER_TEMP/darwin-$arch"
+            mkdir -p "$out"
+            tar -xzf "$archive" -C "$out"
+            count="$(otool -l "$out/testplay" |
+              awk '$1 == "cmd" && $2 == "LC_UUID" { n++ } END { print n+0 }')"
+            test "$count" -eq 1
+          done
+          chmod +x "$RUNNER_TEMP/darwin-arm64/testplay"
+          "$RUNNER_TEMP/darwin-arm64/testplay" version | jq -e \
+            --arg prefix "${RELEASE_VERSION}-SNAPSHOT-" '
+            .schema_version == "1"
+            and (.version | startswith($prefix))
+            and (.commit | length > 0)
+            and (.date | length > 0)
+          '
