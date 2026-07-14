@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,12 +15,13 @@ import (
 )
 
 type listDeps struct {
-	projectPath string
+	projectPath  string
+	testPlatform string
 }
 
 func runList(w io.Writer, deps listDeps) int {
 	// Try run cache first — produced by `testplay run` after a successful execution.
-	if cache, err := listcache.Read(deps.projectPath); err == nil {
+	if cache, err := listcache.ReadForPlatform(deps.projectPath, deps.testPlatform); err == nil {
 		writeJSON(w, map[string]any{
 			"tests":         cache.Tests,
 			"complete":      true,
@@ -60,6 +62,29 @@ func runList(w io.Writer, deps listDeps) int {
 
 	writeJSON(w, map[string]any{"tests": tests, "complete": false, "source": "static_scan"})
 	return 0
+}
+
+// runListCommand resolves list's project and platform from config. A missing
+// config is the one supported config-less mode; every other config error must
+// be visible rather than silently changing the project to the current folder.
+func runListCommand(w io.Writer, path string) int {
+	deps := listDeps{projectPath: "."}
+	cfg, err := config.Load(path)
+	if err != nil {
+		if errors.Is(err, config.ErrConfigNotFound) {
+			return runList(w, deps)
+		}
+		writeJSON(w, map[string]any{"error": err.Error()})
+		return 5
+	}
+	if err := cfg.Validate(false); err != nil {
+		writeJSON(w, map[string]any{"error": err.Error()})
+		return 5
+	}
+
+	deps.projectPath = cfg.ProjectPath
+	deps.testPlatform = cfg.TestPlatform
+	return runList(w, deps)
 }
 
 // scanCSharpTestFile returns method names annotated with [Test] or [UnityTest] in
@@ -139,14 +164,7 @@ var listCmd = &cobra.Command{
 	Args:  cobra.NoArgs,
 	Short: "List candidate test names from source (static scan, may be incomplete)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		deps := listDeps{projectPath: "."}
-		// Try to load config to get project path
-		cfg, err := config.Load(configPath)
-		if err == nil {
-			_ = cfg.Validate(false)
-			deps.projectPath = cfg.ProjectPath
-		}
-		code := runList(cmd.OutOrStdout(), deps)
+		code := runListCommand(cmd.OutOrStdout(), configPath)
 		os.Exit(code)
 		return nil
 	},

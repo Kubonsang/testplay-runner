@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -158,6 +159,15 @@ func Load(path string) (*Config, error) {
 	var cfg Config
 	if err := dec.Decode(&cfg); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrConfigInvalid, err)
+	}
+	// Decode exactly one JSON value. Decoder.Decode accepts a valid object
+	// followed by another value unless callers explicitly require EOF; without
+	// this check a generated config such as `{} {}` is only partially read.
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			err = errors.New("multiple JSON values")
+		}
+		return nil, fmt.Errorf("%w: trailing data after config object: %v", ErrConfigInvalid, err)
 	}
 
 	if cfg.SchemaVersion == "" {

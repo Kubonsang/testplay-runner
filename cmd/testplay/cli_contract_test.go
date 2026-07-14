@@ -121,6 +121,26 @@ func TestCLI_CompletionCommandDisabled(t *testing.T) {
 	assertJSONError(t, stdout)
 }
 
+func TestCLI_InternalCompletionCommandsReturnSingleJSON(t *testing.T) {
+	for _, hidden := range []string{"__complete", "__completeNoDesc"} {
+		t.Run(hidden, func(t *testing.T) {
+			stdout, _, code := runBinary(t, hidden, "run")
+			if code != 5 {
+				t.Fatalf("%s must be rejected with exit 5, got %d; stdout: %q", hidden, code, stdout)
+			}
+			assertJSONError(t, stdout)
+		})
+	}
+}
+
+func TestCLI_InternalCompletionAfterPersistentConfigFlagReturnsSingleJSON(t *testing.T) {
+	stdout, _, code := runBinary(t, "--config", "elsewhere.json", "__complete", "run")
+	if code != 5 {
+		t.Fatalf("hidden completion after persistent flags must exit 5, got %d; stdout: %q", code, stdout)
+	}
+	assertJSONError(t, stdout)
+}
+
 func TestCLI_PositionalArgsRejected(t *testing.T) {
 	// `testplay run MyTest` silently ran the FULL suite — the positional arg
 	// was accepted and ignored. Commands take no positional arguments.
@@ -129,4 +149,31 @@ func TestCLI_PositionalArgsRejected(t *testing.T) {
 		t.Errorf("positional args should be rejected with exit 5, got %d", code)
 	}
 	assertJSONError(t, stdout)
+}
+
+func TestCLI_ListRejectsInvalidConfigWithJSONExit5(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "testplay.json")
+	if err := os.WriteFile(path, []byte(`{"schema_version":"1","unknown_key":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, code := runBinary(t, "--config", path, "list")
+	if code != 5 {
+		t.Fatalf("invalid list config must exit 5, got %d; stdout: %q", code, stdout)
+	}
+	assertJSONError(t, stdout)
+}
+
+func TestCLI_ListMissingConfigUsesIncompleteStaticFallback(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.json")
+	stdout, _, code := runBinary(t, "--config", path, "list")
+	if code != 0 {
+		t.Fatalf("missing config list fallback must exit 0, got %d; stdout: %q", code, stdout)
+	}
+	var out map[string]any
+	if err := json.Unmarshal([]byte(stdout), &out); err != nil {
+		t.Fatalf("stdout must be a single JSON object: %v; output: %q", err, stdout)
+	}
+	if out["schema_version"] != "1" || out["source"] != "static_scan" || out["complete"] != false {
+		t.Fatalf("unexpected missing-config fallback: %v", out)
+	}
 }

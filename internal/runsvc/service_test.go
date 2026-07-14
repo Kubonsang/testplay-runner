@@ -959,6 +959,9 @@ func TestService_UnfilteredRun_WritesListCache(t *testing.T) {
 	if len(c.Tests) == 0 {
 		t.Error("expected cached test names from the full run")
 	}
+	if !c.FullInventory || c.TestPlatform != cfg.TestPlatform {
+		t.Errorf("cache must preserve full-inventory platform provenance: %+v", c)
+	}
 }
 
 func TestService_CompareRunMissingBaseline_NullNewFailuresWithWarning(t *testing.T) {

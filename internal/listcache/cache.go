@@ -5,7 +5,11 @@
 package listcache
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -14,11 +18,30 @@ import (
 	"github.com/Kubonsang/testplay-runner/internal/parser"
 )
 
+const SchemaVersion = "2"
+
+var (
+	ErrInvalidCache     = errors.New("invalid list cache")
+	ErrStaleCache       = errors.New("stale list cache")
+	ErrIncompleteCache  = errors.New("incomplete list cache")
+	ErrPlatformMismatch = errors.New("list cache test platform mismatch")
+)
+
+// Metadata records the facts needed before a cached test list may be called
+// complete. In particular, a filtered/category run is never a full inventory,
+// and edit-mode and play-mode inventories are not interchangeable.
+type Metadata struct {
+	FullInventory bool
+	TestPlatform  string
+}
+
 // Cache holds the test names discovered during a run.
 type Cache struct {
 	SchemaVersion string   `json:"schema_version"`
 	CachedRunID   string   `json:"cached_run_id"`
 	CachedAt      string   `json:"cached_at"`
+	FullInventory bool     `json:"full_inventory"`
+	TestPlatform  string   `json:"test_platform"`
 	Tests         []string `json:"tests"`
 }
 
@@ -28,7 +51,17 @@ func CachePath(projectPath string) string {
 }
 
 // Write extracts test names from tests and atomically writes them to the cache.
-func Write(projectPath, runID string, tests []parser.TestCase) error {
+// Callers must state whether the run was unfiltered and which Unity test
+// platform produced it; omitting those facts was the schema-1 cache poisoning
+// bug, so there is intentionally no implicit default.
+func Write(projectPath, runID string, tests []parser.TestCase, metadata Metadata) error {
+	if runID == "" {
+		return fmt.Errorf("%w: cached_run_id is required", ErrInvalidCache)
+	}
+	if !validTestPlatform(metadata.TestPlatform) {
+		return fmt.Errorf("%w: test_platform must be \"edit_mode\" or \"play_mode\"", ErrInvalidCache)
+	}
+
 	names := make([]string, 0, len(tests))
 	for _, tc := range tests {
 		if tc.Name != "" {
@@ -37,9 +70,11 @@ func Write(projectPath, runID string, tests []parser.TestCase) error {
 	}
 
 	c := Cache{
-		SchemaVersion: "1",
+		SchemaVersion: SchemaVersion,
 		CachedRunID:   runID,
 		CachedAt:      time.Now().UTC().Format(time.RFC3339),
+		FullInventory: metadata.FullInventory,
+		TestPlatform:  metadata.TestPlatform,
 		Tests:         names,
 	}
 
@@ -64,16 +99,63 @@ func Write(projectPath, runID string, tests []parser.TestCase) error {
 	return nil
 }
 
-// Read loads the cache from disk. Returns an error if the cache does not exist
-// or cannot be parsed.
+// Read loads a trustworthy complete-inventory cache from disk. Schema-1 caches
+// are deliberately stale: they did not record whether a filter/category was
+// active and therefore cannot substantiate complete:true.
 func Read(projectPath string) (*Cache, error) {
 	data, err := os.ReadFile(CachePath(projectPath))
 	if err != nil {
 		return nil, err
 	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
 	var c Cache
-	if err := json.Unmarshal(data, &c); err != nil {
-		return nil, err
+	if err := dec.Decode(&c); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidCache, err)
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			err = errors.New("multiple JSON values")
+		}
+		return nil, fmt.Errorf("%w: trailing data: %v", ErrInvalidCache, err)
+	}
+	if c.SchemaVersion != SchemaVersion {
+		return nil, fmt.Errorf("%w: schema_version %q is not %q", ErrStaleCache, c.SchemaVersion, SchemaVersion)
+	}
+	if c.CachedRunID == "" {
+		return nil, fmt.Errorf("%w: cached_run_id is required", ErrInvalidCache)
+	}
+	if _, err := time.Parse(time.RFC3339, c.CachedAt); err != nil {
+		return nil, fmt.Errorf("%w: cached_at must be RFC3339: %v", ErrInvalidCache, err)
+	}
+	if !c.FullInventory {
+		return nil, fmt.Errorf("%w: full_inventory is false", ErrIncompleteCache)
+	}
+	if !validTestPlatform(c.TestPlatform) {
+		return nil, fmt.Errorf("%w: invalid test_platform %q", ErrInvalidCache, c.TestPlatform)
+	}
+	if c.Tests == nil {
+		c.Tests = make([]string, 0)
 	}
 	return &c, nil
+}
+
+// ReadForPlatform additionally proves that the inventory belongs to the test
+// platform requested by the current config.
+func ReadForPlatform(projectPath, testPlatform string) (*Cache, error) {
+	if !validTestPlatform(testPlatform) {
+		return nil, fmt.Errorf("%w: requested platform %q", ErrPlatformMismatch, testPlatform)
+	}
+	c, err := Read(projectPath)
+	if err != nil {
+		return nil, err
+	}
+	if c.TestPlatform != testPlatform {
+		return nil, fmt.Errorf("%w: cache is %q, requested %q", ErrPlatformMismatch, c.TestPlatform, testPlatform)
+	}
+	return c, nil
+}
+
+func validTestPlatform(platform string) bool {
+	return platform == "edit_mode" || platform == "play_mode"
 }

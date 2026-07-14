@@ -39,6 +39,32 @@ func TestLoad_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestLoad_TrailingJSONValueRejected(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "testplay.json")
+	if err := os.WriteFile(path, []byte(`{"schema_version":"1"} {"schema_version":"1"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := config.Load(path)
+	if !errors.Is(err, config.ErrConfigInvalid) {
+		t.Fatalf("trailing JSON value must be rejected, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "trailing data") {
+		t.Fatalf("error should identify trailing data, got %v", err)
+	}
+}
+
+func TestLoad_TrailingWhitespaceAccepted(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "testplay.json")
+	if err := os.WriteFile(path, []byte("{\"schema_version\":\"1\"}\n\t "), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Load(path); err != nil {
+		t.Fatalf("trailing whitespace is valid JSON formatting: %v", err)
+	}
+}
+
 func TestLoad_MissingSchemaVersion(t *testing.T) {
 	_, err := config.Load("testdata/missing_schema.json")
 	if !errors.Is(err, config.ErrConfigInvalid) {

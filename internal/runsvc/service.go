@@ -371,7 +371,10 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	// and for filtered runs — a --filter/--category subset is not the full
 	// inventory and would poison the cache's complete: true claim.
 	if !req.SkipCacheWriteBack && req.Filter == "" && req.Category == "" && (exitCode == 0 || exitCode == 3) {
-		_ = listcache.Write(req.Config.ProjectPath, runID, result.Tests)
+		_ = listcache.Write(req.Config.ProjectPath, runID, result.Tests, listcache.Metadata{
+			FullInventory: true,
+			TestPlatform:  req.Config.TestPlatform,
+		})
 	}
 
 	// Override exit code for runner infrastructure failures.
