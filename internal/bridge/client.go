@@ -103,6 +103,9 @@ func (c *Client) Run(ctx context.Context, req RunRequest, sw status.WriterInterf
 			return finishOutcome(resp, compileErrPath), nil
 		}
 		if tombstone, ok := readTombstone(tombstonePath, req.RunID); ok {
+			if tombstone.ExecutionState != ExecutionStateNotStarted {
+				return RunOutcome{}, &IndeterminateRunError{RunID: req.RunID, Reason: tombstone.Reason}
+			}
 			return RunOutcome{}, fmt.Errorf("bridge: transport failure for run %s: %s", req.RunID, tombstone.Reason)
 		}
 

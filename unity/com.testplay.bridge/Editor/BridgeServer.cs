@@ -18,7 +18,8 @@ namespace TestPlay.Bridge
     ///   new        → gate; refuse/busy, or stream compiling + AssetDatabase.Refresh → refreshing
     ///   refreshing → wait for compile to settle; compile errors → compile_failed;
     ///                else start the TestRunnerApi run → running
-    ///   running    → TestRunController writes results.xml + completed response on finish
+    ///   running    → TestRunController writes results.xml + a private pending response
+    ///   completing → wait for authoritative GUID inactivity, then publish response
     ///
     /// Spike-gated behaviors (see RELEASE-PLAN / plan): TestRunnerApi cancellation,
     /// results.xml fidelity, compile-settle reliability.
@@ -37,10 +38,12 @@ namespace TestPlay.Bridge
         private const string KeyCancelInactiveCount = "testplay.bridge.cancelInactiveCount";
         private const string KeyCancelTombstoneOnly = "testplay.bridge.cancelTombstoneOnly";
         private const string KeyCancelRequireProbe = "testplay.bridge.cancelRequireProbe";
+        private const string KeyCompleteInactiveCount = "testplay.bridge.completeInactiveCount";
 
         private const string PhaseNew = "new";
         private const string PhaseRefreshing = "refreshing";
         private const string PhaseRunning = "running";
+        private const string PhaseCompleting = "completing";
         private const string PhaseCancelling = "cancelling";
 
         private const double HeartbeatSeconds = 1.0;
@@ -75,6 +78,12 @@ namespace TestPlay.Bridge
                 string orphan = SessionState.GetString(KeyActive, "");
                 if (!string.IsNullOrEmpty(orphan))
                     BeginCancellation("run orphaned by a domain reload", true, false, true);
+            }
+            else if (SessionState.GetString(KeyPhase, "") == PhaseCompleting && s_controller == null)
+            {
+                string orphan = SessionState.GetString(KeyActive, "");
+                if (!string.IsNullOrEmpty(orphan))
+                    BeginCancellation("completion observer orphaned by a domain reload", true, false, true);
             }
 
             EditorApplication.update -= Update;
@@ -147,13 +156,29 @@ namespace TestPlay.Bridge
                 if (File.Exists(BridgePaths.TombstonePath(runId)))
                     continue;
 
+                if (File.Exists(BridgePaths.PendingResponsePath(runId)))
+                {
+                    WriteTombstone(runId,
+                        "a prior editor session left an unpublished terminal response; request will not be replayed",
+                        true);
+                    continue;
+                }
+
                 if (File.Exists(BridgePaths.CancelPath(runId)))
                 {
-                    string reason = ReadCancellationMarkerReason(runId);
+                    var marker = ReadCancellationMarker(runId);
+                    string reason = marker?.reason;
+                    // A non-JSON marker came from the Go context. No waiting Go
+                    // caller remains, so conservative possibly_started sealing
+                    // cannot trigger an unnecessary fallback. Bridge-authored
+                    // markers carry their exact durable execution state.
+                    bool possiblyStarted = marker == null ||
+                        marker.execution_state != BridgeProtocol.ExecutionNotStarted;
                     WriteTombstone(runId,
                         string.IsNullOrEmpty(reason)
                             ? "request was canceled before the Unity bridge claimed it"
-                            : reason);
+                            : reason,
+                        possiblyStarted);
                     continue;
                 }
 
@@ -164,7 +189,8 @@ namespace TestPlay.Bridge
                 if (req.bridge_protocol_version != BridgeProtocol.Version)
                 {
                     TryWriteTerminal(runId, BridgeProtocol.OutcomeRejected, false, 0,
-                        $"protocol version mismatch (request={req.bridge_protocol_version}, bridge={BridgeProtocol.Version})");
+                        $"protocol version mismatch (request={req.bridge_protocol_version}, bridge={BridgeProtocol.Version})",
+                        false);
                     continue;
                 }
 
@@ -172,7 +198,8 @@ namespace TestPlay.Bridge
                 if (!BridgeProtocol.IsRequestForSession(req, currentSession))
                 {
                     WriteTombstone(runId,
-                        $"request belongs to bridge session '{req.bridge_session_id ?? ""}', current session is '{currentSession}'");
+                        $"request belongs to bridge session '{req.bridge_session_id ?? ""}', current session is '{currentSession}'",
+                        true);
                     continue;
                 }
 
@@ -200,7 +227,8 @@ namespace TestPlay.Bridge
             // replay, so a cancel marker always enters the cancelling phase.
             if (File.Exists(BridgePaths.CancelPath(runId)) && phase != PhaseCancelling)
             {
-                BeginCancellation("request was canceled by the Go client", false, true, phase == PhaseRunning);
+                bool ownedJobMayExist = phase == PhaseRunning || phase == PhaseCompleting;
+                BeginCancellation("request was canceled by the Go client", false, true, ownedJobMayExist);
                 if (SessionState.GetString(KeyActive, "") == runId &&
                     SessionState.GetString(KeyPhase, "") == PhaseCancelling)
                     AdvanceCancelling(runId);
@@ -212,7 +240,10 @@ namespace TestPlay.Bridge
             if (req == null)
             {
                 if (phase != PhaseCancelling)
-                    BeginCancellation("claimed request disappeared before completion", false, true, phase == PhaseRunning);
+                {
+                    bool ownedJobMayExist = phase == PhaseRunning || phase == PhaseCompleting;
+                    BeginCancellation("claimed request disappeared before completion", false, true, ownedJobMayExist);
+                }
                 if (SessionState.GetString(KeyActive, "") == runId &&
                     SessionState.GetString(KeyPhase, "") == PhaseCancelling)
                     AdvanceCancelling(runId);
@@ -229,6 +260,9 @@ namespace TestPlay.Bridge
                     break;
                 case PhaseRunning:
                     AdvanceRunning(req);
+                    break;
+                case PhaseCompleting:
+                    AdvanceCompleting(req);
                     break;
                 case PhaseCancelling:
                     AdvanceCancelling(runId);
@@ -332,6 +366,84 @@ namespace TestPlay.Bridge
                 BeginCancellation("run controller disappeared before the owned job completed", true, false, true);
         }
 
+        private static void AdvanceCompleting(RequestDto req)
+        {
+            string pendingPath = BridgePaths.PendingResponsePath(req.run_id);
+            if (!File.Exists(pendingPath))
+            {
+                BeginCancellation("completed run lost its pending terminal response", false, false, true);
+                return;
+            }
+
+            string guid = SessionState.GetString(KeyOwnedRunGuid, "");
+            if (string.IsNullOrEmpty(guid))
+            {
+                BeginCancellation("completed run has no owned TestRunnerApi GUID", true, false, true);
+                return;
+            }
+
+            if (!TestRunnerApiCompat.TryGetRunActive(guid, out bool isActive))
+                return; // unknown is busy; never publish a guessed completion
+
+            if (isActive)
+            {
+                SessionState.SetString(KeyCompleteInactiveCount, "0");
+                return;
+            }
+
+            int inactiveCount = ReadSessionInt(KeyCompleteInactiveCount) + 1;
+            SessionState.SetString(KeyCompleteInactiveCount, inactiveCount.ToString(CultureInfo.InvariantCulture));
+            if (inactiveCount < CancellationStateMachine.RequiredInactiveConfirmations)
+                return;
+
+            PublishCompletedResponse(req.run_id, pendingPath);
+        }
+
+        private static void PublishCompletedResponse(string runId, string pendingPath)
+        {
+            string pendingJson;
+            try
+            {
+                pendingJson = File.ReadAllText(pendingPath);
+                var response = JsonUtility.FromJson<ResponseDto>(pendingJson);
+                if (response == null || response.run_id != runId ||
+                    response.bridge_session_id != SessionState.GetString(KeySession, "") ||
+                    response.outcome != BridgeProtocol.OutcomeCompleted)
+                    throw new InvalidDataException("pending response identity or outcome is invalid");
+
+                // Inactivity is now authoritative. Publish idle before exposing
+                // the response so the next CLI command cannot observe a stale
+                // running_tests snapshot and take an unnecessary cold fallback.
+                DetachController();
+                ClearActive();
+                HandshakeWriter.Write(
+                    SessionState.GetString(KeySession, ""),
+                    HandshakeWriter.CurrentState(false),
+                    "");
+                AtomicFile.WriteAllText(BridgePaths.ResponsePath(runId), pendingJson);
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[TestPlay.Bridge] failed to publish completed response for {runId}: {e}");
+                FinishTerminal(runId, BridgeProtocol.OutcomeRejected, false, 0,
+                    $"failed to publish verified warm-run completion: {e.Message}",
+                    true);
+                return;
+            }
+
+            try
+            {
+                File.Delete(pendingPath);
+            }
+            catch (Exception e)
+            {
+                // The final response is already durable and must never be
+                // replaced because cleanup failed. ClaimNextRequest checks the
+                // response before this leftover pending file.
+                Debug.LogWarning($"[TestPlay.Bridge] could not delete pending response for {runId}: {e.Message}");
+            }
+        }
+
         private static void StartRun(RequestDto req)
         {
             string session = SessionState.GetString(KeySession, "");
@@ -354,14 +466,15 @@ namespace TestPlay.Bridge
                     stream,
                     reason => BeginCancellation(reason, false, false, true),
                     OnRunCompleted,
-                    OnRunPersistenceFailure);
+                    reason => OnRunPersistenceFailure(req.run_id, reason));
                 s_api.RegisterCallbacks(s_controller);
 
                 s_runningTests = true;
                 SessionState.SetString(KeyPhase, PhaseRunning);
                 string ownedGuid = TestRunnerApiCompat.ExecuteOwned(s_api, new ExecutionSettings(filter));
-                // A tiny test run may finish synchronously inside Execute.
-                // Its callback already wrote the response and cleared ownership.
+                // A tiny test run may finish synchronously inside Execute. Its
+                // callback leaves a private pending response and keeps the
+                // controller alive until this GUID has been persisted.
                 if (s_controller == null || SessionState.GetString(KeyActive, "") != req.run_id)
                     return;
                 SessionState.SetString(KeyOwnedRunGuid, ownedGuid);
@@ -379,16 +492,18 @@ namespace TestPlay.Bridge
 
         private static void OnRunCompleted()
         {
-            DetachController();
-            ClearActive();
+            s_runningTests = false;
+            SessionState.SetString(KeyPhase, PhaseCompleting);
+            SessionState.SetString(KeyCompleteInactiveCount, "0");
+
+            // Keep callbacks registered through framework cleanup. OnError can
+            // still arrive after RunFinished (scene restore, undo, reload unlock).
         }
 
-        private static void OnRunPersistenceFailure(string reason)
+        private static void OnRunPersistenceFailure(string runId, string reason)
         {
-            string runId = SessionState.GetString(KeyActive, "");
-            DetachController();
             if (!string.IsNullOrEmpty(runId))
-                FinishTerminal(runId, BridgeProtocol.OutcomeRejected, false, 0, reason);
+                BeginCancellation(reason, false, false, true);
         }
 
         private static void DetachController()
@@ -477,7 +592,7 @@ namespace TestPlay.Bridge
             {
                 if (tombstoneOnly)
                 {
-                    if (WriteTombstone(runId, reason))
+                    if (WriteTombstone(runId, reason, ExecutionMayHaveStarted()))
                         ClearActive();
                 }
                 else
@@ -525,7 +640,7 @@ namespace TestPlay.Bridge
 
             if (tombstoneOnly)
             {
-                if (WriteTombstone(runId, reason))
+                if (WriteTombstone(runId, reason, ExecutionMayHaveStarted()))
                     ClearActive();
                 return;
             }
@@ -549,9 +664,19 @@ namespace TestPlay.Bridge
             }
         }
 
-        private static void FinishTerminal(string runId, string outcome, bool compileFailed, int errorCount, string disclosure)
+        private static void FinishTerminal(
+            string runId,
+            string outcome,
+            bool compileFailed,
+            int errorCount,
+            string disclosure,
+            bool executionMayHaveStarted = false)
         {
-            if (TryWriteTerminal(runId, outcome, compileFailed, errorCount, disclosure))
+            executionMayHaveStarted |= ExecutionMayHaveStarted();
+            if (executionMayHaveStarted && outcome == BridgeProtocol.OutcomeRejected)
+                outcome = BridgeProtocol.OutcomeIndeterminate;
+
+            if (TryWriteTerminal(runId, outcome, compileFailed, errorCount, disclosure, executionMayHaveStarted))
             {
                 ClearActive();
                 return;
@@ -568,7 +693,13 @@ namespace TestPlay.Bridge
                 false);
         }
 
-        private static bool TryWriteTerminal(string runId, string outcome, bool compileFailed, int errorCount, string disclosure)
+        private static bool TryWriteTerminal(
+            string runId,
+            string outcome,
+            bool compileFailed,
+            int errorCount,
+            string disclosure,
+            bool executionMayHaveStarted)
         {
             var resp = new ResponseDto
             {
@@ -590,11 +721,11 @@ namespace TestPlay.Bridge
             {
                 string reason = $"terminal response for intended outcome '{outcome}' could not be persisted: {e.Message}";
                 Debug.LogError($"[TestPlay.Bridge] {reason}; writing durable request tombstone");
-                return WriteTombstone(runId, reason);
+                return WriteTombstone(runId, reason, executionMayHaveStarted);
             }
         }
 
-        private static bool WriteTombstone(string runId, string reason)
+        private static bool WriteTombstone(string runId, string reason, bool executionMayHaveStarted)
         {
             if (string.IsNullOrEmpty(runId))
                 return false;
@@ -606,6 +737,9 @@ namespace TestPlay.Bridge
             var tombstone = new TombstoneDto
             {
                 run_id = runId,
+                execution_state = executionMayHaveStarted
+                    ? BridgeProtocol.ExecutionPossiblyStarted
+                    : BridgeProtocol.ExecutionNotStarted,
                 reason = string.IsNullOrEmpty(reason) ? "bridge transport failed" : reason,
                 created_at = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture),
             };
@@ -621,6 +755,18 @@ namespace TestPlay.Bridge
             }
         }
 
+        private static bool ExecutionMayHaveStarted()
+        {
+            string phase = SessionState.GetString(KeyPhase, "");
+            if (phase == PhaseRunning || phase == PhaseCompleting)
+                return true;
+            if (phase != PhaseCancelling)
+                return false;
+
+            return !string.IsNullOrEmpty(SessionState.GetString(KeyOwnedRunGuid, "")) ||
+                   SessionState.GetString(KeyCancelRequireProbe, "0") == "1";
+        }
+
         private static bool EnsureCancellationMarker(string runId, string reason)
         {
             string path = BridgePaths.CancelPath(runId);
@@ -631,6 +777,9 @@ namespace TestPlay.Bridge
             {
                 run_id = runId,
                 owned_run_guid = SessionState.GetString(KeyOwnedRunGuid, ""),
+                execution_state = ExecutionMayHaveStarted()
+                    ? BridgeProtocol.ExecutionPossiblyStarted
+                    : BridgeProtocol.ExecutionNotStarted,
                 reason = string.IsNullOrEmpty(reason) ? "warm run cancellation requested" : reason,
                 created_at = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture),
             };
@@ -646,13 +795,13 @@ namespace TestPlay.Bridge
             }
         }
 
-        private static string ReadCancellationMarkerReason(string runId)
+        private static CancellationMarkerDto ReadCancellationMarker(string runId)
         {
             try
             {
                 string json = File.ReadAllText(BridgePaths.CancelPath(runId));
                 var marker = JsonUtility.FromJson<CancellationMarkerDto>(json);
-                return marker != null && marker.run_id == runId ? marker.reason : null;
+                return marker != null && marker.run_id == runId ? marker : null;
             }
             catch
             {
@@ -681,6 +830,20 @@ namespace TestPlay.Bridge
             SessionState.SetString(KeyCancelInactiveCount, "");
             SessionState.SetString(KeyCancelTombstoneOnly, "");
             SessionState.SetString(KeyCancelRequireProbe, "");
+            SessionState.SetString(KeyCompleteInactiveCount, "");
+
+            // Bypass the one-second throttle after terminal transitions. The
+            // delayed authoritative probe also corrects any transient editor
+            // state that changed while the terminal file was being published.
+            EditorApplication.delayCall -= PublishPostTerminalHandshake;
+            EditorApplication.delayCall += PublishPostTerminalHandshake;
+        }
+
+        private static void PublishPostTerminalHandshake()
+        {
+            EditorApplication.delayCall -= PublishPostTerminalHandshake;
+            s_lastBeat = double.NegativeInfinity;
+            Heartbeat();
         }
 
         private static long ReadSessionLong(string key)

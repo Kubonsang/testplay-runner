@@ -33,6 +33,10 @@ namespace TestPlay.Bridge
         public const string OutcomeBuildFailed = "build_failed";
         public const string OutcomeBusy = "busy";
         public const string OutcomeRejected = "rejected";
+        public const string OutcomeIndeterminate = "indeterminate";
+
+        public const string ExecutionNotStarted = "not_started";
+        public const string ExecutionPossiblyStarted = "possibly_started";
     }
 
     [Serializable]
@@ -87,6 +91,7 @@ namespace TestPlay.Bridge
         public string schema_version = "1";
         public int bridge_protocol_version = BridgeProtocol.Version;
         public string run_id;
+        public string execution_state;
         public string reason;
         public string created_at;
     }
@@ -98,6 +103,7 @@ namespace TestPlay.Bridge
         public int bridge_protocol_version = BridgeProtocol.Version;
         public string run_id;
         public string owned_run_guid;
+        public string execution_state;
         public string reason;
         public string created_at;
     }

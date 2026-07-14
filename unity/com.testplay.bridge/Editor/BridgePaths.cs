@@ -23,6 +23,7 @@ namespace TestPlay.Bridge
         public static string CancelPath(string runId) => Path.Combine(RequestsDir, runId + ".cancel");
         public static string TombstonePath(string runId) => Path.Combine(RequestsDir, runId + ".tombstone.json");
         public static string ResponsePath(string runId) => Path.Combine(ResponsesDir, runId + ".resp.json");
+        public static string PendingResponsePath(string runId) => Path.Combine(ResponsesDir, runId + ".pending.json");
         public static string RunDir(string runId) => Path.Combine(RunsDir, runId);
     }
 }

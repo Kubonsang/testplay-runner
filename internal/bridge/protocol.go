@@ -36,6 +36,12 @@ const (
 	OutcomeBuildFailed   Outcome = "build_failed"   // license/build-target issue; exit 6
 	OutcomeBusy          Outcome = "busy"           // another run is in flight; caller falls back to cold
 	OutcomeRejected      Outcome = "rejected"       // Pristine Gate refused (e.g. in PlayMode); fall back
+	OutcomeIndeterminate Outcome = "indeterminate"  // execution may have started; exit 9, never rerun
+)
+
+const (
+	ExecutionStateNotStarted      = "not_started"
+	ExecutionStatePossiblyStarted = "possibly_started"
 )
 
 // Handshake is the liveness + identity document the bridge writes atomically to
@@ -90,8 +96,21 @@ type tombstoneFile struct {
 	SchemaVersion         string `json:"schema_version"`
 	BridgeProtocolVersion int    `json:"bridge_protocol_version"`
 	RunID                 string `json:"run_id"`
+	ExecutionState        string `json:"execution_state"`
 	Reason                string `json:"reason"`
 	CreatedAt             string `json:"created_at"`
+}
+
+// IndeterminateRunError means Unity may have executed some or all selected
+// tests but could not publish a trustworthy terminal result. Callers must not
+// cold-fallback, because doing so could repeat test side effects.
+type IndeterminateRunError struct {
+	RunID  string
+	Reason string
+}
+
+func (e *IndeterminateRunError) Error() string {
+	return "bridge: run " + e.RunID + " may have executed but its terminal result is indeterminate: " + e.Reason
 }
 
 // progressLine is one NDJSON line the bridge appends to status.ndjson. The

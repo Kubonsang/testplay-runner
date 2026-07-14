@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -281,6 +282,7 @@ func TestClientRun_TombstoneReturnsTransportFailureImmediately(t *testing.T) {
 			SchemaVersion:         "1",
 			BridgeProtocolVersion: ProtocolVersion,
 			RunID:                 runID,
+			ExecutionState:        ExecutionStateNotStarted,
 			Reason:                "terminal response could not be persisted",
 			CreatedAt:             time.Now().UTC().Format(time.RFC3339),
 		})
@@ -295,5 +297,35 @@ func TestClientRun_TombstoneReturnsTransportFailureImmediately(t *testing.T) {
 	}
 	if elapsed := time.Since(started); elapsed >= time.Second {
 		t.Fatalf("tombstone should fail promptly instead of waiting for timeout; elapsed=%s", elapsed)
+	}
+}
+
+func TestClientRun_PossiblyStartedTombstoneIsIndeterminate(t *testing.T) {
+	dir := t.TempDir()
+	c := newFastClient(dir)
+	runID := "20260101-120005-deadbee4"
+	reqPath := filepath.Join(c.dir, "requests", runID+".req.json")
+
+	go func() {
+		waitForRequest(t, reqPath)
+		_ = writeAtomicJSON(filepath.Join(c.dir, "requests", runID+".tombstone.json"), tombstoneFile{
+			SchemaVersion:         "1",
+			BridgeProtocolVersion: ProtocolVersion,
+			RunID:                 runID,
+			ExecutionState:        ExecutionStatePossiblyStarted,
+			Reason:                "owned run ended but terminal response could not be persisted",
+			CreatedAt:             time.Now().UTC().Format(time.RFC3339),
+		})
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err := c.Run(ctx, RunRequest{RunID: runID, TestPlatform: "edit_mode"}, nil)
+	var indeterminate *IndeterminateRunError
+	if !errors.As(err, &indeterminate) {
+		t.Fatalf("expected IndeterminateRunError, got %T: %v", err, err)
+	}
+	if indeterminate.RunID != runID || !strings.Contains(indeterminate.Reason, "could not be persisted") {
+		t.Fatalf("unexpected indeterminate error: %+v", indeterminate)
 	}
 }

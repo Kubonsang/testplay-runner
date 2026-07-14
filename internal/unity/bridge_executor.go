@@ -6,6 +6,7 @@ import (
 
 	"github.com/Kubonsang/testplay-runner/internal/bridge"
 	"github.com/Kubonsang/testplay-runner/internal/history"
+	"github.com/Kubonsang/testplay-runner/internal/parser"
 	"github.com/Kubonsang/testplay-runner/internal/status"
 )
 
@@ -64,6 +65,10 @@ func ExecuteBridge(ctx context.Context, client BridgeClient, opts ExecuteOptions
 			result, code := handleContextErr(ctx, err, opts)
 			return BridgeResult{Result: result, ExitCode: code}
 		}
+		var indeterminate *bridge.IndeterminateRunError
+		if errors.As(err, &indeterminate) {
+			return indeterminateBridgeResult(indeterminate.Error(), opts.StatusWriter)
+		}
 		// Any other IO/transport error means we could not obtain a trustworthy
 		// result; the honest move is to fall back to the cold path.
 		return BridgeResult{FellBack: true}
@@ -72,20 +77,33 @@ func ExecuteBridge(ctx context.Context, client BridgeClient, opts ExecuteOptions
 	switch outcome.Outcome {
 	case bridge.OutcomeCompleted:
 		// The bridge must have written results.xml. If it claims completion but
-		// did not write the XML (results_xml_written=false), fall back to cold —
-		// never derive a result from a missing file.
+		// did not write the XML, execution is indeterminate. Never cold-rerun a
+		// completed warm request because test side effects may already exist.
 		if !outcome.ResultsXMLWritten {
-			return BridgeResult{FellBack: true}
+			return indeterminateBridgeResult(
+				"bridge observed completion but did not persist results.xml",
+				opts.StatusWriter,
+			)
 		}
 		// The bridge wrote results.xml to opts.ResultsFile; classify it exactly
 		// as batchmode does (parseResults also writes the terminal done phase).
-		result, code := parseResults(opts, nil)
+		result, code := parseResultsWithoutStatus(opts, nil)
 		// A "completed" outcome must yield real results (exit 0/3). An exit 2
 		// here means the XML is missing/unparseable despite the bridge's claim;
-		// fall back to cold rather than report a phantom compile failure.
+		// return exit 9 rather than repeat a possibly side-effecting test run.
 		if code == 2 {
-			return BridgeResult{FellBack: true}
+			return indeterminateBridgeResult(
+				"bridge observed completion but results.xml is missing or unparseable",
+				opts.StatusWriter,
+			)
 		}
+		_ = opts.StatusWriter.Write(status.Status{
+			Phase:    status.PhaseDone,
+			Total:    result.Total,
+			Passed:   result.Passed,
+			Failed:   result.Failed,
+			ExitCode: &code,
+		})
 		return BridgeResult{Result: result, ExitCode: code, Warnings: outcome.NonPristine}
 
 	case bridge.OutcomeCompileFailed:
@@ -98,8 +116,31 @@ func ExecuteBridge(ctx context.Context, client BridgeClient, opts ExecuteOptions
 		result, code := classifyNoResults(nil, true)
 		return BridgeResult{Result: result, ExitCode: code, Warnings: outcome.NonPristine}
 
+	case bridge.OutcomeIndeterminate:
+		reason := "warm run may have executed but no trustworthy terminal result was produced; refusing to rerun"
+		if len(outcome.NonPristine) > 0 {
+			reason = outcome.NonPristine[0]
+		}
+		return indeterminateBridgeResult(reason, opts.StatusWriter)
+
 	default:
 		// busy, rejected, or any unrecognized outcome → fall back to cold.
 		return BridgeResult{FellBack: true}
+	}
+}
+
+func indeterminateBridgeResult(reason string, sw status.WriterInterface) BridgeResult {
+	exitCode := 9
+	_ = sw.Write(status.Status{Phase: status.PhaseDone, ExitCode: &exitCode})
+	return BridgeResult{
+		Result: &history.RunResult{
+			Tests:       make([]parser.TestCase, 0),
+			Errors:      make([]history.CompileError, 0),
+			NewFailures: nil,
+		},
+		ExitCode: 9,
+		Warnings: []string{
+			"warm run may have executed but its terminal result is indeterminate; tests were not rerun: " + reason,
+		},
 	}
 }

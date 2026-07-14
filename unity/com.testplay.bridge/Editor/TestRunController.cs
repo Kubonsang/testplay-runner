@@ -22,7 +22,8 @@ namespace TestPlay.Bridge
         private readonly Action<string> _onPersistenceFailure;
         private readonly RunOwnershipTracker _ownership = new RunOwnershipTracker();
         private int _total;
-        private bool _done;
+        private bool _sealed;
+        private bool _runFinishedObserved;
 
         public string OwnedRunGuid { get; private set; } = "";
 
@@ -58,12 +59,12 @@ namespace TestPlay.Bridge
         /// </summary>
         internal void SealForCancellation()
         {
-            _done = true;
+            _sealed = true;
         }
 
         public void RunStarted(ITestAdaptor testsToRun)
         {
-            if (_done)
+            if (_sealed || _runFinishedObserved)
                 return;
 
             _ownership.ObserveRunStarted();
@@ -80,7 +81,7 @@ namespace TestPlay.Bridge
 
         public void TestStarted(ITestAdaptor test)
         {
-            if (_done || !_ownership.CanAcceptEvents)
+            if (_sealed || _runFinishedObserved || !_ownership.CanAcceptEvents)
                 return;
             if (test != null && !test.IsSuite)
                 _stream.CurrentTest(test.FullName, _total);
@@ -93,7 +94,7 @@ namespace TestPlay.Bridge
 
         public void RunFinished(ITestResultAdaptor result)
         {
-            if (_done)
+            if (_sealed || _runFinishedObserved)
                 return;
 
             if (!_ownership.CanAcceptCompletion)
@@ -103,7 +104,6 @@ namespace TestPlay.Bridge
                 return;
             }
 
-            _done = true;
             try
             {
                 ResultXmlWriter.Write(_req.results_xml, result);
@@ -119,7 +119,12 @@ namespace TestPlay.Bridge
                     non_pristine = _nonPristine,
                     finished_at = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture),
                 };
-                AtomicFile.WriteAllText(BridgePaths.ResponsePath(_req.run_id), JsonUtility.ToJson(resp, true));
+
+                // RunFinished may fire while TestRunnerApi still reports this
+                // GUID active. Keep the terminal payload private until the
+                // server observes authoritative inactivity on later updates.
+                AtomicFile.WriteAllText(BridgePaths.PendingResponsePath(_req.run_id), JsonUtility.ToJson(resp, true));
+                _runFinishedObserved = true;
             }
             catch (Exception e)
             {
@@ -133,7 +138,10 @@ namespace TestPlay.Bridge
 
         public void OnError(string message)
         {
-            if (_done)
+            // Test Framework can report cleanup/scene-restore errors after
+            // RunFinished. Keep this callback alive until the owned GUID is
+            // authoritatively inactive and the server publishes completion.
+            if (_sealed)
                 return;
 
             BeginCancellation(
@@ -144,10 +152,10 @@ namespace TestPlay.Bridge
 
         private void BeginCancellation(string reason)
         {
-            if (_done)
+            if (_sealed)
                 return;
 
-            _done = true;
+            _sealed = true;
             _beginCancellation?.Invoke(reason);
         }
     }

@@ -412,11 +412,24 @@ func classifyNoResults(compileErrors []history.CompileError, buildFailure bool) 
 // parseResults reads the XML results file and returns the run result.
 // It is shared between single-phase and two-phase executors.
 func parseResults(opts ExecuteOptions, stderrTail []byte) (*history.RunResult, int) {
+	return parseResultsCore(opts, stderrTail, true)
+}
+
+// parseResultsWithoutStatus lets the warm bridge classify the XML before it
+// emits exactly one terminal status. A completed bridge response with missing
+// or invalid XML becomes exit 9, not the cold parser's preliminary exit 2.
+func parseResultsWithoutStatus(opts ExecuteOptions, stderrTail []byte) (*history.RunResult, int) {
+	return parseResultsCore(opts, stderrTail, false)
+}
+
+func parseResultsCore(opts ExecuteOptions, stderrTail []byte, writeTerminalStatus bool) (*history.RunResult, int) {
 	// Check for results XML
 	xmlData, xmlErr := os.ReadFile(opts.ResultsFile)
 	if xmlErr != nil {
 		// No XML file — determine cause from stderr.
-		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
+		if writeTerminalStatus {
+			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
+		}
 		compileErrors := ParseCompileErrorsWithProject(stderrTail, opts.ProjectPath)
 		return classifyNoResults(compileErrors, ParseBuildFailure(stderrTail))
 	}
@@ -425,7 +438,9 @@ func parseResults(opts ExecuteOptions, stderrTail []byte) (*history.RunResult, i
 	// (Unity can emit compile errors and produce a partial/empty XML)
 	compileErrors := ParseCompileErrorsWithProject(stderrTail, opts.ProjectPath)
 	if len(compileErrors) > 0 {
-		_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
+		if writeTerminalStatus {
+			_ = opts.StatusWriter.Write(status.Status{Phase: status.PhaseDone})
+		}
 		return &history.RunResult{
 			SchemaVersion: "1",
 			ExitCode:      2,
@@ -454,13 +469,15 @@ func parseResults(opts ExecuteOptions, stderrTail []byte) (*history.RunResult, i
 		exitCode = ExitNoTestsMatched
 	}
 
-	_ = opts.StatusWriter.Write(status.Status{
-		Phase:    status.PhaseDone,
-		Total:    parseResult.Total,
-		Passed:   parseResult.Passed,
-		Failed:   parseResult.Failed,
-		ExitCode: &exitCode,
-	})
+	if writeTerminalStatus {
+		_ = opts.StatusWriter.Write(status.Status{
+			Phase:    status.PhaseDone,
+			Total:    parseResult.Total,
+			Passed:   parseResult.Passed,
+			Failed:   parseResult.Failed,
+			ExitCode: &exitCode,
+		})
+	}
 
 	return &history.RunResult{
 		SchemaVersion: "1",
