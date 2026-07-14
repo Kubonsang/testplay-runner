@@ -1,10 +1,14 @@
 # ADR 0001 — Warm-editor bridge cancellation: abandon-and-timeout, not bridge-side hard cancel
 
-- **Status:** Accepted (v0.10.0)
+- **Status:** Superseded by [ADR 0002](0002-warm-bridge-run-ownership.md) (v0.11.0)
 - **Date:** 2026-06-23
 - **Context source:** code review of PR #30 (warm-editor bridge), finding "#4 — a hung warm test pins the bridge".
 
 > 한 줄 요약: warm 브릿지의 취소는 **Go가 abandon-and-timeout으로 소유**하고, C#은 실행 중인 TestRunnerApi run을 강제 중단하지 **않는다**. 대신 active run이 있으면 handshake가 busy로 보고되어, orphan/hung run이 레이스 없이 **안전하게 cold로 degrade**된다. 브릿지측 hard cancellation은 의도적으로 deferred.
+
+> v0.11 note: the no-hard-cancel safety premise remains, but the abandon-only
+> terminal protocol below was replaced by session binding, owned run GUIDs,
+> durable execution-state tombstones, and no-replay handling in ADR 0002.
 
 ## Context
 

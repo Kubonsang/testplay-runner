@@ -16,7 +16,7 @@ It is a **transparent backend**: agents and CI see identical output, plus a
 ## Requirements
 
 - Unity 2021.3+ with the Test Framework package (`com.unity.test-framework`).
-- TestPlay Runner v0.10.0+.
+- TestPlay Runner v0.11.0 with the matching protocol-2 bridge package.
 
 ## Install (in-repo UPM)
 
@@ -25,13 +25,18 @@ Add to your project's `Packages/manifest.json` (path or git dependency):
 ```json
 {
   "dependencies": {
-    "com.testplay.bridge": "file:../path/to/FastPlay_Runner/unity/com.testplay.bridge"
+    "com.testplay.bridge": "file:../path/to/testplay-runner/unity/com.testplay.bridge"
   }
 }
 ```
 
 The C# protocol version is kept in lockstep with the Go CLI in this repo; install
 the package version matching your `testplay` version.
+
+> **Breaking upgrade from v0.10:** protocol 2 binds every request to one Editor
+> session and one owned Test Framework run GUID. Upgrade the CLI and package
+> together. A protocol-1/2 mismatch is refused and may fall back to cold; it is
+> never guessed compatible.
 
 ## Opt-in (dormant by default)
 
@@ -49,12 +54,14 @@ the **Pristine Gate** passes, routes the run through the Editor. Otherwise it
 falls back to the cold shadow/process path automatically — correctness wins by
 default.
 
-## Scope (v0.10.0)
+## Scope (v0.11.0)
 
 - **EditMode** tests only. PlayMode requests are refused (run cold).
 - One run at a time; concurrent `testplay run`s degrade gracefully (one warm, one
   shadow).
 - `compile_ms` + `test_ms` (two-phase) configs always run cold.
+- A request that may have executed but lacks authoritative completion returns
+  exit 9 and is never replayed through the cold path.
 
 ## Correctness (Pristine Gate)
 
@@ -64,8 +71,10 @@ domain for the code under test. The bridge:
 - **refuses** (→ cold) in Play Mode or for PlayMode requests;
 - **waits** for compilation/import to settle (bounded), running compile then;
 - reports compile errors as the same `exit 2` + `errors[]` a cold run would;
+- accepts completion only from the owned Test Framework run GUID and waits for
+  authoritative inactive observations before exposing the terminal response;
 - **discloses** non-result-changing states (e.g. unsaved scenes) via `warnings`,
   and never auto-saves your editor.
 
-See the repo `RELEASE-PLAN.md` (v0.10.0) for the validation spikes that gate this
-behavior.
+See [`docs/27_v0.11.0_validation.md`](../../docs/27_v0.11.0_validation.md) for
+the protocol-2 ownership, cancellation, restart, and replay-safety evidence.

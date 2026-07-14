@@ -111,7 +111,7 @@ testplay version
 ```json
 {
   "schema_version": "1",
-  "version": "v0.10.0"
+  "version": "v0.11.0"
 }
 ```
 
@@ -451,11 +451,26 @@ cold 실행과 동등한 결과를 보장할 수 없으면 브릿지는 자동�
 - 에디터 실행 시 `TESTPLAY_BRIDGE_ENABLE=1` 환경변수, **또는**
 - 빈 `<project>/.testplay/bridge/ENABLE` sentinel 파일.
 
+**v0.11 업그레이드:** CLI와 `com.testplay.bridge` 패키지를 반드시 함께
+업데이트하세요. Protocol 2는 요청을 하나의 에디터 세션과 소유한 Test
+Framework run에 결속하며, v0.10의 protocol 1 패키지와 의도적으로 호환되지
+않습니다. 버전이 맞지 않으면 추정하지 않고 거부하며 cold 폴백을 사용할 수
+있습니다.
+
 **Pristine Gate (정확성).** warm 결과는 warm 도메인이 테스트 대상 코드에 대해 fresh cold 도메인과 동등할 때만 반환됩니다. 브릿지는 Play Mode이거나 PlayMode 요청이면 거부(→ cold)하고, 컴파일/임포트가 안정될 때까지 대기한 뒤(컴파일 에러는 cold와 동일하게 `exit 2` + `errors[]`로 보고), 결과를 바꾸지 않는 상태(예: 미저장 씬)는 `warnings`로 공개합니다 — 에디터를 자동 저장하지 않습니다.
 
-**런타임 파일**은 `<project>/.testplay/bridge/` 아래에 위치합니다: `handshake.json`(CLI가 probe하는 liveness 하트비트), `requests/`, `responses/`, `runs/<run_id>/{status.ndjson, compile-errors.json}`. 브릿지는 `results.xml`을 기존 `.testplay/runs/<run_id>/`에 작성하므로 기존 파싱 파이프라인이 그대로 재사용됩니다.
+**런타임 파일**은 `<project>/.testplay/bridge/` 아래에 위치합니다:
+`handshake.json`(세션에 결속된 liveness 하트비트), `requests/`, `responses/`,
+영속 request tombstone, `runs/<run_id>/{status.ndjson, compile-errors.json}`.
+브릿지는 `results.xml`을 기존 `.testplay/runs/<run_id>/`에 작성하므로 기존
+파싱 파이프라인이 그대로 재사용됩니다.
 
-**범위 (v0.10.0):** EditMode 전용. PlayMode-warm과 시나리오/네트워크 warm 오케스트레이션은 deferred이며 당분간 cold로 실행됩니다. exit code(0–9)와 6-command 인터페이스는 변경 없습니다. [`unity/com.testplay.bridge/README.md`](unity/com.testplay.bridge/README.md) 참조.
+**범위 (v0.11.0):** EditMode 전용. PlayMode-warm과 시나리오/네트워크 warm
+오케스트레이션은 deferred이며 당분간 cold로 실행됩니다. exit code는
+0–10이고 6-command 인터페이스는 변경 없습니다. 브릿지 run이 시작됐을 수
+있지만 완료를 증명할 수 없으면 exit 9로 끝내며 cold로 자동 재실행하지
+않습니다. [`unity/com.testplay.bridge/README.md`](unity/com.testplay.bridge/README.md)
+참조.
 
 ## 섀도우 워크스페이스
 

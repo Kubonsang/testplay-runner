@@ -111,7 +111,7 @@ testplay version
 ```json
 {
   "schema_version": "1",
-  "version": "v0.10.0"
+  "version": "v0.11.0"
 }
 ```
 
@@ -451,11 +451,24 @@ If the bridge can't guarantee a result equivalent to a cold run, it falls back a
 - `TESTPLAY_BRIDGE_ENABLE=1` environment variable when launching the Editor, **or**
 - an empty `<project>/.testplay/bridge/ENABLE` sentinel file.
 
+**v0.11 upgrade:** update the CLI and `com.testplay.bridge` package together.
+Protocol 2 binds requests to one Editor session and one owned Test Framework run;
+it is intentionally incompatible with the v0.10 protocol-1 package. A mismatch
+is refused rather than guessed and may use the cold fallback.
+
 **Pristine Gate (correctness).** A warm result is returned only when the warm domain is equivalent to a fresh cold one for the code under test. The bridge refuses (→ cold) in Play Mode or for PlayMode requests, waits for compilation/import to settle (then reports compile errors as the same `exit 2` + `errors[]` a cold run would), and discloses non-result-changing states (e.g. unsaved scenes) via `warnings` — it never auto-saves your editor.
 
-**Runtime files** live under `<project>/.testplay/bridge/`: `handshake.json` (liveness heartbeat the CLI probes), `requests/`, `responses/`, and `runs/<run_id>/{status.ndjson, compile-errors.json}`. The bridge writes `results.xml` to the normal `.testplay/runs/<run_id>/` so the existing parse pipeline is reused unchanged.
+**Runtime files** live under `<project>/.testplay/bridge/`: `handshake.json`
+(session-bound liveness heartbeat), `requests/`, `responses/`, durable request
+tombstones, and `runs/<run_id>/{status.ndjson, compile-errors.json}`. The bridge
+writes `results.xml` to the normal `.testplay/runs/<run_id>/` so the existing
+parse pipeline is reused unchanged.
 
-**Scope (v0.10.0):** EditMode only. PlayMode-warm and scenario/network warm orchestration are deferred; those always run cold for now. Exit codes (0–9) and the six-command interface are unchanged. See [`unity/com.testplay.bridge/README.md`](unity/com.testplay.bridge/README.md).
+**Scope (v0.11.0):** EditMode only. PlayMode-warm and scenario/network warm
+orchestration are deferred; those always run cold for now. Exit codes are 0–10
+and the six-command interface is unchanged. If a bridge run may have started but
+cannot be proven complete, testplay returns exit 9 and never cold-reruns it.
+See [`unity/com.testplay.bridge/README.md`](unity/com.testplay.bridge/README.md).
 
 ## Shadow Workspace
 

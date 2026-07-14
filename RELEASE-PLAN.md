@@ -1,6 +1,6 @@
 # 📈 testplay Release Plan & Version History
 
-**현재 버전:** `v0.10.0`
+**현재 버전:** `v0.11.0`
 **목표:** 단순한 로컬 테스트 래퍼를 넘어, AI 에이전트에 최적화된 시나리오 기반 멀티 인스턴스 러너로 단계적으로 확장
 
 > 이 문서는 확정 약속이 아니라, 베타 진행 상황에 따라 조정될 수 있는 릴리즈 계획을 정리한 것입니다.  
@@ -315,6 +315,38 @@
   - **검증 결과 (Unity 6000.3.8f1 + 2022.3.62f3 LTS):** 스파이크 1–5 + #32(LTS) 모두 통과 — byte-identical parity(parameterized+failing), warm sidecar 정확(cold는 Unity 6에서 under-report → issue #31), SIGINT→exit 8 + 에디터 복구, CI windows-latest atomic 0 torn, 2022.3에서 ToXml(#7) 정상. 증거: `docs/25`. (선택: 2021.3 LTS 추가 검증.)
 - **명시적 비목표 (이후 버전):** PlayMode-warm, scenario/network warm orchestration, bridge-side hard cancellation.
 - **버전 규칙 준수:** 새 태그 `v0.10.0` 발행 완료 (2026-06-24, GoReleaser 크로스플랫폼 바이너리 배포). 원격에 푸시된 태그는 절대 덮어쓰지 않는다.
+
+## ✅ v0.11.0 (The Honest Contract Hardening) — shipped 2026-07-14
+**테마:** AI agent에게 틀린 성공이나 중복 실행을 보여 주는 silent-wrong 경로를 fail-closed 계약으로 전환한다.
+
+- **CLI·config 정직성:** cold 실행의 timeout/signal이 exit 4/8로 복구되고,
+  필터가 0개 테스트를 선택하면 exit 10, Unity 실행 실패는 exit 1 + hint,
+  잘못된 CLI 사용과 알 수 없는 config key는 exit 5를 반환한다. config는
+  하나의 strict JSON 값만 허용한다.
+- **목록·경로 정직성:** list cache schema 2가 전체 inventory 여부와
+  test platform을 함께 기록한다. filtered run은 cache를 오염시키지 않고,
+  `project_path`/`result_dir`는 config와 project 기준으로 고정된다.
+- **scenario 격리:** 인스턴스별 `compare_run`, filesystem identity 기반
+  동일-project 판정, Windows junction/case alias 격리, phase validation,
+  exit 10이 exit 1–9를 가리지 않는 집계 규칙을 제공한다.
+- **Bridge protocol 2:** request를 `bridge_session_id`와 Test Framework run
+  GUID에 결속한다. foreign run은 결과로 받을 수 없고, `RunFinished` 뒤
+  cleanup까지 authoritative inactive를 확인한 다음에만 terminal response를
+  공개한다.
+- **No replay:** 실행 전임이 증명된 `not_started`만 cold fallback한다.
+  `possibly_started`, 손상·누락된 완료 XML, domain reload/transport ambiguity,
+  terminal publish 실패는 하나의 exit 9로 끝나며 자동 재실행하지 않는다.
+- **배포 안전성:** OS matrix는 fail-fast를 끄고 Linux/Windows에서 Go 1.22.12
+  compatibility floor를 유지한다. macOS와 release build는 Go 1.26.4를 사용해
+  macOS 26이 요구하는 Mach-O `LC_UUID`를 포함한다. 수동 Release Preflight가
+  5개 archive, checksums, CLI version, Darwin UUID를 태그 전에 검사한다.
+- **릴리즈 게이트:** Go test/vet/build/E2E compile, shell self-check 9/9,
+  Unity package tests 11/11, warm sequential/foreign/domain-reload/editor-restart/
+  pre-existing-broken-compile spikes, 실제 GNF_ bridge 1/1·3/3·49/49 및
+  no-match exit 10. 상세 증거: `docs/27_v0.11.0_validation.md`.
+- **업그레이드 규칙:** CLI와 `com.testplay.bridge`를 함께 v0.11.0으로 올린다.
+  protocol 1과 2는 의도적으로 호환되지 않는다. 원격 태그는 절대 이동하지
+  않으며 문제 발생 시 v0.11.1을 발행한다.
 
 ## 🚀 v1.0.0 (NGO Harness)
 **테마:** v0.9 primitives 위에 NGO(Netcode for GameObjects) 전용 sugar

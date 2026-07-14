@@ -12,7 +12,7 @@ Agents interact via six commands: `version`, `check`, `list`, `run`, `result`, `
 
 **Identity anchor:** testplay is a *contract layer* (call it "the honest contract" internally — see commit history). It is NOT a speed layer for human TDD. Speed-vs-correctness trade-offs always resolve in favor of correctness/clarity for automated callers. When evaluating feature requests like "make it faster in the editor", the answer is: that's the Test Runner window's job, not testplay's. Cite this paragraph. **Bridge corollary (v0.10.0):** the warm-editor bridge does not violate this — the Test Runner window is a human GUI that automated callers *cannot* use, so the bridge gives agents/CI the warm path humans already have, *only* as a transparent backend behind the unchanged JSON/exit-code contract. It is enforced by a resolution rule, not intent: the warm path is forbidden whenever warm-vs-cold could change *results*, and the Pristine Gate self-demotes to the cold path. Speed/disk savings are a side effect of reusing a warm domain, never a promised capability.
 
-**Current version:** `v0.10.0` (main). Warm-Editor Bridge — a 3-tier auto backend (`bridge → shadow → process`) where a greenfield C# Editor package (`unity/com.testplay.bridge`, opt-in via `TESTPLAY_BRIDGE_ENABLE`/`.testplay/bridge/ENABLE`) runs EditMode tests in the already-open warm Editor via `TestRunnerApi` and writes the same NUnit `results.xml` a cold run would — eliminating the shadow-workspace copy (용량) and the cold domain reload (시간). File-based protocol under `.testplay/bridge/`; `unity.ExecuteBridge` reuses `parseResults`/`classifyNoResults` for byte-identical exit codes; `backend` field discloses which engine ran; Pristine Gate (`internal` C# `PristineGate`) keeps the warm path honest. Two-phase configs and scenario mode always run cold. **Identity locked at v0.8.0:** contract layer for agents+CI, not a TDD speed tool — see Identity anchor above.
+**Current version:** `v0.11.0` (main). Honest-Contract Hardening — the v0.10 warm bridge now uses protocol 2 session binding and owned Test Framework run GUIDs; ambiguous or possibly-started executions terminate as exit 9 and are never replayed through the cold path. CLI/config/list/scenario contracts fail closed: strict single-value config decode, exit 10 for a filtered zero-test run, schema-2 inventory cache, filesystem-aware project identity, and per-instance scenario baselines. The 3-tier backend remains `bridge → shadow → process`; two-phase configs and scenario mode always run cold. **Identity locked at v0.8.0:** contract layer for agents+CI, not a TDD speed tool — see Identity anchor above.
 
 **Ultimate goal:** PlayMode + network environment testing.
 
@@ -68,6 +68,13 @@ unity/
 ```
 
 The warm bridge has two halves: the Go client in `internal/bridge` (handshake `Probe` + request/response/progress over `.testplay/bridge/`) plus `unity.ExecuteBridge` (sibling of `unity.Execute`, reuses `parseResults`/`classifyNoResults`), and the C# `unity/com.testplay.bridge` package that drives `TestRunnerApi` in the warm Editor. Their protocol version is locked in lockstep (`bridge.ProtocolVersion` ↔ `BridgeProtocol.Version`).
+
+**Protocol 2 terminal rule (v0.11.0):** every request is bound to one
+`bridge_session_id`, and only callbacks carrying the owned Test Framework run
+GUID may complete it. A durable terminal marker records whether execution was
+`not_started` or `possibly_started`. Only `not_started` may fall back to cold;
+`possibly_started`, missing/corrupt completed XML, domain-reload ambiguity, and
+terminal publish failure all produce one exit-9 terminal status with no replay.
 
 ## CLI Contract (stdout = JSON only)
 
@@ -343,6 +350,25 @@ Cuts the two physical bottlenecks of "Editor open" runs — the shadow-workspace
 - **`--bridge` / `--no-bridge` flags + `bridge.enabled` config**; two-phase and scenario mode always run cold.
 - **Ship gate** — `e2e/bridge_parity_test.go` (`//go:build e2e`) asserts cold/bridge parity. The riskiest Unity behaviors (TestRunnerApi cancellation, `ToXml()` fidelity, compile-settle) were validated against real Unity (6000.3.8f1 + 2022.3.62f3 LTS) before tagging — see `docs/25`.
 - **Deferred:** PlayMode-warm, scenario/network warm orchestration, bridge-side hard cancellation.
+
+### v0.11.0 ✅ — The Honest Contract Hardening (shipped 2026-07-14)
+Closes the silent-wrong and duplicate-execution paths found by the pre-v1.0 audit.
+- **Exit honesty** — cold timeout/signal returns 4/8; filtered zero-test returns
+  10; launch failures return 1 + hint; malformed config/CLI usage returns 5.
+- **Fail-closed inputs and inventory** — strict one-value config decode, schema-2
+  list cache with full-inventory/platform provenance, and filtered-run cache
+  protection.
+- **Scenario isolation** — per-instance baselines, filesystem-aware same-project
+  identity (including Windows junction/case aliases), phase validation, and
+  aggregate precedence where exit 10 never masks exits 1–9.
+- **Bridge protocol 2** — Editor-session binding, owned Test Framework run GUID,
+  cleanup-aware pending completion, durable execution-state tombstones, and one
+  terminal exit-9/no-replay result for any `possibly_started` ambiguity.
+- **Release safety** — independent 3-OS CI, Go 1.26.4 Darwin/release builds, and
+  a pre-tag artifact/`LC_UUID` preflight. CLI and UPM package upgrade together.
+- **Evidence** — Unity 6000.3.10f1 package tests 11/11; real warm sequential,
+  foreign-run, domain-reload, editor-restart, broken-compile recovery, and GNF_
+  1/1 + 3/3 + 49/49 + exit-10 gates. See `docs/27_v0.11.0_validation.md`.
 
 ### Remaining items (v1.0+)
 
