@@ -24,9 +24,26 @@ jobs:
           # cross-compiled Darwin artifacts while the module remains Go 1.22 compatible.
           go-version: "1.26.4"
 
+      - name: Verify release metadata
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          source_version="$(sed -n 's/^var version = "\(v[^"]*\)"$/\1/p' cmd/testplay/version.go)"
+          package_version="$(jq -r .version unity/com.testplay.bridge/package.json)"
+          test "$source_version" = "$RELEASE_VERSION"
+          test "$package_version" = "${RELEASE_VERSION#v}"
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Run vet
+        run: go vet ./...
+
       - uses: goreleaser/goreleaser-action@v6
         with:
-          version: "~> v2"
+          version: "v2.17.0"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

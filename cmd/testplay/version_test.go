@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -17,8 +20,8 @@ func TestVersionCmd_OutputsJSONWithSchemaVersion(t *testing.T) {
 	if out["schema_version"] != "1" {
 		t.Errorf("schema_version: got %v, want \"1\"", out["schema_version"])
 	}
-	if out["version"] == "" || out["version"] == nil {
-		t.Errorf("version field missing or empty")
+	if out["version"] != "v0.11.0" {
+		t.Errorf("version: got %v, want v0.11.0", out["version"])
 	}
 }
 
@@ -59,5 +62,24 @@ func TestVersionCmd_CommitAndDatePresentWhenSet(t *testing.T) {
 	}
 	if out["date"] != "2026-03-27" {
 		t.Errorf("date: got %v, want 2026-03-27", out["date"])
+	}
+}
+
+func TestVersionMatchesBridgePackage(t *testing.T) {
+	path := filepath.Join("..", "..", "unity", "com.testplay.bridge", "package.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read bridge package metadata: %v", err)
+	}
+
+	var metadata struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		t.Fatalf("decode bridge package metadata: %v", err)
+	}
+
+	if got, want := metadata.Version, strings.TrimPrefix(version, "v"); got != want {
+		t.Fatalf("bridge package version: got %q, want %q to match CLI %q", got, want, version)
 	}
 }
