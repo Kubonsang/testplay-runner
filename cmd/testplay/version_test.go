@@ -17,8 +17,8 @@ func TestVersionCmd_OutputsJSONWithSchemaVersion(t *testing.T) {
 	if out["schema_version"] != "1" {
 		t.Errorf("schema_version: got %v, want \"1\"", out["schema_version"])
 	}
-	if out["version"] == "" || out["version"] == nil {
-		t.Errorf("version field missing or empty")
+	if out["version"] != "v0.11.0" {
+		t.Errorf("version: got %v, want v0.11.0", out["version"])
 	}
 }
 
