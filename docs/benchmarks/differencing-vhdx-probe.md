@@ -1,58 +1,76 @@
 # Differencing VHDX workspace probe
 
-## Purpose
-
-This probe evaluates a Windows-native copy-on-write workspace primitive before
-it is connected to Unity, the Image backend, or a long-running service. It
-creates one immutable Parent VHDX and two independent differencing children,
-then checks Parent isolation, sibling isolation, reattach persistence, file
-growth, detach, and cleanup.
-
-The probe is research code under `internal/vhdxprobe`. It is not exposed by the
-public `testplay` CLI and does not alter `LibraryMaterializer`.
-
-## Architecture
+## Status
 
 ```text
-512 MiB dynamic Parent VHDX
-├─ Child A differencing VHDX
-└─ Child B differencing VHDX
+PROVEN — standalone VHDX lifecycle and isolation
 ```
 
-The Parent contains a deterministic 64 MiB payload and JSON manifest. Payload
-blocks include their block index so that mutations and parity checks are
-repeatable.
+This verdict is limited to the standalone Windows Differencing VHDX probe. It
+does not prove Unity Library compatibility, production latency, crash
+recovery, concurrent workers, or daemon/service readiness.
 
-## Windows environment
+## Scope
 
-The implementation targets 64-bit Windows and the Microsoft VHDX provider.
-Development structure layouts were checked against Windows SDK
-`10.0.26100.0` `virtdisk.h`.
+The probe creates a dynamic Parent VHDX and two independent differencing
+children, then verifies:
 
-The initial development session reported:
+- Parent creation, initialization, seed, and detach
+- Child A/B creation from the same immutable Parent
+- Parent isolation
+- sibling isolation
+- detach/reattach persistence
+- cleanup and absence of residual disks, mounts, and VHDX files
 
-```text
-WindowsProductName: Windows 10 Pro
-WindowsVersion: 2009
-DisplayVersion: 25H2
-Build: 26200.8875
-Architecture: amd64
-Go: go1.26.2 windows/amd64
-```
+The implementation remains research code under `internal/vhdxprobe`. It is not
+connected to the public `testplay` CLI, `LibraryMaterializer`, the Image
+backend, Unity, or a long-running service.
 
-## Permissions
+## Hardware evidence
 
-Unit tests and compilation do not require elevation. The integration probe
-checks administrator membership before it creates a VHDX. A non-elevated
-process returns the structured `not-elevated` error without creating,
-attaching, initializing, or formatting anything.
+The evidence was recorded from an elevated PowerShell session on the actual
+Windows host. The one-run probe and the five-run repetition both passed. The
+console output was supplied as user-recorded hardware evidence; a repository
+raw transcript artifact was not preserved. GitHub CI, cross-builds, and mock
+tests are not treated as hardware evidence.
 
-Run the integration command only from an elevated PowerShell after confirming
-that the probe root is dedicated and empty.
+| Environment | Value |
+|---|---|
+| Windows edition | Windows 10 Pro |
+| Display version | 25H2 |
+| OS build | 26200.8875 |
+| Architecture | amd64 |
+| Go | go1.26.2 windows/amd64 |
+| Shell | elevated PowerShell |
+| Probe root | `C:\Dev\testplay-vhdx-probe` |
+| Virtual disk API | `VirtDisk.dll` |
+| Parent virtual size | 512 MiB |
+| Logical payload | 64 MiB |
+| Validation | one run, then five repetitions |
 
-## APIs
+## Correctness
 
-The core lifecycle calls `VirtDisk.dll` directly:
+| Check | Result |
+|---|---:|
+| Parent create/initialize/seed/detach | 5/5 PASS |
+| Child A/B differencing creation | 5/5 PASS |
+| Parent isolation | 5/5 PASS |
+| Sibling isolation | 5/5 PASS |
+| Reattach persistence | 5/5 PASS |
+| Parent VHDX SHA-256 unchanged | 5/5 PASS |
+| Deterministic payload hash unchanged | 5/5 PASS |
+| Cleanup | 5/5 PASS |
+| Residual File Backed Virtual disks | 0 |
+| Residual mount points | 0 |
+| Residual probe artifacts/VHDX files | 0 |
+
+The preceding one-run validation also passed all isolation, persistence, and
+cleanup assertions. Its complete Parent VHDX SHA-256 was identical before and
+after the Child operations.
+
+## API and safety boundary
+
+The core lifecycle calls these documented `VirtDisk.dll` operations:
 
 - `CreateVirtualDisk`
 - `OpenVirtualDisk`
@@ -61,104 +79,109 @@ The core lifecycle calls `VirtDisk.dll` directly:
 - `GetVirtualDiskPhysicalPath`
 - `GetVirtualDiskInformation`
 
-Dynamic and differencing VHDX creation uses
-`CREATE_VIRTUAL_DISK_PARAMETERS` Version 2. Child creation supplies the
-absolute Parent path and the Microsoft VHDX storage type.
+The integration-only filesystem bootstrap accepts only a physical path
+returned by the handle in the exact form `\\.\PhysicalDriveN`. Before
+initialization or formatting, the single matching `Get-Disk -Number N` result
+must report `File Backed Virtual`, must be RAW, and must contain no partitions.
+The disk number is never guessed or supplied by a caller. Any missing,
+ambiguous, non-file-backed, non-RAW, or already-partitioned candidate stops the
+probe.
 
-The integration-only filesystem bootstrap uses built-in Storage PowerShell
-cmdlets after the VirtDisk handle supplies a path of the exact form
-`\\.\PhysicalDriveN`:
+`AttachVirtualDisk` uses `ATTACH_VIRTUAL_DISK_FLAG_NO_DRIVE_LETTER`. A
+probe-owned empty directory is used as the partition access path, so no global
+drive letter is selected. Existing physical disks, partitions, and volumes are
+outside the mutation boundary.
 
-- `Get-Disk`
-- `Initialize-Disk`
-- `New-Partition`
-- `Format-Volume`
-- `Add-PartitionAccessPath`
-- `Remove-PartitionAccessPath`
+## File-size metrics
 
-`Initialize-Disk` and `Format-Volume` are unreachable until the single
-corresponding `Get-Disk -Number N` result reports `File Backed Virtual`, is
-RAW, and has no partitions. No external or user-supplied disk number is
-accepted.
+The reported byte fields do not all represent the same kind of size:
 
-Microsoft API references:
+| Metric | Code definition and measurement point | Observed |
+|---|---|---:|
+| Parent virtual | `GetVirtualDiskInformation(...).VirtualSize` | 512 MiB |
+| Parent file | `os.Stat(parent).Size()` after Parent detach and hash | 164 MiB |
+| Child initial | `os.Stat(childA).Size()` after creation and Parent-link verification, before attach | 4 MiB |
+| Child after attach | `os.Stat(childA).Size()` while Child A is attached and mounted, before mutation | 36 MiB |
+| Child after mutation | `os.Stat(childA).Size()` after mutation, unmount, and detach | 19 MiB |
+| Child after reattach | `os.Stat(childA).Size()` after persistence verification, unmount, and detach | 19 MiB |
+| Logical payload | deterministic payload length | 64 MiB |
 
-- <https://learn.microsoft.com/windows/win32/api/virtdisk/nf-virtdisk-createvirtualdisk>
-- <https://learn.microsoft.com/windows/win32/api/virtdisk/nf-virtdisk-openvirtualdisk>
-- <https://learn.microsoft.com/windows/win32/api/virtdisk/nf-virtdisk-attachvirtualdisk>
-- <https://learn.microsoft.com/windows/win32/api/virtdisk/nf-virtdisk-detachvirtualdisk>
-- <https://learn.microsoft.com/windows/win32/api/virtdisk/nf-virtdisk-getvirtualdiskphysicalpath>
+`os.Stat().Size()` is the logical file length (EOF). It is not allocated
+filesystem bytes, compressed size, sparse physical allocation, or VHDX virtual
+capacity.
 
-## Parent fixture
+All five repetitions reported the same sizes. In particular, Child A was 36
+MiB while attached before mutation and 19 MiB after mutation and detach. This
+is not a monotonic growth curve and must not be presented as one. The decrease
+does not by itself show a CoW correctness failure: Parent and sibling
+isolation, the mutated payload hash, reattach persistence, and cleanup all
+passed. VHDX metadata finalization, sparse allocation behavior, and the
+attach/detach measurement point are possible explanations only; the current
+evidence does not establish a cause.
 
-Each run owns exactly one newly created directory:
+Production storage claims require one fixed lifecycle measurement point plus a
+defined allocated-byte metric. The useful confirmed observation is narrower:
+the child started as a 4 MiB logical file and ended as a persistent 19 MiB
+logical file after the 64 MiB logical-payload mutation.
 
-```text
-<probe-root>\
-└─ testplay-vhdx-probe-<operation-id>\
-   ├─ parent.vhdx
-   ├─ child-a.vhdx
-   ├─ child-b.vhdx
-   └─ mounts\
-```
+## Phase timing
 
-The configured root must be absolute, must not be a drive root or symlink, and
-must be absent or empty. Its parent must already exist. Existing files are
-never overwritten.
+The following averages are the recorded five-run values; they have not been
+recalculated or adjusted:
 
-## Mount strategy
+| Phase | Average |
+|---|---:|
+| Parent create | 5.8 ms |
+| Parent attach | 11.6 ms |
+| Parent initialize | 3,725.0 ms |
+| Parent seed | 124.2 ms |
+| Parent detach | 946.4 ms |
+| Child create | 38.0 ms |
+| Child attach | 929.6 ms |
+| Mount resolve | 914.8 ms |
+| Mutation | 41.6 ms |
+| Child detach | 947.2 ms |
+| Cleanup | 9.4 ms |
 
-`AttachVirtualDisk` uses `ATTACH_VIRTUAL_DISK_FLAG_NO_DRIVE_LETTER`. After the
-physical device and BusType safety checks, the single basic-data partition is
-mounted at a probe-owned empty directory with `Add-PartitionAccessPath`.
+One complete run took 132.14 seconds; the other runs were approximately 15
+seconds. No correctness or cleanup failure accompanied the outlier. The
+recorded phase durations do not explain the complete wall-clock outlier.
+Unmeasured PnP, volume readiness, mount visibility, or detach visibility waits
+are hypotheses, not conclusions.
 
-Directory mount points avoid global drive-letter selection and keep all
-visible paths inside the unique operation directory. If disk or partition
-identity is ambiguous, the probe stops.
-
-## Correctness checks
-
-1. Seed and detach the Parent.
-2. Record the complete Parent VHDX SHA-256 and file size.
-3. Create Child A and Child B from the same absolute Parent path.
-4. Verify each child's resolved Parent with `GetVirtualDiskInformation`.
-5. Confirm Child A initially reads the baseline payload.
-6. Mutate Child A's payload, rename the manifest, and create marker files.
-7. Confirm the complete Parent VHDX hash is unchanged.
-8. Confirm Child B still reads the baseline and contains no Child A markers.
-9. Mutate Child B and confirm its marker never appears in Child A.
-10. Detach and reattach Child A and verify its exact mutated payload hash.
-11. Attach the Parent read-only and verify its baseline and manifest.
-
-The result exposes:
-
-```text
-parentIsolationPassed
-siblingIsolationPassed
-reattachPersistencePassed
-cleanupPassed
-```
-
-## Storage and timing
-
-The result records:
+Before production performance claims, add explicit measurements for:
 
 ```text
-parentVirtualBytes
-parentFileBytes
-childInitialFileBytes
-childAfterAttachFileBytes
-childAfterMutationFileBytes
-childAfterReattachFileBytes
-logicalPayloadBytes
+totalWallClockMs
+parentLifecycleWallClockMs
+childALifecycleWallClockMs
+childBLifecycleWallClockMs
+pnpDiscoveryWaitMs
+volumeReadyWaitMs
+mountVisibilityWaitMs
+detachVisibilityWaitMs
+powershellBootstrapMs
 ```
 
-It also records durations for Parent create/attach/initialize/seed/detach,
-Child create/attach/detach, mount resolution, mutation, and cleanup.
+## Cleanup evidence
 
-These VHDX file-size measurements are not directly comparable to a copy of the
-entire VHDX file. A future Physical Copy comparison should copy only the same
-64 MiB logical payload and document filesystem cache effects.
+The final comparison reported:
+
+```text
+beforeVirtualDisks:       0
+afterVirtualDisks:        0
+virtualDiskDifference:    0
+residualProbeMounts:      0
+residualArtifacts:        0
+residualVHDXFiles:        0
+cleanupPassed:            true
+```
+
+Cleanup unmounts the partition before detaching each virtual disk and closes
+handles before removing probe-owned files. If unmount or detach fails,
+automatic directory deletion stops so that the failure remains diagnosable.
+The probe does not detach pre-existing virtual disks or delete unrelated
+files.
 
 ## Validation commands
 
@@ -168,61 +191,32 @@ General validation:
 go test ./...
 go vet ./...
 git diff --check
-go env CGO_ENABLED
 ```
 
-Elevated, explicitly opted-in integration:
+Elevated hardware validation:
 
 ```powershell
-New-Item -ItemType Directory -Force -Path C:\Dev\testplay-vhdx-probe
-$env:TESTPLAY_VHDX_PROBE_ROOT = "C:\Dev\testplay-vhdx-probe"
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\run-vhdx-probe.ps1
 
-go test -tags=vhdx_integration ./internal/vhdxprobe `
-  -run '^TestDifferencingVHDX' `
-  -v -count=1
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\run-vhdx-probe.ps1 `
+  -Count 5
 ```
 
-Only after the complete command succeeds:
+The script permits only the dedicated root
+`C:\Dev\testplay-vhdx-probe`, records before/after File Backed Virtual disks,
+and fails if the root is not empty before a run.
 
-```powershell
-go test -tags=vhdx_integration ./internal/vhdxprobe `
-  -run '^TestDifferencingVHDXProbe$' `
-  -v -count=5
-```
+## Remaining gates
 
-If the environment variable is absent, integration tests skip with an explicit
-reason. Once opted in, a lifecycle failure is a test failure, not a skip.
+The standalone lifecycle and isolation result is proven. Separate work remains
+for:
 
-## Cleanup
-
-Every mounted partition is unmounted before `DetachVirtualDisk`, and every
-handle is closed. The operation directory is removed only after cleanup
-succeeds. If unmount or detach fails, automatic directory deletion stops so
-the failure remains diagnosable and no mounted path is traversed by cleanup.
-
-After any integration run, inspect for:
-
-```powershell
-Get-Disk | Where-Object BusType -eq 'File Backed Virtual'
-Get-ChildItem C:\Dev\testplay-vhdx-probe -Force
-```
-
-## Current evidence and verdict
-
-The implementation, Windows build, unit tests, static analysis, and formatting
-checks were completed in a non-elevated session. The live integration probe
-was not executed because the safety policy requires elevation.
-
-```text
-Verdict: IMPLEMENTED / AWAITING ELEVATED VALIDATION
-```
-
-Do not report `PROVEN` until all Parent, sibling, reattach, cleanup, and
-residual-attachment checks pass five times.
-
-## Storage Daemon readiness
-
-The API and safety boundary are suitable for evaluating a later Storage Daemon
-protocol, but daemon implementation should wait for elevated 5/5 evidence.
-Crash recovery, orphan adoption, concurrency, worker sharding, Unity execution,
-and service installation remain separate follow-up work.
+- on-demand helper protocol and privilege boundary
+- journal, lease ownership, and idempotency
+- crash and orphan recovery
+- a small Unity fixture and path-sensitivity checks
+- GNF_ benchmark
+- concurrent workers and sharding
+- production storage and latency measurements
