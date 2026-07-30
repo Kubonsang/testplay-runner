@@ -2,6 +2,7 @@ package runsvc_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/Kubonsang/testplay-runner/internal/config"
 	"github.com/Kubonsang/testplay-runner/internal/history"
 	"github.com/Kubonsang/testplay-runner/internal/libraryimage"
+	"github.com/Kubonsang/testplay-runner/internal/librarymaterializer"
 	"github.com/Kubonsang/testplay-runner/internal/runsvc"
 )
 
@@ -20,6 +22,29 @@ type imageTestRunner struct {
 	resultsXML []byte
 	calls      int
 	failTests  bool
+}
+
+type failingMaterializer struct{}
+
+func (failingMaterializer) ID() string {
+	return "test-failure"
+}
+
+func (failingMaterializer) Materialize(
+	_ context.Context,
+	request librarymaterializer.Request,
+) (*librarymaterializer.Result, error) {
+	if err := os.MkdirAll(request.DestinationPath, 0755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(
+		filepath.Join(request.DestinationPath, "partial.bin"),
+		[]byte("partial"),
+		0644,
+	); err != nil {
+		return nil, err
+	}
+	return nil, errors.New("injected materializer failure")
 }
 
 func (r *imageTestRunner) Run(_ context.Context, args []string, _, _ io.Writer) (int, error) {
@@ -263,6 +288,55 @@ func TestService_ImageBackendFailureDoesNotMutateSourceOrBase(t *testing.T) {
 	}
 	if !reflect.DeepEqual(baseBefore, baseAfter) {
 		t.Fatalf("base changed after failed run: before=%q after=%q", baseBefore, baseAfter)
+	}
+	assertSourceProtected(t, project)
+	assertNoShadowWorkspace(t, project)
+}
+
+func TestService_MaterializerFailureDoesNotCorruptOrQuarantineImage(t *testing.T) {
+	cfg, project := imageConfig(t)
+	xmlData := mustReadFixture(t, "../../internal/parser/testdata/passing.xml")
+	if _, err := imageService(
+		cfg,
+		project,
+		&imageTestRunner{resultsXML: xmlData},
+	).Run(context.Background(), runsvc.Request{
+		Config:           cfg,
+		WorkspaceBackend: runsvc.WorkspaceBackendImage,
+	}); err != nil {
+		t.Fatalf("seed image: %v", err)
+	}
+
+	failedService := imageService(
+		cfg,
+		project,
+		&imageTestRunner{resultsXML: xmlData},
+	)
+	failedService.LibraryMaterializer = failingMaterializer{}
+	_, err := failedService.Run(context.Background(), runsvc.Request{
+		Config:           cfg,
+		WorkspaceBackend: runsvc.WorkspaceBackendImage,
+	})
+	if err == nil || !strings.Contains(err.Error(), "materialize Library") {
+		t.Fatalf("error = %v, want distinct materialization failure", err)
+	}
+
+	key, err := libraryimage.ComputeKey(project, cfg.UnityPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := libraryimage.NewStore(project)
+	resolution, err := store.Resolve(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolution.Status != libraryimage.StatusValid {
+		t.Fatalf("image status = %q, want valid: %s", resolution.Status, resolution.Reason)
+	}
+	if entries, err := os.ReadDir(filepath.Join(store.Root(), "quarantine")); err == nil && len(entries) > 0 {
+		t.Fatalf("materializer failure quarantined image: %v", entries)
+	} else if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
 	}
 	assertSourceProtected(t, project)
 	assertNoShadowWorkspace(t, project)

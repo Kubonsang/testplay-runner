@@ -50,12 +50,6 @@ type Resolution struct {
 	Reason string
 }
 
-type MaterializedLibrary struct {
-	Path         string
-	Duration     time.Duration
-	LogicalBytes int64
-}
-
 type ImageSource struct {
 	LibraryPath string
 	Release     func()
@@ -268,28 +262,6 @@ func (s *Store) createLocked(ctx context.Context, key Key, sourceLibrary string)
 	stagedImage.Path = finalPath
 	stagedImage.LibraryPath = filepath.Join(finalPath, "Library")
 	return stagedImage, nil
-}
-
-// Materialize physically copies an image into a writable workspace Library.
-// No hardlinks are used, so Unity writes cannot mutate the base image.
-func (s *Store) Materialize(ctx context.Context, image *Image, destination string) (MaterializedLibrary, error) {
-	verification, err := s.Verify(ctx, image)
-	if err != nil {
-		return MaterializedLibrary{}, err
-	}
-	if verification.Status != StatusValid {
-		return MaterializedLibrary{}, fmt.Errorf("materialize library image: %s", verification.Reason)
-	}
-
-	started := s.now()
-	if err := shadow.CopyDirParallel(ctx, image.LibraryPath, destination, 0); err != nil {
-		return MaterializedLibrary{}, fmt.Errorf("materialize library image: %w", err)
-	}
-	return MaterializedLibrary{
-		Path:         destination,
-		Duration:     s.now().Sub(started),
-		LogicalBytes: image.Metadata.LogicalBytes,
-	}, nil
 }
 
 func (s *Store) verifyPath(ctx context.Context, path string, key Key) (*Image, string, error) {

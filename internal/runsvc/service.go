@@ -13,6 +13,7 @@ import (
 	"github.com/Kubonsang/testplay-runner/internal/bridge"
 	"github.com/Kubonsang/testplay-runner/internal/config"
 	"github.com/Kubonsang/testplay-runner/internal/history"
+	"github.com/Kubonsang/testplay-runner/internal/librarymaterializer"
 	"github.com/Kubonsang/testplay-runner/internal/listcache"
 	"github.com/Kubonsang/testplay-runner/internal/parser"
 	"github.com/Kubonsang/testplay-runner/internal/runid"
@@ -92,6 +93,10 @@ type Service struct {
 	Artifacts    *artifacts.Store
 	StatusWriter status.WriterInterface // may be nil
 	Clock        func() time.Time       // defaults to time.Now if nil
+
+	// LibraryMaterializer is injectable for boundary/failure tests. Nil keeps
+	// the public behavior fixed to the physical-copy implementation.
+	LibraryMaterializer librarymaterializer.LibraryMaterializer
 }
 
 // Request carries all inputs for a single testplay run.

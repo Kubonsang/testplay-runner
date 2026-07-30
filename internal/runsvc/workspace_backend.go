@@ -13,6 +13,7 @@ import (
 
 	"github.com/Kubonsang/testplay-runner/internal/history"
 	"github.com/Kubonsang/testplay-runner/internal/libraryimage"
+	"github.com/Kubonsang/testplay-runner/internal/librarymaterializer"
 	"github.com/Kubonsang/testplay-runner/internal/shadow"
 	"github.com/Kubonsang/testplay-runner/internal/unity"
 )
@@ -98,6 +99,13 @@ func legacyCacheRoot(req Request) string {
 func imageStoreRoot(req Request) string {
 	root, _ := resolveWorkspaceStoreRoot(req.Config.ProjectPath, req.WorkspaceStoreRoot)
 	return filepath.Join(root, "library-images")
+}
+
+func (s *Service) selectedLibraryMaterializer() librarymaterializer.LibraryMaterializer {
+	if s.LibraryMaterializer != nil {
+		return s.LibraryMaterializer
+	}
+	return librarymaterializer.PhysicalCopyMaterializer{}
 }
 
 func (s *Service) prepareLegacyWorkspace(
@@ -240,10 +248,40 @@ func (s *Service) prepareImageWorkspace(
 	if err != nil {
 		return nil, metrics, err
 	}
-	materialized, err := store.Materialize(ctx, image, filepath.Join(ws.ShadowPath, "Library"))
+	verification, err := store.Verify(ctx, image)
 	if err != nil {
 		_ = ws.Cleanup()
-		return nil, metrics, err
+		return nil, metrics, fmt.Errorf("verify Library image before materialization: %w", err)
+	}
+	if verification.Status != libraryimage.StatusValid {
+		_ = ws.Cleanup()
+		return nil, metrics, fmt.Errorf(
+			"verify Library image before materialization: %s",
+			verification.Reason,
+		)
+	}
+
+	materializer := s.selectedLibraryMaterializer()
+	materialized, err := materializer.Materialize(ctx, librarymaterializer.Request{
+		SourcePath:      image.LibraryPath,
+		DestinationPath: filepath.Join(ws.ShadowPath, "Library"),
+	})
+	if err != nil {
+		_ = ws.Cleanup()
+		return nil, metrics, fmt.Errorf("materialize Library: %w", err)
+	}
+	if materialized.MaterializerID != materializer.ID() ||
+		materialized.FileCount != image.Metadata.FileCount ||
+		materialized.LogicalBytes != image.Metadata.LogicalBytes {
+		_ = ws.Cleanup()
+		return nil, metrics, fmt.Errorf(
+			"verify materialized Library: materializer=%q files=%d/%d bytes=%d/%d",
+			materialized.MaterializerID,
+			materialized.FileCount,
+			image.Metadata.FileCount,
+			materialized.LogicalBytes,
+			image.Metadata.LogicalBytes,
+		)
 	}
 	metrics.WorkspacePreparationMs = time.Since(preparationStarted).Milliseconds()
 	metrics.FileCopyMs = (ws.Metrics.AssetsCopy + ws.Metrics.ProjectSettingsCopy + ws.Metrics.PackagesCopy).Milliseconds()

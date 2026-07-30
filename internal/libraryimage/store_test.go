@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func TestStore_CreateResolveAndMaterializeAreIsolated(t *testing.T) {
+func TestStore_CreateAndResolveImage(t *testing.T) {
 	project := makeKeyProject(t)
 	key, err := ComputeKey(project, "/Unity/Editor")
 	if err != nil {
@@ -39,12 +39,6 @@ func TestStore_CreateResolveAndMaterializeAreIsolated(t *testing.T) {
 	if resolution.Image.Metadata.FileCount != 1 {
 		t.Fatalf("FileCount = %d, want 1", resolution.Image.Metadata.FileCount)
 	}
-
-	destination := filepath.Join(t.TempDir(), "Library")
-	if _, err := store.Materialize(context.Background(), image, destination); err != nil {
-		t.Fatalf("Materialize: %v", err)
-	}
-	writeFile(t, filepath.Join(destination, "ScriptAssemblies", "Tests.dll"), "workspace mutation")
 
 	baseData, err := os.ReadFile(filepath.Join(image.LibraryPath, "ScriptAssemblies", "Tests.dll"))
 	if err != nil {
