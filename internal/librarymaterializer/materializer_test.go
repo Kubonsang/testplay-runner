@@ -3,6 +3,7 @@ package librarymaterializer_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -117,7 +118,7 @@ func TestPhysicalCopyMaterializerCancellationRemovesDestination(t *testing.T) {
 }
 
 func fileName(index int) string {
-	return "file-" + string(rune('a'+index)) + ".bin"
+	return fmt.Sprintf("file-%02d.bin", index)
 }
 
 func mustMkdir(t *testing.T, path string) {
