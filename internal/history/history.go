@@ -53,6 +53,42 @@ type RunResult struct {
 	// via the TestPlay bridge). Set by runsvc.Service.Run before persistence;
 	// always present in the CLI stdout output (Output Design Rule #13).
 	Backend string `json:"backend,omitempty"`
+
+	// WorkspaceMetrics is additive provenance for experimental workspace
+	// backends. It is absent for process/bridge runs and legacy callers.
+	WorkspaceMetrics *WorkspaceMetrics `json:"workspace_metrics,omitempty"`
+}
+
+// WorkspaceMetrics captures workspace preparation costs separately from Unity
+// execution. Durations are milliseconds. Physical byte fields use filesystem
+// block allocation when available and logical size as a platform fallback.
+type WorkspaceMetrics struct {
+	WorkspaceBackend                    string `json:"workspaceBackend"`
+	ImageStatus                         string `json:"imageStatus"`
+	ImageResolutionStatus               string `json:"imageResolutionStatus,omitempty"`
+	ImageKey                            string `json:"imageKey,omitempty"`
+	ImageCreationMs                     int64  `json:"imageCreationMs"`
+	WorkspacePreparationMs              int64  `json:"workspacePreparationMs"`
+	FileCopyMs                          int64  `json:"fileCopyMs"`
+	LibraryMaterializationMs            int64  `json:"libraryMaterializationMs"`
+	UnityStartupMs                      int64  `json:"unityStartupMs"`
+	UnityExecutionMs                    int64  `json:"unityExecutionMs"`
+	TestExecutionMs                     int64  `json:"testExecutionMs"`
+	CleanupMs                           int64  `json:"cleanupMs"`
+	CacheWriteBackMs                    int64  `json:"cacheWriteBackMs"`
+	BaseImageLogicalBytes               int64  `json:"baseImageLogicalBytes"`
+	BaseImagePhysicalBytes              int64  `json:"baseImagePhysicalBytes"`
+	ImageStorePhysicalBytes             int64  `json:"imageStorePhysicalBytes"`
+	ImageBuilderLogicalBytes            int64  `json:"imageBuilderLogicalBytes"`
+	ImageBuilderPhysicalBytes           int64  `json:"imageBuilderPhysicalBytes"`
+	WorkspaceLogicalBytes               int64  `json:"workspaceLogicalBytes"`
+	WorkspacePhysicalBytes              int64  `json:"workspacePhysicalBytes"`
+	ObservedPeakAdditionalPhysicalBytes int64  `json:"observedPeakAdditionalPhysicalBytes"`
+	RetainedPhysicalBytes               int64  `json:"retainedPhysicalBytes"`
+	CleanupReclaimedPhysicalBytes       int64  `json:"cleanupReclaimedPhysicalBytes"`
+	PhysicalBytesAdded                  int64  `json:"physicalBytesAdded"`
+	FallbackUsed                        bool   `json:"fallbackUsed"`
+	WorkspaceKept                       bool   `json:"workspaceKept"`
 }
 
 // CompileError represents a C# compile error from Unity stderr.

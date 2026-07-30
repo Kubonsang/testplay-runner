@@ -48,6 +48,106 @@ func TestRunCmd_InvalidConfig_Exit5(t *testing.T) {
 	}
 }
 
+func TestRunCmd_InvalidWorkspaceBackend_Exit5(t *testing.T) {
+	var buf bytes.Buffer
+	code := runRun(&buf, runDeps{
+		opts: RunCmdOptions{WorkspaceBackend: "unknown"},
+	})
+	if code != 5 {
+		t.Fatalf("exit = %d, want 5", code)
+	}
+	var output map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &output); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if !strings.Contains(fmt.Sprint(output["error"]), "legacy or image") {
+		t.Fatalf("unexpected error: %v", output["error"])
+	}
+}
+
+func TestRunCmd_ImageBackendEmitsAdditiveWorkspaceMetrics(t *testing.T) {
+	project := makeCmdImageProject(t)
+	xmlData := mustReadXMLFixture(t, "../../internal/parser/testdata/passing.xml")
+	fake := &fakeCmdRunner{resultsXML: xmlData}
+	cfg := &config.Config{
+		SchemaVersion: "1",
+		UnityPath:     "/fake/unity",
+		ProjectPath:   project,
+		ResultDir:     filepath.Join(project, ".testplay", "results"),
+		Timeout:       config.Timeouts{TotalMs: 300000},
+		TestPlatform:  "edit_mode",
+	}
+
+	var buf bytes.Buffer
+	code := runRun(&buf, runDeps{
+		loadConfig:  func(string) (*config.Config, error) { return cfg, nil },
+		runner:      fake,
+		statusPath:  filepath.Join(project, "status.json"),
+		resultStore: history.NewStore(cfg.ResultDir),
+		opts: RunCmdOptions{
+			WorkspaceBackend: runsvc.WorkspaceBackendImage,
+		},
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; output=%s", code, buf.String())
+	}
+	var output map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &output); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if output["backend"] != "shadow" {
+		t.Fatalf("backend = %v, want shadow", output["backend"])
+	}
+	metrics, ok := output["workspace_metrics"].(map[string]any)
+	if !ok {
+		t.Fatalf("workspace_metrics missing or invalid: %T", output["workspace_metrics"])
+	}
+	if metrics["workspaceBackend"] != "image" || metrics["imageStatus"] != "valid" {
+		t.Fatalf("workspace metrics = %+v", metrics)
+	}
+	if metrics["fallbackUsed"] != false {
+		t.Fatalf("fallbackUsed = %v, want false", metrics["fallbackUsed"])
+	}
+	for _, field := range []string{
+		"baseImageLogicalBytes",
+		"baseImagePhysicalBytes",
+		"imageStorePhysicalBytes",
+		"workspaceLogicalBytes",
+		"workspacePhysicalBytes",
+		"observedPeakAdditionalPhysicalBytes",
+		"retainedPhysicalBytes",
+		"cleanupReclaimedPhysicalBytes",
+	} {
+		value, ok := metrics[field].(float64)
+		if !ok || value <= 0 {
+			t.Fatalf("%s = %v, want positive numeric metric", field, metrics[field])
+		}
+	}
+}
+
+func makeCmdImageProject(t *testing.T) string {
+	t.Helper()
+	project := t.TempDir()
+	for _, dir := range []string{"Assets", "Packages", "ProjectSettings"} {
+		if err := os.MkdirAll(filepath.Join(project, dir), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := map[string]string{
+		filepath.Join("Assets", "Test.cs"):                        "// source",
+		filepath.Join("Packages", "manifest.json"):                `{"dependencies":{}}`,
+		filepath.Join("Packages", "packages-lock.json"):           `{"dependencies":{}}`,
+		filepath.Join("ProjectSettings", "ProjectVersion.txt"):    "m_EditorVersion: 6000.3.8f1\n",
+		filepath.Join("ProjectSettings", "ProjectSettings.asset"): "PlayerSettings:\n  scriptingBackend: 0\n",
+	}
+	for rel, contents := range files {
+		if err := os.WriteFile(filepath.Join(project, rel), []byte(contents), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return project
+}
+
 func TestRunCmd_AllPass_Exit0(t *testing.T) {
 	dir := t.TempDir()
 	xmlData := mustReadXMLFixture(t, "../../internal/parser/testdata/passing.xml")

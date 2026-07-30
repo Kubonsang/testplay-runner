@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/Kubonsang/testplay-runner/internal/atomicfile"
 	"github.com/Kubonsang/testplay-runner/internal/history"
@@ -17,8 +18,21 @@ import (
 
 // Workspace represents an active shadow workspace for a Unity project.
 type Workspace struct {
-	SourcePath string // original project root (absolute)
-	ShadowPath string // .testplay-shadow/ root (absolute)
+	SourcePath       string // original project root (absolute)
+	ShadowPath       string // .testplay-shadow/ root (absolute)
+	LibraryCacheRoot string // optional external persistent cache root
+	Metrics          PrepareMetrics
+}
+
+// PrepareMetrics separates project-file copy time from Library
+// materialization time without changing Prepare's existing behavior.
+type PrepareMetrics struct {
+	AssetsCopy                        time.Duration
+	ProjectSettingsCopy               time.Duration
+	PackagesCopy                      time.Duration
+	LibraryMaterialize                time.Duration
+	LegacyCacheWriteBack              time.Duration
+	LegacyCacheWritePeakPhysicalBytes int64
 }
 
 // ShadowWorkspaceDir returns the per-run shadow directory for a given runID.
@@ -31,6 +45,15 @@ type PrepareOptions struct {
 	// LibraryCacheDir, if non-empty, is the path to a cached Library directory.
 	// When set, Library/ is seeded by copying from this cache instead of starting empty.
 	LibraryCacheDir string
+
+	// LibraryCacheRoot selects where successful Legacy runs write their cache.
+	// Empty preserves the project-local .testplay/cache behavior.
+	LibraryCacheRoot string
+
+	// CopyPackages physically copies Packages/ instead of linking it to the
+	// source project. The legacy backend leaves this false for compatibility;
+	// isolated backends set it to prevent Unity package writes reaching source.
+	CopyPackages bool
 }
 
 // Prepare creates an isolated shadow workspace for a single run.
@@ -47,7 +70,11 @@ func Prepare(ctx context.Context, sourcePath, runID string, opts PrepareOptions)
 		return nil, err
 	}
 	shadowPath := ShadowWorkspaceDir(abs, runID)
-	ws := &Workspace{SourcePath: abs, ShadowPath: shadowPath}
+	ws := &Workspace{
+		SourcePath:       abs,
+		ShadowPath:       shadowPath,
+		LibraryCacheRoot: opts.LibraryCacheRoot,
+	}
 
 	succeeded := false
 	defer func() {
@@ -64,14 +91,28 @@ func Prepare(ctx context.Context, sourcePath, runID string, opts PrepareOptions)
 	for _, dir := range []string{"Assets", "ProjectSettings"} {
 		src := filepath.Join(abs, dir)
 		dst := filepath.Join(shadowPath, dir)
+		started := time.Now()
 		if err := copyDir(ctx, src, dst); err != nil {
 			return nil, err
 		}
+		switch dir {
+		case "Assets":
+			ws.Metrics.AssetsCopy = time.Since(started)
+		case "ProjectSettings":
+			ws.Metrics.ProjectSettingsCopy = time.Since(started)
+		}
 	}
 
-	// Link Packages/ once; links do not need refreshing.
+	// Link Packages/ once for compatibility, or physically copy it when the
+	// caller requires a fully writable/source-isolated workspace.
 	pkgDst := filepath.Join(shadowPath, "Packages")
-	if _, err := os.Lstat(pkgDst); os.IsNotExist(err) {
+	if opts.CopyPackages {
+		started := time.Now()
+		if err := copyDir(ctx, filepath.Join(abs, "Packages"), pkgDst); err != nil {
+			return nil, err
+		}
+		ws.Metrics.PackagesCopy = time.Since(started)
+	} else if _, err := os.Lstat(pkgDst); os.IsNotExist(err) {
 		if err := linkPackages(filepath.Join(abs, "Packages"), pkgDst); err != nil {
 			return nil, err
 		}
@@ -79,6 +120,7 @@ func Prepare(ctx context.Context, sourcePath, runID string, opts PrepareOptions)
 
 	// Seed Library/ from cache if available, otherwise create empty.
 	libDst := filepath.Join(shadowPath, "Library")
+	libraryStarted := time.Now()
 	if opts.LibraryCacheDir != "" {
 		if _, err := os.Stat(opts.LibraryCacheDir); err == nil {
 			if err := copyDir(ctx, opts.LibraryCacheDir, libDst); err != nil {
@@ -94,6 +136,7 @@ func Prepare(ctx context.Context, sourcePath, runID string, opts PrepareOptions)
 			return nil, err
 		}
 	}
+	ws.Metrics.LibraryMaterialize = time.Since(libraryStarted)
 
 	// Clean Temp/ so Unity starts fresh each run.
 	_ = os.RemoveAll(filepath.Join(shadowPath, "Temp"))
@@ -119,11 +162,19 @@ func Reset(ctx context.Context, sourcePath, runID string) (*Workspace, error) {
 // copy is interrupted: the old cache remains intact until the new copy is
 // fully written.
 func (w *Workspace) UpdateLibraryCache(ctx context.Context) error {
+	started := time.Now()
+	defer func() {
+		w.Metrics.LegacyCacheWriteBack = time.Since(started)
+	}()
 	srcLib := filepath.Join(w.ShadowPath, "Library")
 	if _, err := os.Stat(srcLib); err != nil {
 		return nil
 	}
-	dstLib := CacheLibraryDir(w.SourcePath)
+	cacheRoot := w.LibraryCacheRoot
+	if cacheRoot == "" {
+		cacheRoot = filepath.Join(w.SourcePath, ".testplay", "cache")
+	}
+	dstLib := CacheLibraryDirAt(cacheRoot)
 	tmpLib := dstLib + ".tmp"
 
 	// Copy to temp directory; clean up on failure.
@@ -131,6 +182,22 @@ func (w *Workspace) UpdateLibraryCache(ctx context.Context) error {
 		_ = os.RemoveAll(tmpLib)
 		return fmt.Errorf("update library cache: %w", err)
 	}
+
+	// At this point the old cache and the fully copied temporary cache coexist.
+	// Recording both exposes the write-back peak without high-frequency disk
+	// sampling. The active workspace is added by the run service.
+	var oldCacheBytes int64
+	if usage, err := MeasureDirectoryUsage(dstLib); err == nil {
+		oldCacheBytes = usage.AllocatedBytes
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("update library cache: measure old cache: %w", err)
+	}
+	tmpUsage, err := MeasureDirectoryUsage(tmpLib)
+	if err != nil {
+		_ = os.RemoveAll(tmpLib)
+		return fmt.Errorf("update library cache: measure temporary cache: %w", err)
+	}
+	w.Metrics.LegacyCacheWritePeakPhysicalBytes = oldCacheBytes + tmpUsage.AllocatedBytes
 
 	// Atomic swap: remove old cache, rename temp into place.
 	if err := os.RemoveAll(dstLib); err != nil {
@@ -142,7 +209,7 @@ func (w *Workspace) UpdateLibraryCache(ctx context.Context) error {
 		return fmt.Errorf("update library cache: rename: %w", err)
 	}
 
-	if err := SaveCacheKey(w.SourcePath); err != nil {
+	if err := SaveCacheKeyAt(w.SourcePath, cacheRoot); err != nil {
 		return fmt.Errorf("update library cache key: %w", err)
 	}
 	return nil

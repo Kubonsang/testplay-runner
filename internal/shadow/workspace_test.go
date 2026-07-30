@@ -566,6 +566,34 @@ func TestPrepare_SeedsLibraryFromCache(t *testing.T) {
 	}
 }
 
+func TestPrepare_CopyPackagesIsWriteIsolated(t *testing.T) {
+	t.Parallel()
+	src := makeProject(t)
+	sourceManifest := filepath.Join(src, "Packages", "manifest.json")
+	must(t, os.WriteFile(sourceManifest, []byte(`{"dependencies":{}}`), 0644))
+
+	ws, err := shadow.Prepare(
+		context.Background(),
+		src,
+		"copy-packages-run",
+		shadow.PrepareOptions{CopyPackages: true},
+	)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	defer ws.Cleanup()
+
+	shadowManifest := filepath.Join(ws.ShadowPath, "Packages", "manifest.json")
+	must(t, os.WriteFile(shadowManifest, []byte(`{"mutated":true}`), 0644))
+	data, err := os.ReadFile(sourceManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != `{"dependencies":{}}` {
+		t.Fatalf("source Packages mutated through isolated workspace: %s", data)
+	}
+}
+
 func TestPrepare_EmptyOptionsBackwardCompatible(t *testing.T) {
 	t.Parallel()
 	src := makeProject(t)

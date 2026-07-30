@@ -494,6 +494,15 @@ Unity 에디터가 프로젝트를 열고 있으면 `Temp/UnityLockfile`이 존�
 - `--shadow` — 에디터가 열려 있지 않아도 강제로 섀도우 워크스페이스를 사용 (섀도우 동작 테스트에 유용)
 - `--reset-shadow` — `--shadow`와 동일 (per-run 격리로 매 실행이 이미 새로 시작됨; API 호환성을 위해 유지)
 - `--clear-cache` — `.testplay/cache/` 제거 후 섀도우 워크스페이스 생성, Unity 강제 재임포트
+- `--workspace-backend=legacy|image` — 기존 Shadow cache와 실험적 immutable Library Image backend를 명시적으로 비교
+- `--workspace-store-root=<absolute-path>` — Unity Workspace는 로컬에 유지하고 persistent Legacy Library cache 또는 Image store만 프로젝트 밖에 저장(실험적)
+- `--keep-workspace` — 디버깅을 위해 per-run Shadow 디렉터리를 보존
+
+Image backend는 실험 기능이며 기본으로 선택되지 않습니다. 명시적
+`image` 실패는 오류로 보고되고 Legacy로 조용히 폴백하지 않습니다.
+[기술 검증 보고서](docs/library-image-spike.md)와
+[벤치마크](docs/benchmarks/library-image-baseline.md)를 참고하십시오. 현재
+판정은 `PROMISING`입니다.
 
 **`.gitignore`는 최초 사용 시 자동으로 패치**되어 `.testplay-shadow-*/`가 제외됩니다.
 

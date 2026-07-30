@@ -493,6 +493,15 @@ Each run gets its own isolated shadow directory, making parallel `testplay run` 
 - `--shadow` — force shadow workspace even when the editor is not open (useful for testing shadow behaviour)
 - `--reset-shadow` — equivalent to `--shadow` (with per-run isolation every run already starts fresh; kept for API compatibility)
 - `--clear-cache` — remove `.testplay/cache/` before shadow workspace creation, forcing Unity to reimport from scratch
+- `--workspace-backend=legacy|image` — explicitly compare the existing Shadow cache with the experimental immutable Library Image backend
+- `--workspace-store-root=<absolute-path>` — keep persistent Legacy Library cache or Image store outside the Unity project while Unity workspaces remain local (experimental)
+- `--keep-workspace` — keep the per-run Shadow directory for debugging
+
+The Image backend is experimental and never selected by default. An explicit
+`image` failure is reported; it does not silently fall back to Legacy. See the
+[spike report](docs/library-image-spike.md) and
+[benchmark](docs/benchmarks/library-image-baseline.md). Current benchmark
+verdict: `PROMISING`.
 
 **`.gitignore` is patched automatically** to exclude `.testplay-shadow-*/` on first use.
 
