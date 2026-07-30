@@ -61,14 +61,15 @@ func (materializer PhysicalCopyMaterializer) Materialize(
 		request.DestinationPath,
 		0,
 	)
-	if err != nil {
-		return nil, fmt.Errorf("%s materializer: %w", materializer.ID(), err)
-	}
-	succeeded = true
-	return &Result{
+	result := &Result{
 		MaterializerID: materializer.ID(),
 		LogicalBytes:   stats.LogicalBytes,
 		FileCount:      stats.FileCount,
 		Duration:       time.Since(started),
-	}, nil
+	}
+	if err != nil {
+		return result, fmt.Errorf("%s materializer: %w", materializer.ID(), err)
+	}
+	succeeded = true
+	return result, nil
 }

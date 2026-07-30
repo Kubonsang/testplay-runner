@@ -296,11 +296,13 @@ func (s *Service) prepareImageWorkspace(
 		SourcePath:      image.LibraryPath,
 		DestinationPath: filepath.Join(ws.ShadowPath, "Library"),
 	})
+	if materialized != nil {
+		metrics.LibraryMaterializeMs = materialized.Duration.Milliseconds()
+	}
 	if err != nil {
 		_ = ws.Cleanup()
 		return nil, metrics, fmt.Errorf("materialize Library: %w", err)
 	}
-	metrics.LibraryMaterializeMs = materialized.Duration.Milliseconds()
 	workspaceVerifyStarted := time.Now()
 	if materialized.MaterializerID != materializer.ID() ||
 		materialized.FileCount != image.Metadata.FileCount ||

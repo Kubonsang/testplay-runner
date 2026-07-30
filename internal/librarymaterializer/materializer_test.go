@@ -96,7 +96,7 @@ func TestPhysicalCopyMaterializerCancellationRemovesDestination(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := (librarymaterializer.PhysicalCopyMaterializer{}).Materialize(
+	result, err := (librarymaterializer.PhysicalCopyMaterializer{}).Materialize(
 		ctx,
 		librarymaterializer.Request{
 			SourcePath:      source,
@@ -105,6 +105,11 @@ func TestPhysicalCopyMaterializerCancellationRemovesDestination(t *testing.T) {
 	)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+	if result == nil ||
+		result.MaterializerID != librarymaterializer.PhysicalCopyID ||
+		result.Duration < 0 {
+		t.Fatalf("failed materialization result = %+v", result)
 	}
 	if _, err := os.Stat(destination); !os.IsNotExist(err) {
 		t.Fatalf("failed destination still exists: %v", err)
