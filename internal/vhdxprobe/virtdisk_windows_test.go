@@ -3,6 +3,8 @@
 package vhdxprobe
 
 import (
+	"os"
+	"os/exec"
 	"strings"
 	"syscall"
 	"testing"
@@ -75,5 +77,47 @@ func TestPhysicalDiskSafetyGate(t *testing.T) {
 func TestCloseZeroHandle(t *testing.T) {
 	if err := closeVirtualDiskHandle(0); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestStorageBootstrapPowerShellParses(t *testing.T) {
+	parser := `
+$tokens = $null
+$parseErrors = $null
+[System.Management.Automation.Language.Parser]::ParseInput(
+  $env:TESTPLAY_VHDX_BOOTSTRAP_SCRIPT,
+  [ref]$tokens,
+  [ref]$parseErrors
+) | Out-Null
+if ($parseErrors.Count -ne 0) {
+  $parseErrors | ForEach-Object { Write-Error $_.Message }
+  exit 1
+}
+`
+	scripts := map[string]string{
+		"initialize": initializeDiskScript,
+		"mount":      mountDiskScript,
+		"unmount":    unmountDiskScript,
+	}
+	for name, script := range scripts {
+		t.Run(name, func(t *testing.T) {
+			if strings.Contains(script, "$diskNumber:") {
+				t.Fatal("ambiguous PowerShell variable interpolation before ':'")
+			}
+			command := exec.Command(
+				"powershell.exe",
+				"-NoProfile",
+				"-NonInteractive",
+				"-Command",
+				parser,
+			)
+			command.Env = append(
+				os.Environ(),
+				"TESTPLAY_VHDX_BOOTSTRAP_SCRIPT="+script,
+			)
+			if output, err := command.CombinedOutput(); err != nil {
+				t.Fatalf("PowerShell parse failed: %v\n%s", err, output)
+			}
+		})
 	}
 }

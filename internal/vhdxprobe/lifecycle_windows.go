@@ -40,7 +40,7 @@ do {
 if ($disks.Count -ne 1) { throw "expected exactly one disk $diskNumber; found $($disks.Count)" }
 $disk = $disks[0]
 if ($disk.BusType.ToString() -ne 'File Backed Virtual') {
-  throw "unsafe bus type for disk $diskNumber: $($disk.BusType)"
+  throw "unsafe bus type for disk ${diskNumber}: $($disk.BusType)"
 }
 if ($disk.PartitionStyle.ToString() -ne 'RAW') {
   throw "new parent disk is not RAW: $($disk.PartitionStyle)"
@@ -75,7 +75,7 @@ do {
 if ($disks.Count -ne 1) { throw "expected exactly one disk $diskNumber; found $($disks.Count)" }
 $disk = $disks[0]
 if ($disk.BusType.ToString() -ne 'File Backed Virtual') {
-  throw "unsafe bus type for disk $diskNumber: $($disk.BusType)"
+  throw "unsafe bus type for disk ${diskNumber}: $($disk.BusType)"
 }
 if ($disk.PartitionStyle.ToString() -ne 'GPT') {
   throw "attached disk is not GPT: $($disk.PartitionStyle)"
@@ -110,7 +110,7 @@ $mountPath = $env:TESTPLAY_VHDX_MOUNT_PATH.TrimEnd('\') + '\'
 $disks = @(Get-Disk -Number $diskNumber -ErrorAction Stop)
 if ($disks.Count -ne 1) { throw "expected exactly one disk $diskNumber" }
 if ($disks[0].BusType.ToString() -ne 'File Backed Virtual') {
-  throw "unsafe bus type for disk $diskNumber: $($disks[0].BusType)"
+  throw "unsafe bus type for disk ${diskNumber}: $($disks[0].BusType)"
 }
 $matches = @(Get-Partition -DiskNumber $diskNumber | Where-Object {
   @($_.AccessPaths) -contains $mountPath
