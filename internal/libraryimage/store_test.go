@@ -49,6 +49,53 @@ func TestStore_CreateAndResolveImage(t *testing.T) {
 	}
 }
 
+func TestStore_VerificationMetricsPreserveBothWarmFullHashes(t *testing.T) {
+	project := makeKeyProject(t)
+	key, err := ComputeKey(project, "/Unity/Editor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	library := filepath.Join(t.TempDir(), "Library")
+	if err := os.MkdirAll(library, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(library, "ArtifactDB"), strings.Repeat("hash-me", 1024))
+
+	store := NewStore(project)
+	if _, err := store.Create(context.Background(), key, library); err != nil {
+		t.Fatal(err)
+	}
+	before := store.VerificationMetrics()
+
+	resolution, err := store.Resolve(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolution.Status != StatusValid {
+		t.Fatalf("Resolve status = %q, want valid", resolution.Status)
+	}
+	afterResolve := store.VerificationMetrics()
+	if got := afterResolve.FullHashCount - before.FullHashCount; got != 1 {
+		t.Fatalf("Resolve full hashes = %d, want 1", got)
+	}
+
+	verified, err := store.Verify(context.Background(), resolution.Image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified.Status != StatusValid {
+		t.Fatalf("Verify status = %q, want valid", verified.Status)
+	}
+	afterVerify := store.VerificationMetrics()
+	if got := afterVerify.FullHashCount - before.FullHashCount; got != 2 {
+		t.Fatalf("Resolve + Verify full hashes = %d, want 2", got)
+	}
+	if afterVerify.MetadataVerify < before.MetadataVerify ||
+		afterVerify.FullHash < before.FullHash {
+		t.Fatalf("verification durations regressed: before=%+v after=%+v", before, afterVerify)
+	}
+}
+
 func TestStore_ResolveMissingAndStale(t *testing.T) {
 	project := makeKeyProject(t)
 	store := NewStore(project)

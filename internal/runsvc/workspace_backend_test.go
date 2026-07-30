@@ -109,6 +109,25 @@ func TestService_ImageBackendCreatesThenReusesImage(t *testing.T) {
 	if metrics.FallbackUsed {
 		t.Fatal("explicit image backend reported fallback")
 	}
+	if metrics.Materializer != librarymaterializer.PhysicalCopyID {
+		t.Fatalf("materializer = %q, want %q", metrics.Materializer, librarymaterializer.PhysicalCopyID)
+	}
+	if metrics.LibraryMaterializeMs != metrics.LibraryMaterializationMs {
+		t.Fatalf("phase materialize = %d, aggregate = %d",
+			metrics.LibraryMaterializeMs, metrics.LibraryMaterializationMs)
+	}
+	for name, duration := range map[string]int64{
+		"imageResolveMs":        metrics.ImageResolveMs,
+		"imageMetadataVerifyMs": metrics.ImageMetadataVerifyMs,
+		"imageFullHashMs":       metrics.ImageFullHashMs,
+		"libraryMaterializeMs":  metrics.LibraryMaterializeMs,
+		"workspaceVerifyMs":     metrics.WorkspaceVerifyMs,
+		"cleanupMs":             metrics.CleanupMs,
+	} {
+		if duration < 0 {
+			t.Fatalf("%s = %d, want non-negative", name, duration)
+		}
+	}
 	if metrics.BaseImageLogicalBytes <= 0 || metrics.BaseImagePhysicalBytes <= 0 {
 		t.Fatalf("base image usage was not recorded: %+v", metrics)
 	}

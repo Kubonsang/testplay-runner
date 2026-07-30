@@ -108,6 +108,22 @@ func TestRunCmd_ImageBackendEmitsAdditiveWorkspaceMetrics(t *testing.T) {
 	if metrics["fallbackUsed"] != false {
 		t.Fatalf("fallbackUsed = %v, want false", metrics["fallbackUsed"])
 	}
+	if metrics["materializer"] != "physical-copy" {
+		t.Fatalf("materializer = %v, want physical-copy", metrics["materializer"])
+	}
+	for _, field := range []string{
+		"imageResolveMs",
+		"imageMetadataVerifyMs",
+		"imageFullHashMs",
+		"libraryMaterializeMs",
+		"workspaceVerifyMs",
+		"cleanupMs",
+		"libraryMaterializationMs",
+	} {
+		if value, ok := metrics[field].(float64); !ok || value < 0 {
+			t.Fatalf("%s = %v, want non-negative numeric metric", field, metrics[field])
+		}
+	}
 	for _, field := range []string{
 		"baseImageLogicalBytes",
 		"baseImagePhysicalBytes",

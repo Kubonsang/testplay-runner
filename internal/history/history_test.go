@@ -1,6 +1,7 @@
 package history_test
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,54 @@ import (
 	"github.com/Kubonsang/testplay-runner/internal/history"
 	"github.com/Kubonsang/testplay-runner/internal/parser"
 )
+
+func TestWorkspaceMetrics_JSONPhaseContractIsAdditive(t *testing.T) {
+	result := history.RunResult{
+		WorkspaceMetrics: &history.WorkspaceMetrics{
+			WorkspaceBackend:         "image",
+			Materializer:             "physical-copy",
+			ImageResolveMs:           1,
+			ImageMetadataVerifyMs:    2,
+			ImageFullHashMs:          3,
+			LibraryMaterializeMs:     4,
+			WorkspaceVerifyMs:        5,
+			CleanupMs:                6,
+			LibraryMaterializationMs: 4,
+		},
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var encoded map[string]any
+	if err := json.Unmarshal(data, &encoded); err != nil {
+		t.Fatal(err)
+	}
+	metrics := encoded["workspace_metrics"].(map[string]any)
+	for _, key := range []string{
+		"materializer",
+		"imageResolveMs",
+		"imageMetadataVerifyMs",
+		"imageFullHashMs",
+		"libraryMaterializeMs",
+		"workspaceVerifyMs",
+		"cleanupMs",
+		"libraryMaterializationMs",
+	} {
+		if _, ok := metrics[key]; !ok {
+			t.Fatalf("camelCase metric %q missing from %s", key, data)
+		}
+	}
+
+	var legacy history.RunResult
+	if err := json.Unmarshal([]byte(`{"backend":"shadow","workspace_metrics":{"workspaceBackend":"legacy","libraryMaterializationMs":7}}`), &legacy); err != nil {
+		t.Fatalf("old result no longer decodes: %v", err)
+	}
+	if legacy.WorkspaceMetrics.LibraryMaterializationMs != 7 ||
+		legacy.WorkspaceMetrics.Materializer != "" {
+		t.Fatalf("old result changed meaning: %+v", legacy.WorkspaceMetrics)
+	}
+}
 
 func TestSave_CreatesFile(t *testing.T) {
 	dir := t.TempDir()

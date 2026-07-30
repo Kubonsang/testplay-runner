@@ -269,3 +269,15 @@ Legacy의 233ms write-back을 제거했지만 Unity startup이 약 6.6초를
 기본 Backend를 바꿀 근거는 아직 부족하다. 다음 단계는 integrity verify와
 materialization을 한 pass로 결합해 preparation 회귀를 제거한 뒤, native
 APFS 또는 Windows production filesystem에서 다시 측정하는 것이다.
+
+## 후속 Phase Metric Schema
+
+기존 수치는 다시 계산하지 않았다. 후속 실행부터 additive
+`workspace_metrics`의 `materializer`, `imageResolveMs`,
+`imageMetadataVerifyMs`, `imageFullHashMs`, `libraryMaterializeMs`,
+`workspaceVerifyMs`, 기존 `cleanupMs`를 함께 수집한다. 기존
+`libraryMaterializationMs`는 호환 aggregate로 유지된다.
+
+Warm valid Image의 현재 안전 경로는 Base Image 전체 Hash를 Resolve와
+materialize 직전 Verify에서 각각 한 번 수행한다. 새 계측은 이 비용을
+드러내며 Hash 자체를 제거하거나 약화하지 않는다.
