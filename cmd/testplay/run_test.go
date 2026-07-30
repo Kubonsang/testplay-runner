@@ -120,7 +120,11 @@ func TestRunCmd_ImageBackendEmitsAdditiveWorkspaceMetrics(t *testing.T) {
 		"cleanupMs",
 		"libraryMaterializationMs",
 	} {
-		if value, ok := metrics[field].(float64); !ok || value < 0 {
+		value, present := metrics[field]
+		if !present {
+			continue
+		}
+		if numeric, ok := value.(float64); !ok || numeric < 0 {
 			t.Fatalf("%s = %v, want non-negative numeric metric", field, metrics[field])
 		}
 	}

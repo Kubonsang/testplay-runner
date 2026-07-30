@@ -72,11 +72,11 @@ type WorkspaceMetrics struct {
 	FileCopyMs                          int64  `json:"fileCopyMs"`
 	LibraryMaterializationMs            int64  `json:"libraryMaterializationMs"`
 	Materializer                        string `json:"materializer,omitempty"`
-	ImageResolveMs                      int64  `json:"imageResolveMs"`
-	ImageMetadataVerifyMs               int64  `json:"imageMetadataVerifyMs"`
-	ImageFullHashMs                     int64  `json:"imageFullHashMs"`
-	LibraryMaterializeMs                int64  `json:"libraryMaterializeMs"`
-	WorkspaceVerifyMs                   int64  `json:"workspaceVerifyMs"`
+	ImageResolveMs                      int64  `json:"imageResolveMs,omitempty"`
+	ImageMetadataVerifyMs               int64  `json:"imageMetadataVerifyMs,omitempty"`
+	ImageFullHashMs                     int64  `json:"imageFullHashMs,omitempty"`
+	LibraryMaterializeMs                int64  `json:"libraryMaterializeMs,omitempty"`
+	WorkspaceVerifyMs                   int64  `json:"workspaceVerifyMs,omitempty"`
 	UnityStartupMs                      int64  `json:"unityStartupMs"`
 	UnityExecutionMs                    int64  `json:"unityExecutionMs"`
 	TestExecutionMs                     int64  `json:"testExecutionMs"`

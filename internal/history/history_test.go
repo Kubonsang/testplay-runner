@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Kubonsang/testplay-runner/internal/history"
@@ -57,6 +58,22 @@ func TestWorkspaceMetrics_JSONPhaseContractIsAdditive(t *testing.T) {
 	if legacy.WorkspaceMetrics.LibraryMaterializationMs != 7 ||
 		legacy.WorkspaceMetrics.Materializer != "" {
 		t.Fatalf("old result changed meaning: %+v", legacy.WorkspaceMetrics)
+	}
+	legacyData, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, imageOnlyKey := range []string{
+		"materializer",
+		"imageResolveMs",
+		"imageMetadataVerifyMs",
+		"imageFullHashMs",
+		"libraryMaterializeMs",
+		"workspaceVerifyMs",
+	} {
+		if strings.Contains(string(legacyData), `"`+imageOnlyKey+`"`) {
+			t.Fatalf("legacy result contains image-only %q: %s", imageOnlyKey, legacyData)
+		}
 	}
 }
 
