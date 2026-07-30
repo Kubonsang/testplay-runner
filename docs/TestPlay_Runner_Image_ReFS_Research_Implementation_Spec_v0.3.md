@@ -1336,7 +1336,17 @@ Unity compile과 Asset Import의 독립 구간은 아직 분리되지 않았다.
 
 ## T3 — Windows ReFS 작은 Probe
 
+상태: **implemented / awaiting ReFS hardware validation**
+
 Unity를 실행하지 않는다.
+
+`internal/refsclone`에 제품 Backend와 연결되지 않은 독립 Probe를
+구현했다. 공개 구조체가 완전히 문서화된
+`FSCTL_DUPLICATE_EXTENTS_TO_FILE`만 사용하며 `_EX` fallback은 아직
+구현하지 않았다. `Probe`의 `Supported=true`는 ReFS 이름이나
+`FILE_SUPPORTS_BLOCK_REFCOUNTING` flag만으로 결정하지 않고, 임시
+cluster fixture에 대한 실제 `DeviceIoControl` 성공, byte parity와 cleanup
+성공 후에만 반환한다.
 
 ```text
 1 MiB Fixture
@@ -1346,6 +1356,22 @@ Unity를 실행하지 않는다.
 → Destination 수정 격리
 → 취소/Lock/다른 Volume 오류
 ```
+
+Windows integration test는 `TESTPLAY_REFS_PROBE_ROOT`가 명시된 경우에만
+활성화된다. ReFS가 아닌 root, 다른 volume, alignment 오류 또는 clone
+control 실패는 Skip하지 않고 구조화된 오류로 실패한다. 현재 개발
+환경은 macOS이며 실제 Windows ReFS volume이 없어 아직 실행하지 않았다.
+
+```powershell
+$env:TESTPLAY_REFS_PROBE_ROOT = "X:\testplay-refs-test"
+go test -tags=refs_integration ./internal/refsclone `
+  -run '^TestReFSBlockCloneProbe$' -v -count=5
+```
+
+`PROVEN` 판정에는 실제 Control 성공, byte parity, 양방향 쓰기 격리,
+cleanup, logical/allocation/volume delta, physical-copy 대비 추가 물리량
+감소와 5/5 성공이 모두 필요하다. Cross-build 결과만으로 이 상태를
+변경하지 않는다.
 
 ## T4 — ReFS File/Tree Materializer
 
