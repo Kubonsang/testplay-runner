@@ -1,0 +1,14 @@
+{
+  "name": "TestPlayFixture.Runtime",
+  "rootNamespace": "TestPlayFixture",
+  "references": [],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}
