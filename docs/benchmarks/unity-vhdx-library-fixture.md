@@ -1,0 +1,130 @@
+# Unity Library on Differencing VHDX fixture
+
+## Status
+
+```text
+Fixture and elevated harness: IMPLEMENTED
+Elevated Unity VHDX hardware validation: NOT RUN
+Verdict: IMPLEMENTED / AWAITING HARDWARE VALIDATION
+```
+
+This fixture answers one narrow question: can a small Unity project's
+`Library` remain correct while it is a directory mount backed by a
+Differencing VHDX Child? It does not connect the helper to the public
+`testplay` CLI, Image Backend, GNF_, parallel workers, sharding, or a Windows
+service.
+
+## Fixture
+
+The repository fixture is `testdata/unity-vhdx-fixture` and targets Unity
+`6000.3.8f1`. It contains only `Assets`, `Packages`, and `ProjectSettings` plus
+an exclusion file. Generated `Library`, `Temp`, `Logs`, `UserSettings`, and
+`obj` directories are forbidden.
+
+Tests:
+
+- EditMode `LibraryMountWriteReadTest` writes and reads the unique run marker
+  under `Library/TestPlayVHDX`.
+- EditMode `DeterministicRuntimeStateTest` exercises the shared Runtime
+  assembly.
+- PlayMode `DeterministicPlayModeSmokeTest` creates a GameObject, attaches the
+  shared Runtime component, waits a frame, verifies deterministic state, and
+  destroys the object.
+
+## Lifecycle
+
+```text
+copy Seed project
+-> create and initialize a dynamic 4 GiB Parent VHDX
+-> mount Parent at Seed/Library
+-> Unity BatchMode import and compile
+-> physical-copy the warm Library baseline
+-> unmount and detach Parent
+-> hash Parent
+-> run Physical EditMode and PlayMode
+-> start the real testplay-storage-helper process
+-> Acquire one Child mounted at VHDXProject/Library
+-> run VHDX EditMode and PlayMode under the same Lease
+-> compare canonical semantic results
+-> Release and verify released Journal
+-> verify Parent hash and marker isolation
+-> verify no new disk, mount, Child, or non-released Journal
+```
+
+The Seed, Physical, and VHDX projects use different absolute paths. Path-driven
+reimport is an observation, not an automatic compatibility failure, provided
+semantic parity, Parent isolation, mount integrity, and cleanup all pass.
+
+## Result parity
+
+The harness reuses `internal/parser` for Unity NUnit XML. It sorts test cases
+by full name and outcome, then hashes only:
+
+- Unity exit code and test platform
+- total, passed, failed, skipped, and inconclusive counts
+- every full test name and outcome
+
+Duration, timestamp, file path, stack text, and XML ordering are excluded.
+Tests are never dropped or renamed to make parity pass.
+
+## Storage boundaries
+
+- Parent creation and mount use `internal/vhdxstorage`.
+- The Physical baseline uses `PhysicalCopyMaterializer`.
+- The VHDX run launches the actual `testplay-storage-helper` executable and
+  uses its versioned NDJSON protocol; it does not call the Backend directly.
+- The Child handle remains owned by the Helper across both Unity platforms.
+- Mount identity is inspected after Acquire, after each platform, immediately
+  before Release, and after Release.
+- The Parent is hashed before and after Child use and inspected read-only for
+  the Child marker.
+
+## Evidence
+
+Each hardware run writes a unique directory below
+`TESTPLAY_UNITY_VHDX_ARTIFACT_ROOT` containing `evidence.json`, raw Physical and
+VHDX results XML and Editor logs, Helper protocol/stderr, and mount snapshots.
+Large raw artifacts are not committed automatically.
+
+Only measured values are emitted. Missing values remain absent. No performance
+threshold is applied in this PR; unexplained phases over 30 seconds must be
+reported as observations rather than assigned a cause.
+
+## Elevated validation
+
+Run only from an Administrator PowerShell with an absent or empty dedicated
+Fixture Root:
+
+```powershell
+cd C:\Dev\testplay-runner
+
+$env:TESTPLAY_UNITY_EDITOR_PATH = `
+  "C:\Program Files\Unity\Hub\Editor\6000.3.8f1\Editor\Unity.exe"
+$env:TESTPLAY_UNITY_VHDX_FIXTURE_ROOT = `
+  "C:\Dev\testplay-unity-vhdx-fixture"
+$env:TESTPLAY_UNITY_VHDX_ARTIFACT_ROOT = `
+  "C:\Dev\testplay-unity-vhdx-evidence"
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\run-unity-vhdx-fixture.ps1 `
+  -Count 1
+```
+
+Only after the one-run lifecycle succeeds completely:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\run-unity-vhdx-fixture.ps1 `
+  -Count 5 `
+  -ReuseParent
+```
+
+The five-run mode prepares one immutable Parent and uses five distinct
+sequential Children. The script records existing File Backed Virtual disks but
+never detaches them or modifies physical disks.
+
+## Remaining gates
+
+Hardware evidence is required before writing `PROVEN`. Even a successful
+fixture does not prove GNF_ compatibility, large-project performance,
+forced-termination recovery, parallel workers, or production latency.

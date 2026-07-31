@@ -129,3 +129,21 @@ raw transcript and per-run metrics are not stored in the repository. They
 permit a separate small Unity fixture validation PR, but do not establish Unity
 Library compatibility, forced-termination recovery, or production latency. A
 permanent broker service remains deferred.
+
+## Small Unity fixture gate
+
+The stacked `unity-vhdx-library-fixture` harness is implemented without
+changing the public CLI or Image Backend. It prepares a warm Parent Library,
+runs the same deterministic EditMode and PlayMode tests against a Physical
+Library and a Helper-mounted Differencing Child, compares semantic NUnit
+results, verifies the Parent hash and marker isolation, and checks cleanup.
+
+```text
+Fixture implementation: COMPLETE
+Elevated Unity VHDX validation: NOT RUN
+Verdict: IMPLEMENTED / AWAITING HARDWARE VALIDATION
+```
+
+Only elevated evidence with Physical/VHDX parity, stable mount identity,
+unchanged Parent SHA-256, and zero residual resources can promote this gate to
+`PROVEN — small Unity Library compatible with Differencing VHDX`.
