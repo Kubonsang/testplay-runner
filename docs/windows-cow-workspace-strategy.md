@@ -56,8 +56,10 @@ and storage metrics before production claims.
 
 ```text
 Standalone Differencing VHDX correctness: PROVEN
-On-demand Storage Helper readiness: YES
+On-demand Helper lifecycle: PROVEN
+Small Unity fixture readiness: YES
 Unity workspace readiness: NOT YET
+Forced termination recovery: NOT YET
 Production performance: NOT YET
 ```
 
@@ -111,11 +113,19 @@ Its implementation status is:
 
 ```text
 Protocol and fake-backend validation: COMPLETE
-Elevated Windows helper integration: AWAITING VALIDATION
+On-demand Helper Acquire/Release: PROVEN
+EOF automatic cleanup: PROVEN
+Lease lifetime management: PROVEN
+Same-process idempotency: PROVEN
+Cleanup safety: PROVEN
+Small Unity fixture readiness: YES
 Unity workspace readiness: NOT YET
+Forced termination recovery: NOT YET
 Production performance: NOT YET
 ```
 
-Unity Library integration follows in a separate PR after the helper protocol
-and recovery semantics are reviewed. A permanent broker service remains
-deferred.
+These helper results are user-recorded elevated Windows hardware evidence; the
+raw transcript and per-run metrics are not stored in the repository. They
+permit a separate small Unity fixture validation PR, but do not establish Unity
+Library compatibility, forced-termination recovery, or production latency. A
+permanent broker service remains deferred.

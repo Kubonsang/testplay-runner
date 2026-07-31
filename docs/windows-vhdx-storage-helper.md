@@ -5,7 +5,10 @@
 ```text
 Protocol and implementation: COMPLETE
 Cross-platform fake-backend tests: PASS
-Elevated Windows integration: NOT RUN in the implementation session
+On-demand Helper lifecycle: PROVEN on elevated Windows hardware
+Small Unity fixture readiness: YES
+Forced termination recovery: NOT YET
+Production performance: NOT YET
 Unity and public CLI integration: NOT PRESENT
 ```
 
@@ -230,6 +233,30 @@ The integration suite prepares a Parent through the probe fixture, launches a
 real helper child process, verifies the baseline payload, mutates the mounted
 Child, tests duplicate Acquire, performs Release or EOF cleanup, and compares
 File Backed Virtual disks before and after.
+
+## Elevated Windows hardware evidence
+
+The following results were recorded by the user after running the helper on an
+elevated Windows system:
+
+```text
+On-demand Helper Acquire/Release: PROVEN
+EOF automatic cleanup: PROVEN
+Lease lifetime management: PROVEN
+Same-process idempotency: PROVEN
+Cleanup safety: PROVEN
+```
+
+This is user-recorded hardware evidence. The raw console transcript, per-run
+phase metrics, logical and allocated Child sizes, and numeric residual counts
+were not added to the repository, so those values remain unavailable and are
+not reconstructed here.
+
+The verdict is limited to the on-demand helper Acquire, retained Lease,
+Release, EOF cleanup, idempotency, and cleanup lifecycle. It does not prove
+forced-process-termination recovery, Unity Library compatibility, or
+production performance. The next permitted validation step is a small Unity
+fixture; production integration remains a separate gate.
 
 ## Explicit non-goals
 
