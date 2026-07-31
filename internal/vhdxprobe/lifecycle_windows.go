@@ -12,134 +12,21 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"time"
+
+	"github.com/Kubonsang/testplay-runner/internal/vhdxstorage"
 )
-
-const (
-	adminCheckScript = `
-$principal = [Security.Principal.WindowsPrincipal](
-  [Security.Principal.WindowsIdentity]::GetCurrent()
-)
-$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-`
-
-	initializeDiskScript = `
-$ErrorActionPreference = 'Stop'
-$diskNumber = [int]$env:TESTPLAY_VHDX_DISK_NUMBER
-$mountPath = $env:TESTPLAY_VHDX_MOUNT_PATH.TrimEnd('\') + '\'
-$deadline = [DateTime]::UtcNow.AddSeconds(15)
-do {
-  $disks = @(Get-Disk -Number $diskNumber -ErrorAction SilentlyContinue)
-  if ($disks.Count -eq 1) { break }
-  Start-Sleep -Milliseconds 200
-} while ([DateTime]::UtcNow -lt $deadline)
-if ($disks.Count -ne 1) { throw "expected exactly one disk $diskNumber; found $($disks.Count)" }
-$disk = $disks[0]
-if ($disk.BusType.ToString() -ne 'File Backed Virtual') {
-  throw "unsafe bus type for disk ${diskNumber}: $($disk.BusType)"
-}
-if ($disk.PartitionStyle.ToString() -ne 'RAW') {
-  throw "new parent disk is not RAW: $($disk.PartitionStyle)"
-}
-$existing = @(Get-Partition -DiskNumber $diskNumber -ErrorAction SilentlyContinue)
-if ($existing.Count -ne 0) { throw "new parent disk already has partitions" }
-if ($disk.IsReadOnly) { Set-Disk -Number $diskNumber -IsReadOnly $false }
-if ($disk.IsOffline) { Set-Disk -Number $diskNumber -IsOffline $false }
-Initialize-Disk -Number $diskNumber -PartitionStyle GPT -PassThru | Out-Null
-$partition = New-Partition -DiskNumber $diskNumber -UseMaximumSize
-Format-Volume -Partition $partition -FileSystem NTFS -NewFileSystemLabel 'TestPlayVHDXProbe' -Confirm:$false -Force | Out-Null
-Add-PartitionAccessPath -InputObject $partition -AccessPath $mountPath
-[pscustomobject]@{
-  diskNumber = $diskNumber
-  busType = 'File Backed Virtual'
-  partitionNumber = $partition.PartitionNumber
-  mountPath = $mountPath
-} | ConvertTo-Json -Compress
-`
-
-	mountDiskScript = `
-$ErrorActionPreference = 'Stop'
-$diskNumber = [int]$env:TESTPLAY_VHDX_DISK_NUMBER
-$mountPath = $env:TESTPLAY_VHDX_MOUNT_PATH.TrimEnd('\') + '\'
-$readOnly = $env:TESTPLAY_VHDX_READ_ONLY -eq '1'
-$deadline = [DateTime]::UtcNow.AddSeconds(15)
-do {
-  $disks = @(Get-Disk -Number $diskNumber -ErrorAction SilentlyContinue)
-  if ($disks.Count -eq 1) { break }
-  Start-Sleep -Milliseconds 200
-} while ([DateTime]::UtcNow -lt $deadline)
-if ($disks.Count -ne 1) { throw "expected exactly one disk $diskNumber; found $($disks.Count)" }
-$disk = $disks[0]
-if ($disk.BusType.ToString() -ne 'File Backed Virtual') {
-  throw "unsafe bus type for disk ${diskNumber}: $($disk.BusType)"
-}
-if ($disk.PartitionStyle.ToString() -ne 'GPT') {
-  throw "attached disk is not GPT: $($disk.PartitionStyle)"
-}
-if ($disk.IsOffline) { Set-Disk -Number $diskNumber -IsOffline $false }
-if (-not $readOnly -and $disk.IsReadOnly) {
-  Set-Disk -Number $diskNumber -IsReadOnly $false
-}
-$dataGuid = [guid]'EBD0A0A2-B9E5-4433-87C0-68B6B72699C7'
-$partitions = @(Get-Partition -DiskNumber $diskNumber)
-$dataPartitions = @($partitions | Where-Object {
-  [guid]$_.GptType -eq $dataGuid
-})
-if ($dataPartitions.Count -ne 1) {
-  throw "expected one basic data partition; found $($dataPartitions.Count)"
-}
-$partition = $dataPartitions[0]
-Add-PartitionAccessPath -InputObject $partition -AccessPath $mountPath
-[pscustomobject]@{
-  diskNumber = $diskNumber
-  busType = 'File Backed Virtual'
-  partitionNumber = $partition.PartitionNumber
-  mountPath = $mountPath
-  readOnly = $readOnly
-} | ConvertTo-Json -Compress
-`
-
-	unmountDiskScript = `
-$ErrorActionPreference = 'Stop'
-$diskNumber = [int]$env:TESTPLAY_VHDX_DISK_NUMBER
-$mountPath = $env:TESTPLAY_VHDX_MOUNT_PATH.TrimEnd('\') + '\'
-$disks = @(Get-Disk -Number $diskNumber -ErrorAction Stop)
-if ($disks.Count -ne 1) { throw "expected exactly one disk $diskNumber" }
-if ($disks[0].BusType.ToString() -ne 'File Backed Virtual') {
-  throw "unsafe bus type for disk ${diskNumber}: $($disks[0].BusType)"
-}
-$matches = @(Get-Partition -DiskNumber $diskNumber | Where-Object {
-  @($_.AccessPaths) -contains $mountPath
-})
-if ($matches.Count -ne 1) {
-  throw "expected exactly one partition mounted at $mountPath; found $($matches.Count)"
-}
-Remove-PartitionAccessPath -InputObject $matches[0] -AccessPath $mountPath
-`
-)
-
-type attachedVHDX struct {
-	handle       virtualDiskHandle
-	path         string
-	physicalPath string
-	diskNumber   int
-	mountPath    string
-	mounted      bool
-}
 
 // Run executes one isolated differencing-VHDX probe.
 func Run(ctx context.Context, config Config) (result *Result, returnErr error) {
 	if err := cancellationError(ctx, "start", config.Root); err != nil {
 		return nil, err
 	}
-	if err := ensureVirtDiskAPI(); err != nil {
+	if err := vhdxstorage.EnsureAvailable(); err != nil {
 		return nil, err
 	}
-	elevated, err := isElevated(ctx)
+	elevated, err := vhdxstorage.IsElevated(ctx)
 	if err != nil {
 		return nil, probeError(CodeNotElevated, "check-administrator", config.Root, err)
 	}
@@ -164,8 +51,8 @@ func Run(ctx context.Context, config Config) (result *Result, returnErr error) {
 		},
 	}
 	safeToDelete := true
-	closeAfterFailure := func(disk *attachedVHDX, primary error) error {
-		if closeErr := disk.close(ctx); closeErr != nil {
+	closeAfterFailure := func(disk *vhdxstorage.Attachment, primary error) error {
+		if closeErr := disk.Close(ctx); closeErr != nil {
 			safeToDelete = false
 			return errors.Join(primary, closeErr)
 		}
@@ -209,7 +96,7 @@ func Run(ctx context.Context, config Config) (result *Result, returnErr error) {
 		return result, err
 	}
 	started := time.Now()
-	if err := createDynamicVHDX(plan.Paths.Parent, plan.Config.ParentVirtualBytes); err != nil {
+	if err := vhdxstorage.CreateDynamic(plan.Paths.Parent, plan.Config.ParentVirtualBytes); err != nil {
 		return result, err
 	}
 	result.Durations.ParentCreateMs = time.Since(started).Milliseconds()
@@ -222,15 +109,15 @@ func Run(ctx context.Context, config Config) (result *Result, returnErr error) {
 		return result, err
 	}
 	started = time.Now()
-	parent, err := attachVHDX(plan.Paths.Parent, false)
+	parent, err := vhdxstorage.OpenAndAttach(plan.Paths.Parent, false)
 	if err != nil {
 		return result, probeError(CodeParentAttachFailed, "attach-parent", plan.Paths.Parent, err)
 	}
-	result.ParentPhysicalPath = parent.physicalPath
+	result.ParentPhysicalPath = parent.PhysicalPath()
 	result.Durations.ParentAttachMs = time.Since(started).Milliseconds()
 	started = time.Now()
-	if err := parent.initializeAndMount(ctx, parentMount); err != nil {
-		if closeErr := parent.close(ctx); closeErr != nil {
+	if err := parent.InitializeAndMount(ctx, parentMount); err != nil {
+		if closeErr := parent.Close(ctx); closeErr != nil {
 			safeToDelete = false
 			return result, errors.Join(err, closeErr)
 		}
@@ -238,7 +125,7 @@ func Run(ctx context.Context, config Config) (result *Result, returnErr error) {
 	}
 	result.Durations.ParentInitializeMs = time.Since(started).Milliseconds()
 	if err := cancellationError(ctx, "parent-seed", plan.Paths.Parent); err != nil {
-		if closeErr := parent.close(ctx); closeErr != nil {
+		if closeErr := parent.Close(ctx); closeErr != nil {
 			safeToDelete = false
 			return result, errors.Join(err, closeErr)
 		}
@@ -252,13 +139,13 @@ func Run(ctx context.Context, config Config) (result *Result, returnErr error) {
 	}
 	result.BaselinePayloadHash = baselineHash
 	result.Durations.ParentSeedMs = time.Since(started).Milliseconds()
-	sizeInfo, err := getVirtualDiskSize(parent.handle, plan.Paths.Parent)
+	sizeInfo, err := parent.Size()
 	if err != nil {
 		return result, closeAfterFailure(parent, err)
 	}
 	result.Metrics.ParentVirtualBytes = int64(sizeInfo.VirtualSize)
 	started = time.Now()
-	if err := parent.close(ctx); err != nil {
+	if err := parent.Close(ctx); err != nil {
 		safeToDelete = false
 		return result, err
 	}
@@ -277,15 +164,15 @@ func Run(ctx context.Context, config Config) (result *Result, returnErr error) {
 	}
 	started = time.Now()
 	for _, childPath := range []string{plan.Paths.ChildA, plan.Paths.ChildB} {
-		if err := createDifferencingVHDX(childPath, plan.Paths.Parent); err != nil {
+		if err := vhdxstorage.CreateDifferencing(childPath, plan.Paths.Parent); err != nil {
 			return result, err
 		}
-		childHandle, openErr := openVirtualDisk(childPath, false)
+		childHandle, openErr := vhdxstorage.Open(childPath, false)
 		if openErr != nil {
 			return result, openErr
 		}
-		verifyErr := verifyDifferencingParent(childHandle, childPath, plan.Paths.Parent)
-		closeErr := closeVirtualDiskHandle(childHandle)
+		verifyErr := childHandle.VerifyParent(plan.Paths.Parent)
+		closeErr := childHandle.CloseHandle()
 		if verifyErr != nil || closeErr != nil {
 			return result, errors.Join(verifyErr, closeErr)
 		}
@@ -304,14 +191,14 @@ func Run(ctx context.Context, config Config) (result *Result, returnErr error) {
 		return result, err
 	}
 	started = time.Now()
-	childA, err := attachVHDX(plan.Paths.ChildA, false)
+	childA, err := vhdxstorage.OpenAndAttach(plan.Paths.ChildA, false)
 	if err != nil {
 		return result, err
 	}
-	result.ChildAPhysicalPath = childA.physicalPath
+	result.ChildAPhysicalPath = childA.PhysicalPath()
 	mountStarted := time.Now()
-	if err := childA.mountExisting(ctx, childAMount, false); err != nil {
-		if closeErr := childA.close(ctx); closeErr != nil {
+	if err := childA.MountExisting(ctx, childAMount, false); err != nil {
+		if closeErr := childA.Close(ctx); closeErr != nil {
 			safeToDelete = false
 			return result, errors.Join(err, closeErr)
 		}
@@ -334,7 +221,7 @@ func Run(ctx context.Context, config Config) (result *Result, returnErr error) {
 	}
 	result.Durations.MutationMs = time.Since(started).Milliseconds()
 	started = time.Now()
-	if err := childA.close(ctx); err != nil {
+	if err := childA.Close(ctx); err != nil {
 		safeToDelete = false
 		return result, err
 	}
@@ -348,13 +235,13 @@ func Run(ctx context.Context, config Config) (result *Result, returnErr error) {
 	if err := os.Mkdir(childBMount, 0700); err != nil {
 		return result, err
 	}
-	childB, err := attachVHDX(plan.Paths.ChildB, false)
+	childB, err := vhdxstorage.OpenAndAttach(plan.Paths.ChildB, false)
 	if err != nil {
 		return result, err
 	}
-	result.ChildBPhysicalPath = childB.physicalPath
-	if err := childB.mountExisting(ctx, childBMount, false); err != nil {
-		if closeErr := childB.close(ctx); closeErr != nil {
+	result.ChildBPhysicalPath = childB.PhysicalPath()
+	if err := childB.MountExisting(ctx, childBMount, false); err != nil {
+		if closeErr := childB.Close(ctx); closeErr != nil {
 			safeToDelete = false
 			return result, errors.Join(err, closeErr)
 		}
@@ -367,7 +254,7 @@ func Run(ctx context.Context, config Config) (result *Result, returnErr error) {
 	if err != nil {
 		return result, closeAfterFailure(childB, err)
 	}
-	if err := childB.close(ctx); err != nil {
+	if err := childB.Close(ctx); err != nil {
 		safeToDelete = false
 		return result, err
 	}
@@ -376,17 +263,17 @@ func Run(ctx context.Context, config Config) (result *Result, returnErr error) {
 	if err := os.Mkdir(childAReattachMount, 0700); err != nil {
 		return result, err
 	}
-	childAReattach, err := attachVHDX(plan.Paths.ChildA, false)
+	childAReattach, err := vhdxstorage.OpenAndAttach(plan.Paths.ChildA, false)
 	if err != nil {
 		return result, err
 	}
-	if err := childAReattach.mountExisting(ctx, childAReattachMount, false); err != nil {
+	if err := childAReattach.MountExisting(ctx, childAReattachMount, false); err != nil {
 		return result, closeAfterFailure(childAReattach, err)
 	}
 	if err := verifyChildAReattach(childAReattachMount, childAHash); err != nil {
 		return result, closeAfterFailure(childAReattach, err)
 	}
-	if err := childAReattach.close(ctx); err != nil {
+	if err := childAReattach.Close(ctx); err != nil {
 		safeToDelete = false
 		return result, err
 	}
@@ -397,17 +284,17 @@ func Run(ctx context.Context, config Config) (result *Result, returnErr error) {
 	if err := os.Mkdir(childBVerifyMount, 0700); err != nil {
 		return result, err
 	}
-	childBVerify, err := attachVHDX(plan.Paths.ChildB, true)
+	childBVerify, err := vhdxstorage.OpenAndAttach(plan.Paths.ChildB, true)
 	if err != nil {
 		return result, err
 	}
-	if err := childBVerify.mountExisting(ctx, childBVerifyMount, true); err != nil {
+	if err := childBVerify.MountExisting(ctx, childBVerifyMount, true); err != nil {
 		return result, closeAfterFailure(childBVerify, err)
 	}
 	if err := verifyChildBMutation(childBVerifyMount, childBHash); err != nil {
 		return result, closeAfterFailure(childBVerify, err)
 	}
-	if err := childBVerify.close(ctx); err != nil {
+	if err := childBVerify.Close(ctx); err != nil {
 		safeToDelete = false
 		return result, err
 	}
@@ -417,17 +304,17 @@ func Run(ctx context.Context, config Config) (result *Result, returnErr error) {
 	if err := os.Mkdir(parentVerifyMount, 0700); err != nil {
 		return result, err
 	}
-	parentVerify, err := attachVHDX(plan.Paths.Parent, true)
+	parentVerify, err := vhdxstorage.OpenAndAttach(plan.Paths.Parent, true)
 	if err != nil {
 		return result, err
 	}
-	if err := parentVerify.mountExisting(ctx, parentVerifyMount, true); err != nil {
+	if err := parentVerify.MountExisting(ctx, parentVerifyMount, true); err != nil {
 		return result, closeAfterFailure(parentVerify, err)
 	}
 	if err := verifyParentBaseline(parentVerifyMount, baselineHash); err != nil {
 		return result, closeAfterFailure(parentVerify, err)
 	}
-	if err := parentVerify.close(ctx); err != nil {
+	if err := parentVerify.Close(ctx); err != nil {
 		safeToDelete = false
 		return result, err
 	}
@@ -445,133 +332,6 @@ func Run(ctx context.Context, config Config) (result *Result, returnErr error) {
 	}
 	result.ParentIsolationPassed = true
 	return result, nil
-}
-
-func attachVHDX(path string, readOnly bool) (*attachedVHDX, error) {
-	handle, err := openVirtualDisk(path, readOnly)
-	if err != nil {
-		return nil, err
-	}
-	if err := attachVirtualDisk(handle, path, readOnly); err != nil {
-		_ = closeVirtualDiskHandle(handle)
-		return nil, err
-	}
-	physicalPath, err := getVirtualDiskPhysicalPath(handle, path)
-	if err != nil {
-		detachErr := detachVirtualDisk(handle, path)
-		closeErr := closeVirtualDiskHandle(handle)
-		return nil, errors.Join(err, detachErr, closeErr)
-	}
-	diskNumber, err := diskNumberFromPhysicalPath(physicalPath)
-	if err != nil {
-		detachErr := detachVirtualDisk(handle, path)
-		closeErr := closeVirtualDiskHandle(handle)
-		return nil, errors.Join(err, detachErr, closeErr)
-	}
-	return &attachedVHDX{
-		handle:       handle,
-		path:         path,
-		physicalPath: physicalPath,
-		diskNumber:   diskNumber,
-	}, nil
-}
-
-func (disk *attachedVHDX) initializeAndMount(ctx context.Context, mountPath string) error {
-	if err := disk.runStorageScript(ctx, "initialize-and-mount", mountPath, false, initializeDiskScript); err != nil {
-		return err
-	}
-	disk.mountPath = mountPath
-	disk.mounted = true
-	return nil
-}
-
-func (disk *attachedVHDX) mountExisting(ctx context.Context, mountPath string, readOnly bool) error {
-	if err := disk.runStorageScript(ctx, "mount-existing", mountPath, readOnly, mountDiskScript); err != nil {
-		return probeError(CodeMountResolutionFailed, "mount-existing", disk.path, err)
-	}
-	disk.mountPath = mountPath
-	disk.mounted = true
-	return nil
-}
-
-func (disk *attachedVHDX) close(ctx context.Context) error {
-	var errs []error
-	if disk.mounted {
-		if err := disk.runStorageScript(ctx, "unmount", disk.mountPath, false, unmountDiskScript); err != nil {
-			errs = append(errs, probeError(CodeCleanupFailed, "unmount", disk.mountPath, err))
-		} else {
-			disk.mounted = false
-		}
-	}
-	if err := detachVirtualDisk(disk.handle, disk.path); err != nil {
-		errs = append(errs, err)
-	}
-	if err := closeVirtualDiskHandle(disk.handle); err != nil {
-		errs = append(errs, probeError(CodeCleanupFailed, "close-handle", disk.path, err))
-	}
-	disk.handle = 0
-	return errors.Join(errs...)
-}
-
-func (disk *attachedVHDX) runStorageScript(
-	ctx context.Context,
-	operation string,
-	mountPath string,
-	readOnly bool,
-	script string,
-) error {
-	command := exec.CommandContext(
-		ctx,
-		"powershell.exe",
-		"-NoProfile",
-		"-NonInteractive",
-		"-Command",
-		script,
-	)
-	command.Env = append(
-		os.Environ(),
-		"TESTPLAY_VHDX_DISK_NUMBER="+strconv.Itoa(disk.diskNumber),
-		"TESTPLAY_VHDX_MOUNT_PATH="+mountPath,
-		"TESTPLAY_VHDX_READ_ONLY="+boolDigit(readOnly),
-	)
-	output, err := command.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%s: %w: %s", operation, err, strings.TrimSpace(string(output)))
-	}
-	return nil
-}
-
-func diskNumberFromPhysicalPath(path string) (int, error) {
-	match := physicalDrivePattern.FindStringSubmatch(path)
-	if len(match) != 2 {
-		return 0, probeError(
-			CodeUnsafePhysicalDisk,
-			"parse-physical-path",
-			path,
-			fmt.Errorf("not a PhysicalDrive path"),
-		)
-	}
-	number, err := strconv.Atoi(match[1])
-	if err != nil {
-		return 0, probeError(CodeUnsafePhysicalDisk, "parse-disk-number", path, err)
-	}
-	return number, nil
-}
-
-func isElevated(ctx context.Context) (bool, error) {
-	command := exec.CommandContext(
-		ctx,
-		"powershell.exe",
-		"-NoProfile",
-		"-NonInteractive",
-		"-Command",
-		adminCheckScript,
-	)
-	output, err := command.CombinedOutput()
-	if err != nil {
-		return false, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
-	}
-	return strings.EqualFold(strings.TrimSpace(string(output)), "true"), nil
 }
 
 func cancellationError(ctx context.Context, operation, path string) error {
