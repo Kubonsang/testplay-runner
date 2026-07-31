@@ -88,24 +88,33 @@ It does not integrate with:
 - parallel workers or test sharding
 - ReFS code
 
-## Next PR boundary
+## On-demand helper boundary
 
-The next storage PR should design an on-demand helper, not a permanently
-running daemon:
+The on-demand helper now implements the following boundary without becoming a
+permanently running daemon:
 
 ```text
 On-demand Storage Helper
-├─ JSON Acquire/Release protocol
-├─ Workspace Lease
-├─ Journal
-├─ Idempotency
-├─ Explicit Detach/Cleanup
-└─ Administrator privilege boundary
+|- versioned NDJSON Acquire/Release
+|- one Workspace Lease per process
+|- atomic Journal
+|- same-process Idempotency
+|- explicit Detach/Cleanup and EOF cleanup
+`- administrator privilege boundary
 ```
 
 The helper must make ownership and recovery decisions explicit and must retain
 the probe's rule that only its newly created File Backed Virtual disks may be
 initialized, mounted, detached, or deleted.
+
+Its implementation status is:
+
+```text
+Protocol and fake-backend validation: COMPLETE
+Elevated Windows helper integration: AWAITING VALIDATION
+Unity workspace readiness: NOT YET
+Production performance: NOT YET
+```
 
 Unity Library integration follows in a separate PR after the helper protocol
 and recovery semantics are reviewed. A permanent broker service remains
