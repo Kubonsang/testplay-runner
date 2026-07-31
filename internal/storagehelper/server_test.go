@@ -80,6 +80,11 @@ type testPaths struct{ store, workspace, parent, child, mount string }
 func makeTestPaths(t *testing.T) testPaths {
 	t.Helper()
 	root := t.TempDir()
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("resolve temporary test root: %v", err)
+	}
+	root = resolvedRoot
 	store := filepath.Join(root, "store")
 	workspace := filepath.Join(root, "workspace")
 	for _, path := range []string{filepath.Join(store, "parents"), filepath.Join(store, "children"), workspace} {
@@ -152,7 +157,13 @@ func TestAcquireReleaseAndDuplicate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(responses) != 3 || responses[0].Lease.LeaseID != "lease-test" || responses[1].Lease.LeaseID != "lease-test" || !responses[2].Released {
+	if len(responses) != 3 {
+		t.Fatalf("responses=%#v", responses)
+	}
+	if !responses[0].OK || responses[0].Lease == nil || !responses[1].OK || responses[1].Lease == nil || !responses[2].OK {
+		t.Fatalf("responses=%#v", responses)
+	}
+	if responses[0].Lease.LeaseID != "lease-test" || responses[1].Lease.LeaseID != "lease-test" || !responses[2].Released {
 		t.Fatalf("responses=%#v", responses)
 	}
 	if backend.acquires != 1 || backend.releases != 1 {
