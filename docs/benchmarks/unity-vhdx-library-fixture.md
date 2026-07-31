@@ -4,8 +4,8 @@
 
 ```text
 Fixture and elevated harness: IMPLEMENTED
-Elevated Unity VHDX hardware validation: NOT RUN
-Verdict: IMPLEMENTED / AWAITING HARDWARE VALIDATION
+Elevated Unity VHDX hardware validation: ATTEMPT 1 FAILED BEFORE VHDX ACQUIRE
+Verdict: FIXED / AWAITING HARDWARE REVALIDATION
 ```
 
 This fixture answers one narrow question: can a small Unity project's
@@ -70,7 +70,10 @@ Tests are never dropped or renamed to make parity pass.
 ## Storage boundaries
 
 - Parent creation and mount use `internal/vhdxstorage`.
-- The Physical baseline uses `PhysicalCopyMaterializer`.
+- The Physical baseline uses a fixture-only contents copy boundary. A verified
+  Windows volume-mount root is dereferenced once, while nested reparse points
+  are rejected. The resulting baseline and Physical project `Library` must be
+  ordinary directories with an accessible `SourceAssetDB` before Unity starts.
 - The VHDX run launches the actual `testplay-storage-helper` executable and
   uses its versioned NDJSON protocol; it does not call the Backend directly.
 - The Child handle remains owned by the Helper across both Unity platforms.
@@ -85,6 +88,24 @@ Each hardware run writes a unique directory below
 `TESTPLAY_UNITY_VHDX_ARTIFACT_ROOT` containing `evidence.json`, raw Physical and
 VHDX results XML and Editor logs, Helper protocol/stderr, and mount snapshots.
 Large raw artifacts are not committed automatically.
+
+### Hardware attempt 1
+
+The preserved user-recorded evidence is:
+
+```text
+C:\Dev\testplay-unity-vhdx-evidence\
+unity-vhdx-20260731T160449.463178300Z-01
+```
+
+Attempt 1 failed during Physical EditMode, before Helper Acquire or any VHDX
+Unity run. The Seed `Library` was a Windows directory mount, but the former
+physical-copy path reproduced that root as a reparse link. Detaching the Parent
+and deleting the Seed project left the Physical project's `Library` dangling,
+so Unity could not open `Library/SourceAssetDB` and crashed in LMDB
+initialization (`0xC0000005`). Licensing initialized successfully and was not
+the cause. Attached virtual-disk cleanup passed; VHDX Unity compatibility
+remains **NOT RUN**.
 
 Only measured values are emitted. Missing values remain absent. No performance
 threshold is applied in this PR; unexplained phases over 30 seconds must be

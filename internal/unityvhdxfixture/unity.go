@@ -131,14 +131,44 @@ func ensureUnityLog(path, fallback string) {
 
 func classifyUnityFailure(operation, projectPath, logPath string, exitCode int) error {
 	data, _ := os.ReadFile(logPath)
-	text := strings.ToLower(string(data))
-	code := CodeUnityRunFailed
-	if strings.Contains(text, "license") && (strings.Contains(text, "failed") || strings.Contains(text, "not found") || strings.Contains(text, "not valid")) {
-		code = CodeUnityLicenseFailed
-	} else if strings.Contains(text, "package") && (strings.Contains(text, "resolution failed") || strings.Contains(text, "failed to resolve") || strings.Contains(text, "cannot resolve")) {
-		code = CodeUnityPackageResolutionFailed
-	}
+	code := classifyUnityFailureCode(string(data), exitCode)
 	return fixtureError(code, operation, projectPath, fmt.Errorf("Unity exited with code %d; log=%s", exitCode, logPath))
+}
+
+func classifyUnityFailureCode(logText string, exitCode int) string {
+	text := strings.ToLower(logText)
+	if containsAny(text, "mdb_env_open failed", "cannot open lmdb database", "sourceassetdb") {
+		return CodeUnityAssetDatabaseOpenFailed
+	}
+	if exitCode == 0xC0000005 || containsAny(text, "crash!!!", "access violation", "a crash has been intercepted") {
+		return CodeUnityNativeCrash
+	}
+	if strings.Contains(text, "package") && containsAny(text, "resolution failed", "failed to resolve", "cannot resolve") {
+		return CodeUnityPackageResolutionFailed
+	}
+	if containsAny(text,
+		"licensing failed to initialize",
+		"license activation failed",
+		"failed to activate license",
+		"no valid unity editor license found",
+		"unity editor license has expired",
+		"license is not valid",
+	) {
+		return CodeUnityLicenseFailed
+	}
+	if containsAny(text, "library path is unavailable", "library directory is unavailable") {
+		return CodeUnityLibraryPathUnavailable
+	}
+	return CodeUnityRunFailed
+}
+
+func containsAny(text string, patterns ...string) bool {
+	for _, pattern := range patterns {
+		if strings.Contains(text, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 func ObserveReimport(logPaths ...string) ReimportObservations {

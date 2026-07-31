@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Kubonsang/testplay-runner/internal/librarymaterializer"
 	"github.com/Kubonsang/testplay-runner/internal/shadow"
 	"github.com/Kubonsang/testplay-runner/internal/storagehelper"
 	"github.com/Kubonsang/testplay-runner/internal/vhdxstorage"
@@ -154,21 +153,28 @@ func (s *sharedFixture) prepareParent(ctx context.Context, size int64) error {
 	}
 	seedLog := filepath.Join(s.artifactRoot, "seed-"+time.Now().UTC().Format("20060102T150405.000000000Z"), "seed-editor.log")
 	parentMount := filepath.Join(seedProject, "Library")
-	materializer := librarymaterializer.PhysicalCopyMaterializer{}
 	parent, err := PrepareParent(ctx, s.parentPath, parentMount, size, func(libraryPath string) error {
 		seedImportMs, err := s.editor.RunCompile(ctx, seedProject, seedLog)
 		if err != nil {
 			return err
 		}
 		s.seedImportMs = seedImportMs
-		_, err = materializer.Materialize(ctx, librarymaterializer.Request{SourcePath: libraryPath, DestinationPath: s.baselineLibrary})
-		return err
+		if _, err = MaterializeDirectoryContents(ctx, libraryPath, s.baselineLibrary); err != nil {
+			return err
+		}
+		return ValidatePhysicalLibraryDirectory(s.baselineLibrary)
 	})
 	if err != nil {
 		return err
 	}
 	s.parent = parent
-	return os.RemoveAll(seedProject)
+	if err := ValidatePhysicalLibraryDirectory(s.baselineLibrary); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(seedProject); err != nil {
+		return err
+	}
+	return ValidatePhysicalLibraryDirectory(s.baselineLibrary)
 }
 
 func newIntegrationDriver(shared *sharedFixture, runID, helperPath string) *integrationDriver {
@@ -184,12 +190,16 @@ func (d *integrationDriver) Prepare(ctx context.Context, evidence *Evidence) err
 		return err
 	}
 	evidence.Metrics.FixtureCopyMs = milliseconds(time.Since(started).Milliseconds())
-	materialized, err := (librarymaterializer.PhysicalCopyMaterializer{}).Materialize(ctx, librarymaterializer.Request{SourcePath: d.shared.baselineLibrary, DestinationPath: filepath.Join(d.physicalProject, "Library")})
+	physicalLibrary := filepath.Join(d.physicalProject, "Library")
+	materialized, err := MaterializeDirectoryContents(ctx, d.shared.baselineLibrary, physicalLibrary)
 	if err != nil {
 		return err
 	}
 	evidence.Metrics.PhysicalLibraryMaterializeMs = milliseconds(materialized.Duration.Milliseconds())
-	usage, err := shadow.MeasureDirectoryUsage(filepath.Join(d.physicalProject, "Library"))
+	if err := ValidatePhysicalLibraryDirectory(physicalLibrary); err != nil {
+		return err
+	}
+	usage, err := shadow.MeasureDirectoryUsage(physicalLibrary)
 	if err != nil {
 		return err
 	}
@@ -227,6 +237,9 @@ func (d *integrationDriver) Prepare(ctx context.Context, evidence *Evidence) err
 }
 
 func (d *integrationDriver) RunPhysical(ctx context.Context, platform string) (PlatformResult, error) {
+	if err := ValidatePhysicalLibraryDirectory(filepath.Join(d.physicalProject, "Library")); err != nil {
+		return PlatformResult{}, err
+	}
 	dir := filepath.Join(d.runRoot, "physical")
 	results := filepath.Join(dir, strings.ReplaceAll(platform, "_", "")+"-results.xml")
 	log := filepath.Join(dir, strings.ReplaceAll(platform, "_", "")+"-editor.log")
