@@ -4,10 +4,10 @@
 
 ```text
 Harness: IMPLEMENTED
-GNF_ correctness gate: ATTEMPT 3 INCOMPLETE (Legacy/Physical PASS; VHDX NOT RUN)
+GNF_ correctness gate: PASS (Legacy/Physical/VHDX semantic parity)
 GNF_ cold run: NOT RUN
 GNF_ warm 10: NOT RUN
-Compatibility verdict: BLOCKED pending elevated hardware evidence
+Compatibility verdict: COMPATIBLE (single-worker Smoke correctness)
 Performance verdict: NOT MEASURED
 ```
 
@@ -200,6 +200,37 @@ owned Child parent directory before Acquire; the Helper remains solely
 responsible for creating the Child VHDX. Attempt 3 is not a completed
 correctness gate.
 
+### Hardware attempt 4
+
+The fourth elevated Smoke attempt completed the full sequential correctness
+gate on Unity `6000.3.8f1` and GNF_ revision
+`1ed151ca3f29e587ad92d2f89f102fa1e50641ef`. Legacy, Physical Image, and VHDX
+each passed the exact selected test with semantic digest
+`20e4343f5e384b1cc13a0ca98a4be26dc76f83ec0d4d821dbc9d1d8885fcdc39`.
+
+| Backend | Result | Total wall clock | Unity wall clock | Cleanup |
+|---|---:|---:|---:|---:|
+| Legacy | 1/1 PASS | 274,857 ms | 228,942 ms | PASS |
+| Physical Image | 1/1 PASS | 126,392 ms | 66,691 ms | PASS |
+| Differencing VHDX | 1/1 PASS | 69,017 ms | 43,089 ms | PASS |
+
+The VHDX run passed Parent isolation and Mount integrity. One Child Lease stayed
+on Disk 1 and the same Volume GUID through ready, before Unity, after Unity, and
+before Release; the released snapshot no longer existed. Acquire took 2,299 ms,
+Release took 2,015 ms, and the Child grew from 37,748,736 logical/allocated
+bytes at ready to 406,847,488 bytes after Unity. These Smoke timings are
+observations, not a production performance verdict.
+
+Parent virtual size was 17,179,869,184 bytes and its detached file was
+5,070,913,536 logical/allocated bytes. Parent isolation remained true. The
+Helper returned a released Journal, deleted the Child, detached the disk, and
+left zero residual disk, mount, Child, Journal, process, or Work Root. Final
+Runner JSON reported `success: true` and `testExitCode: 0`.
+
+Raw Evidence is preserved under session
+`session-20260801T180750.829124000Z`. Correctness is `COMPATIBLE`; Cold 1 and
+Warm 10 remain unexecuted, so performance remains `NOT MEASURED`.
+
 ```powershell
 cd C:\Dev\testplay-runner
 
@@ -222,6 +253,5 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -Full
 ```
 
-Specifying both switches or neither is an error. Until a new Smoke run completes
-all three Backends, the only honest verdict is
-`IMPLEMENTED — awaiting elevated GNF_ single-worker validation`.
+Specifying both switches or neither is an error. The Smoke correctness gate is
+`COMPATIBLE`. A performance verdict requires the separate elevated Full run.
