@@ -39,6 +39,27 @@ func TestGNFBenchmarkScriptParses(t *testing.T) {
 	}
 }
 
+func TestGNFBenchmarkScriptUsesExplicitTimeoutsAndShallowResidualScan(t *testing.T) {
+	path := benchmarkScriptPath(t)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(data)
+	for _, required := range []string{
+		"$goTestTimeout = if ($Smoke) { '2h' } else { '24h' }",
+		"-timeout $goTestTimeout",
+		"goTestTimeout = $goTestTimeout",
+	} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("missing %q", required)
+		}
+	}
+	if strings.Contains(script, "Get-ChildItem -LiteralPath $workRoot -Force -Recurse") {
+		t.Fatal("final reporting must not recursively enumerate the Unity work root")
+	}
+}
+
 func TestGNFBenchmarkFinalReportHandlesEmptyArraysUnderStrictMode(t *testing.T) {
 	path := benchmarkScriptPath(t)
 	script := `

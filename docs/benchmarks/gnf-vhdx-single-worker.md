@@ -4,7 +4,7 @@
 
 ```text
 Harness: IMPLEMENTED
-GNF_ correctness gate: NOT RUN
+GNF_ correctness gate: ATTEMPT 1 INCOMPLETE (Legacy PASS; later Backends NOT RUN)
 GNF_ cold run: NOT RUN
 GNF_ warm 10: NOT RUN
 Compatibility verdict: BLOCKED pending elevated hardware evidence
@@ -18,9 +18,11 @@ default, implement fallback, run parallel workers, or install a service.
 
 ## Fixed selection
 
-The selection is not invented by this PR. It comes from the repository's
-previous GNF_ validation in `docs/06_v0.2.0_beta_gnf_shadow_validation.md`,
-where it passed twice on Unity `6000.3.8f1` and was loaded from
+The selection identifier comes from the repository's previous GNF_ validation
+in `docs/06_v0.2.0_beta_gnf_shadow_validation.md`. The current GNF_ checkout did
+not contain that Mac-authored test, so the Windows validation source uses a
+separate clean local GNF_ commit containing a minimal deterministic replacement.
+It passed directly on Unity `6000.3.8f1` and is loaded from
 `GNF.Tests.PlayMode.dll`:
 
 ```text
@@ -52,6 +54,8 @@ Preflight requires Administrator PowerShell, Unity and project version
 sufficient free space, and a snapshot of existing File Backed Virtual disks
 and Unity/Helper processes. The original GNF_ project is hashed over `Assets`,
 `Packages`, and `ProjectSettings` and is never used as a writable Unity project.
+The Runner gives Smoke a two-hour Go test deadline and Full a 24-hour deadline;
+these are harness safety ceilings, not performance targets.
 
 ## Common seed
 
@@ -148,6 +152,20 @@ success; failure evidence is preserved for diagnosis.
 
 ## Elevated execution
 
+### Hardware attempt 1
+
+The first elevated Smoke attempt on 2026-08-02 passed preflight and Common Seed
+preparation. The Legacy NUnit result was `1/1 PASS` with the exact selected test,
+but the result arrived roughly 10 minutes 23 seconds after session creation. Go's
+default 10-minute package timeout terminated the harness before the Unity child
+returned, so Physical Image and VHDX were not run. A second reporting error came
+from recursively enumerating the preserved Unity Work Root. No Unity/Helper
+process or File Backed Virtual disk remained when inspected. The Work Root and
+raw Evidence were preserved.
+
+The Runner now uses explicit mode-specific timeouts and reports only top-level
+Work Root residuals. Attempt 1 is not a completed correctness gate.
+
 ```powershell
 cd C:\Dev\testplay-runner
 
@@ -170,6 +188,6 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -Full
 ```
 
-Specifying both switches or neither is an error. This code session did not run
-either command. Until real elevated evidence exists, the only honest verdict is
+Specifying both switches or neither is an error. Until a new Smoke run completes
+all three Backends, the only honest verdict is
 `IMPLEMENTED — awaiting elevated GNF_ single-worker validation`.

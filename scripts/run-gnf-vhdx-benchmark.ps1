@@ -153,6 +153,7 @@ $beforeProcesses = @(Get-BenchmarkProcesses)
 $helperPath = Join-Path ([IO.Path]::GetTempPath()) "testplay-storage-helper-gnf-$PID.exe"
 if (Test-Path -LiteralPath $helperPath) { throw "refusing to overwrite helper path: $helperPath" }
 $mode = if ($Smoke) { 'smoke' } else { 'full' }
+$goTestTimeout = if ($Smoke) { '2h' } else { '24h' }
 $testExitCode = 1
 
 try {
@@ -177,13 +178,15 @@ try {
         workRoot = $workRoot
         artifactRoot = $artifactRoot
         mode = $mode
+        goTestTimeout = $goTestTimeout
         concurrency = 1
         freeBytes = $workDrive.Free
         beforeVirtualDisks = $beforeVirtualDisks
     } | ConvertTo-Json -Depth 6
 
     & go test -tags=gnf_vhdx_integration ./internal/gnfvhdxbenchmark `
-        -run '^TestGNFVHDXSingleWorkerBenchmark$' -v -count=1
+        -run '^TestGNFVHDXSingleWorkerBenchmark$' -v -count=1 `
+        -timeout $goTestTimeout
     $testExitCode = $LASTEXITCODE
 }
 finally {
@@ -198,7 +201,12 @@ $afterProcesses = @(Get-BenchmarkProcesses)
 $diskDifference = @(Compare-Object $beforeVirtualDisks $afterVirtualDisks -Property Number, FriendlyName, SerialNumber, OperationalStatus, PartitionStyle, IsOffline, IsReadOnly)
 $processDifference = @(Compare-Object $beforeProcesses $afterProcesses -Property Id, ProcessName)
 $residualWorkItems = @()
-if (Test-Path -LiteralPath $workRoot) { $residualWorkItems = @(Get-ChildItem -LiteralPath $workRoot -Force -Recurse) }
+if (Test-Path -LiteralPath $workRoot) {
+    # A non-empty top-level is already sufficient to fail the cleanup gate.
+    # Avoid recursively walking large Unity Libraries or stale mount paths while
+    # producing the final diagnostic report.
+    $residualWorkItems = @(Get-ChildItem -LiteralPath $workRoot -Force)
+}
 
 New-GNFBenchmarkFinalReport -TestExitCode $testExitCode -BeforeVirtualDisks $beforeVirtualDisks -AfterVirtualDisks $afterVirtualDisks -VirtualDiskDifference $diskDifference -ProcessDifference $processDifference -ResidualWorkItems $residualWorkItems -ArtifactRoot $artifactRoot |
     ConvertTo-Json -Depth 6
