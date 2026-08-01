@@ -64,6 +64,37 @@ function Get-FileBackedVirtualDisks {
     )
 }
 
+function New-UnityVHDXFinalReport {
+    param(
+        [Parameter(Mandatory = $true)][int]$TestExitCode,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$BeforeVirtualDisks,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$AfterVirtualDisks,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$VirtualDiskDifference,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$ResidualFixtureItems,
+        [Parameter(Mandatory = $true)][string]$ArtifactRoot
+    )
+
+    $residualFixtureItemPaths = @(
+        $ResidualFixtureItems |
+            ForEach-Object { $_.FullName }
+    )
+
+    return [pscustomobject]@{
+        phase = 'final'
+        success = (
+            $TestExitCode -eq 0 -and
+            $VirtualDiskDifference.Count -eq 0 -and
+            $ResidualFixtureItems.Count -eq 0
+        )
+        testExitCode = $TestExitCode
+        beforeVirtualDisks = $BeforeVirtualDisks
+        afterVirtualDisks = $AfterVirtualDisks
+        virtualDiskDifference = $VirtualDiskDifference
+        residualFixtureItems = $residualFixtureItemPaths
+        artifactRoot = $ArtifactRoot
+    }
+}
+
 $parseTokens = $null
 $parseErrors = $null
 [Management.Automation.Language.Parser]::ParseFile(
@@ -178,16 +209,14 @@ if (Test-Path -LiteralPath $fixtureRoot) {
     $residualFixtureItems = @(Get-ChildItem -LiteralPath $fixtureRoot -Force -Recurse)
 }
 
-[pscustomobject]@{
-    phase = 'final'
-    success = ($testExitCode -eq 0 -and $difference.Count -eq 0 -and $residualFixtureItems.Count -eq 0)
-    testExitCode = $testExitCode
-    beforeVirtualDisks = $beforeVirtualDisks
-    afterVirtualDisks = $afterVirtualDisks
-    virtualDiskDifference = $difference
-    residualFixtureItems = $residualFixtureItems.FullName
-    artifactRoot = $artifactRoot
-} | ConvertTo-Json -Depth 6
+New-UnityVHDXFinalReport `
+    -TestExitCode $testExitCode `
+    -BeforeVirtualDisks $beforeVirtualDisks `
+    -AfterVirtualDisks $afterVirtualDisks `
+    -VirtualDiskDifference $difference `
+    -ResidualFixtureItems $residualFixtureItems `
+    -ArtifactRoot $artifactRoot |
+    ConvertTo-Json -Depth 6
 
 if ($testExitCode -ne 0 -or $difference.Count -ne 0 -or $residualFixtureItems.Count -ne 0) {
     exit 1

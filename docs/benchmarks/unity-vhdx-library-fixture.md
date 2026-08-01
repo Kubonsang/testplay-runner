@@ -126,6 +126,24 @@ not a seed-completion requirement; when present it must be a regular,
 non-reparse file. Physical Unity, Helper Acquire, and VHDX Unity remained
 **NOT RUN** in Attempt 2.
 
+### Hardware attempt 3
+
+The elevated one-run Unity/VHDX integration lifecycle completed successfully:
+
+```text
+--- PASS: TestUnityVHDXLibraryFixture (55.75s)
+PASS
+```
+
+The PowerShell Runner then failed while producing its final JSON. Cleanup had
+correctly produced an empty residual array, but StrictMode rejected direct
+property enumeration through `$residualFixtureItems.FullName`. The lifecycle
+evidence is a PASS; the Runner's final reporting is a post-test FAIL. A
+StrictMode runtime self-check now exercises both an empty residual collection
+and a non-empty collection through the same final-report function used by the
+Runner. The one-run final JSON and five-run hardware validations still require
+an elevated rerun after this reporting fix.
+
 Only measured values are emitted. Missing values remain absent. No performance
 threshold is applied in this PR; unexplained phases over 30 seconds must be
 reported as observations rather than assigned a cause.
