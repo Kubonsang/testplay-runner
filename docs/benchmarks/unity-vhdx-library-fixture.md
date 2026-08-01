@@ -4,8 +4,8 @@
 
 ```text
 Fixture and elevated harness: IMPLEMENTED
-Elevated Unity VHDX hardware validation: ATTEMPT 2 FAILED BEFORE PHYSICAL UNITY
-Verdict: FIXED / AWAITING HARDWARE REVALIDATION
+Elevated Unity VHDX hardware validation: 5/5 PASS
+Verdict: PROVEN — small Unity Library compatible with Differencing VHDX
 ```
 
 This fixture answers one narrow question: can a small Unity project's
@@ -144,6 +144,37 @@ and a non-empty collection through the same final-report function used by the
 Runner. The one-run final JSON and five-run hardware validations still require
 an elevated rerun after this reporting fix.
 
+### Hardware attempt 4
+
+**PASS.** An elevated Administrator PowerShell ran the fixture five times with
+Unity `6000.3.8f1`, `-Count 5`, and `-ReuseParent`. The run reused one immutable
+Parent and created five distinct sequential Children. The Go test body passed
+in `180.66` seconds and the Runner final JSON reported `success: true` with
+`testExitCode: 0`.
+
+The five preserved `evidence.json` records and Helper protocol logs establish:
+
+- Physical EditMode and PlayMode: 5/5 PASS
+- VHDX EditMode and PlayMode: 5/5 PASS
+- Physical/VHDX semantic parity: 5/5
+- Parent SHA-256 unchanged: 5/5
+- mount integrity and marker isolation: 5/5
+- five distinct Child paths and Lease IDs
+- released Journal and cleanup: 5/5
+- File Backed Virtual disk difference: 0
+- residual disk, mount, Child, Journal, and fixture items: 0
+
+All five records share the immutable Parent hash
+`25851d1829a9bb78a28accf66f88bab88aee8b5b7b9573548a860df5c3b0a7ec`
+before and after Child use. Raw artifacts remain outside the repository under
+`C:\Dev\testplay-unity-vhdx-evidence`.
+
+The resulting scope-limited verdict is:
+
+```text
+PROVEN — small Unity Library compatible with Differencing VHDX
+```
+
 Only measured values are emitted. Missing values remain absent. No performance
 threshold is applied in this PR; unexplained phases over 30 seconds must be
 reported as observations rather than assigned a cause.
@@ -183,6 +214,12 @@ never detaches them or modifies physical disks.
 
 ## Remaining gates
 
-Hardware evidence is required before writing `PROVEN`. Even a successful
-fixture does not prove GNF_ compatibility, large-project performance,
-forced-termination recovery, parallel workers, or production latency.
+The small-fixture compatibility gate is proven. This evidence does not prove:
+
+```text
+GNF_ compatibility: NOT YET
+Large-project performance: NOT YET
+Forced-termination recovery: NOT YET
+Parallel workers: NOT YET
+Production backend integration: NOT YET
+```
