@@ -4,7 +4,7 @@
 
 ```text
 Fixture and elevated harness: IMPLEMENTED
-Elevated Unity VHDX hardware validation: ATTEMPT 1 FAILED BEFORE VHDX ACQUIRE
+Elevated Unity VHDX hardware validation: ATTEMPT 2 FAILED BEFORE PHYSICAL UNITY
 Verdict: FIXED / AWAITING HARDWARE REVALIDATION
 ```
 
@@ -106,6 +106,25 @@ so Unity could not open `Library/SourceAssetDB` and crashed in LMDB
 initialization (`0xC0000005`). Licensing initialized successfully and was not
 the cause. Attached virtual-disk cleanup passed; VHDX Unity compatibility
 remains **NOT RUN**.
+
+### Hardware attempt 2
+
+The preserved failure root is `C:\Dev\testplay-unity-vhdx-fixture`.
+
+Attempt 2 confirmed that mounted-Library contents were copied into an ordinary
+Physical directory and that the File Backed Virtual disk difference remained
+zero. Validation stopped before Physical Unity execution because the validator
+incorrectly required `SourceAssetDB` to be a directory. Unity 6000.3.8f1
+actually generated it as a 2 MiB regular LMDB data file, alongside an observed
+8 KiB `SourceAssetDB-lock`. `ScriptAssemblies/TestPlayFixture.Runtime.dll` was
+also present as a regular file.
+
+The corrected contract requires a readable, nonempty, non-reparse
+`SourceAssetDB` regular file plus an ordinary `ScriptAssemblies` directory and
+readable `TestPlayFixture.Runtime.dll`. `SourceAssetDB-lock` is observed but is
+not a seed-completion requirement; when present it must be a regular,
+non-reparse file. Physical Unity, Helper Acquire, and VHDX Unity remained
+**NOT RUN** in Attempt 2.
 
 Only measured values are emitted. Missing values remain absent. No performance
 threshold is applied in this PR; unexplained phases over 30 seconds must be

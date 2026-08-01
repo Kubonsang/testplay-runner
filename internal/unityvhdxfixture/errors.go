@@ -21,6 +21,8 @@ const (
 	CodePhysicalLibraryIsReparse     = "physical-library-is-reparse-point"
 	CodePhysicalLibraryNotDirectory  = "physical-library-not-directory"
 	CodePhysicalLibraryDangling      = "physical-library-dangling"
+	CodePhysicalLibraryInvalidDB     = "physical-library-invalid-source-asset-db"
+	CodePhysicalLibraryIncomplete    = "physical-library-incomplete"
 	CodePhysicalLibraryCopyEscaped   = "physical-library-copy-escaped"
 	CodeNestedReparsePointFound      = "nested-reparse-point-found"
 	CodeLibraryMountLost             = "library-mount-lost"

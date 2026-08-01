@@ -72,9 +72,10 @@ func MaterializeDirectoryContents(ctx context.Context, sourceRoot, destination s
 	return result, nil
 }
 
-// ValidatePhysicalLibraryDirectory prevents Unity from receiving a dangling
-// or linked Library. SourceAssetDB is the seed-completion sentinel used by the
-// small fixture.
+// ValidatePhysicalLibraryDirectory prevents Unity from receiving a dangling,
+// linked, or incomplete Library. Unity 6000.3 stores SourceAssetDB as a regular
+// LMDB data file, not a directory. The fixture Runtime assembly is the warm
+// import/compile sentinel.
 func ValidatePhysicalLibraryDirectory(path string) error {
 	path, err := absoluteCleanPath(path)
 	if err != nil {
@@ -94,19 +95,89 @@ func ValidatePhysicalLibraryDirectory(path string) error {
 	if !info.IsDir() {
 		return fixtureError(CodePhysicalLibraryNotDirectory, "validate-physical-library", path, fmt.Errorf("Library is not a directory"))
 	}
-	sourceAssetDB := filepath.Join(path, "SourceAssetDB")
-	dbInfo, err := os.Stat(sourceAssetDB)
+	if err := validateReadableRegularFile(
+		filepath.Join(path, "SourceAssetDB"),
+		CodePhysicalLibraryDangling,
+		CodePhysicalLibraryInvalidDB,
+		"validate-source-asset-db",
+	); err != nil {
+		return err
+	}
+	// Unity 6000.3.8f1 produced SourceAssetDB-lock in both observed hardware
+	// attempts. It is not a seed-completion sentinel because lock-file lifetime
+	// is implementation state; when present it must still be an ordinary file.
+	if err := validateOptionalSourceAssetDBLock(filepath.Join(path, "SourceAssetDB-lock")); err != nil {
+		return err
+	}
+	scriptAssemblies := filepath.Join(path, "ScriptAssemblies")
+	assembliesInfo, err := os.Lstat(scriptAssemblies)
 	if err != nil {
-		return fixtureError(CodePhysicalLibraryDangling, "validate-source-asset-db", sourceAssetDB, err)
+		return fixtureError(CodePhysicalLibraryIncomplete, "validate-script-assemblies", scriptAssemblies, err)
 	}
-	if !dbInfo.IsDir() {
-		return fixtureError(CodePhysicalLibraryDangling, "validate-source-asset-db", sourceAssetDB, fmt.Errorf("SourceAssetDB is not a directory"))
-	}
-	entries, err := os.ReadDir(sourceAssetDB)
+	assembliesReparse, err := physicalPathIsReparse(scriptAssemblies)
 	if err != nil {
-		return fixtureError(CodePhysicalLibraryDangling, "read-source-asset-db", sourceAssetDB, err)
+		return fixtureError(CodePhysicalLibraryIncomplete, "inspect-script-assemblies", scriptAssemblies, err)
 	}
-	_ = entries
+	if !assembliesInfo.IsDir() || assembliesInfo.Mode()&os.ModeSymlink != 0 || assembliesReparse {
+		return fixtureError(CodePhysicalLibraryIncomplete, "validate-script-assemblies", scriptAssemblies, fmt.Errorf("ScriptAssemblies must be an ordinary directory"))
+	}
+	if err := validateReadableRegularFile(
+		filepath.Join(scriptAssemblies, "TestPlayFixture.Runtime.dll"),
+		CodePhysicalLibraryIncomplete,
+		CodePhysicalLibraryIncomplete,
+		"validate-fixture-runtime-assembly",
+	); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateReadableRegularFile(path, missingCode, invalidCode, operation string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fixtureError(missingCode, operation, path, err)
+	}
+	reparse, err := physicalPathIsReparse(path)
+	if err != nil {
+		return fixtureError(missingCode, operation, path, err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || reparse {
+		return fixtureError(invalidCode, operation, path, fmt.Errorf("expected a regular non-reparse file"))
+	}
+	if info.Size() < 1 {
+		return fixtureError(invalidCode, operation, path, fmt.Errorf("file is empty"))
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return fixtureError(invalidCode, operation, path, err)
+	}
+	var firstByte [1]byte
+	_, readErr := file.Read(firstByte[:])
+	closeErr := file.Close()
+	if readErr != nil {
+		return fixtureError(invalidCode, operation, path, readErr)
+	}
+	if closeErr != nil {
+		return fixtureError(invalidCode, operation, path, closeErr)
+	}
+	return nil
+}
+
+func validateOptionalSourceAssetDBLock(path string) error {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fixtureError(CodePhysicalLibraryDangling, "inspect-source-asset-db-lock", path, err)
+	}
+	reparse, err := physicalPathIsReparse(path)
+	if err != nil {
+		return fixtureError(CodePhysicalLibraryDangling, "inspect-source-asset-db-lock", path, err)
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || reparse {
+		return fixtureError(CodePhysicalLibraryInvalidDB, "validate-source-asset-db-lock", path, fmt.Errorf("lock must be a regular non-reparse file when present"))
+	}
 	return nil
 }
 

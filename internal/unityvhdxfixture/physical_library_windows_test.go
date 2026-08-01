@@ -71,3 +71,24 @@ func TestMaterializedDestinationHasNoReparseAttribute(t *testing.T) {
 		t.Fatalf("destination reparse=%t err=%v", reparse, err)
 	}
 }
+
+func TestValidatePhysicalLibraryRejectsSourceAssetDBJunction(t *testing.T) {
+	root := t.TempDir()
+	library := filepath.Join(root, "Library")
+	mustCreatePhysicalLibrary(t, library)
+	database := filepath.Join(library, "SourceAssetDB")
+	if err := os.Remove(database); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "database-directory")
+	if err := os.Mkdir(target, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command("cmd.exe", "/c", "mklink", "/J", database, target).CombinedOutput(); err != nil {
+		t.Skipf("junction unavailable: %v: %s", err, output)
+	}
+	defer os.Remove(database)
+	if code := ErrorCode(ValidatePhysicalLibraryDirectory(library)); code != CodePhysicalLibraryInvalidDB {
+		t.Fatalf("code=%q", code)
+	}
+}
