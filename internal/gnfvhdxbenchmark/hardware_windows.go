@@ -305,10 +305,7 @@ func (s *hardwareSession) runOne(ctx context.Context, spec RunSpec) (run RunEvid
 
 func (s *hardwareSession) runLegacy(ctx context.Context, spec RunSpec, run *RunEvidence) (SemanticResult, error) {
 	cacheRoot := filepath.Join(s.config.WorkRoot, "legacy-cache")
-	opts := shadow.PrepareOptions{LibraryCacheRoot: cacheRoot}
-	if shadow.ValidateCacheAt(s.sourceProject, cacheRoot) {
-		opts.LibraryCacheDir = shadow.CacheLibraryDirAt(cacheRoot)
-	}
+	opts := legacyPrepareOptions(s.sourceProject, cacheRoot)
 	started := time.Now()
 	ws, err := shadow.Prepare(ctx, s.sourceProject, spec.ID, opts)
 	if err != nil {
@@ -338,6 +335,17 @@ func (s *hardwareSession) runLegacy(ctx context.Context, spec RunSpec, run *RunE
 	run.Metrics.LogicalBytes = i64(usage.LogicalBytes)
 	run.Metrics.AllocatedBytes = i64(usage.AllocatedBytes)
 	return result, nil
+}
+
+func legacyPrepareOptions(sourceProject, cacheRoot string) shadow.PrepareOptions {
+	opts := shadow.PrepareOptions{
+		LibraryCacheRoot: cacheRoot,
+		CopyPackages:     true,
+	}
+	if shadow.ValidateCacheAt(sourceProject, cacheRoot) {
+		opts.LibraryCacheDir = shadow.CacheLibraryDirAt(cacheRoot)
+	}
+	return opts
 }
 
 func (s *hardwareSession) runPhysical(ctx context.Context, spec RunSpec, run *RunEvidence) (SemanticResult, error) {

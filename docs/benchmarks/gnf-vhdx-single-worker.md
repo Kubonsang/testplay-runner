@@ -4,7 +4,7 @@
 
 ```text
 Harness: IMPLEMENTED
-GNF_ correctness gate: ATTEMPT 1 INCOMPLETE (Legacy PASS; later Backends NOT RUN)
+GNF_ correctness gate: ATTEMPT 2 INCOMPLETE (Legacy PASS; later Backends NOT RUN)
 GNF_ cold run: NOT RUN
 GNF_ warm 10: NOT RUN
 Compatibility verdict: BLOCKED pending elevated hardware evidence
@@ -80,8 +80,10 @@ GNF_-specific warm-Library Sentinels remain in their respective packages.
 ## Backend lifecycle
 
 Legacy uses the existing Shadow workspace and its dedicated external Library
-cache. The correctness gate is discarded before the Full cold phase so the
-Legacy cold run creates a fresh cache; warm runs reuse it.
+cache. The benchmark opts into a physical per-run `Packages` copy so Unity
+cannot update `packages-lock.json` through the legacy Packages link. The
+correctness gate is discarded before the Full cold phase so the Legacy cold
+run creates a fresh cache; warm runs reuse it.
 
 Physical Image reuses one immutable `libraryimage.Store` image. Each run creates
 a new Shadow workspace, verifies the Image, and invokes the real
@@ -165,6 +167,22 @@ raw Evidence were preserved.
 
 The Runner now uses explicit mode-specific timeouts and reports only top-level
 Work Root residuals. Attempt 1 is not a completed correctness gate.
+
+### Hardware attempt 2
+
+The second elevated Smoke attempt confirmed the explicit two-hour deadline and
+completed Legacy normally in 599.03 seconds. The selected test was `1/1 PASS`,
+its semantic digest was recorded, Legacy cleanup passed, and all structured
+Legacy residual counts were zero. Before Physical Image could start, the source
+contamination gate found one changed file in the benchmark-owned source copy:
+`Packages/packages-lock.json`. Unity resolved Burst `1.8.28` to `1.8.27` and
+Splines `2.8.3` to `2.8.2` through the Legacy Packages directory link.
+
+The original clean GNF_ input remained unchanged. Physical Image and VHDX were
+not run. Post-attempt inspection found no Unity/Helper process or File Backed
+Virtual disk. The Work Root and raw Evidence were preserved. The Legacy path now
+uses the existing `CopyPackages` isolation option; the general Legacy product
+default is unchanged. Attempt 2 is not a completed correctness gate.
 
 ```powershell
 cd C:\Dev\testplay-runner
