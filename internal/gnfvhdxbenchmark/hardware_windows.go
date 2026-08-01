@@ -403,6 +403,9 @@ func (s *hardwareSession) runVHDX(ctx context.Context, spec RunSpec, run *RunEvi
 	run.Metrics.WorkspacePrepareMs = i64(time.Since(started).Milliseconds())
 	run.Metrics.ProjectCopyMs = run.Metrics.WorkspacePrepareMs
 	childPath := filepath.Join(s.storeRoot, "children", spec.ID+".vhdx")
+	if err := ensureChildDirectory(childPath); err != nil {
+		return result, err
+	}
 	mountPath := filepath.Join(workspace, "Library")
 	helperDir := filepath.Join(s.runRoot(spec), "helper")
 	helper, err := unityvhdxfixture.StartHelper(ctx, s.config.HelperPath, helperDir)
@@ -562,6 +565,14 @@ func (s *hardwareSession) runVHDX(ctx context.Context, spec RunSpec, run *RunEvi
 		return result, benchmarkError(CodeCleanupFailed, "verify-vhdx-residuals", workspace, fmt.Errorf("disk=%d mount=%d child=%d journal=%d", run.ResidualDiskCount, run.ResidualMountCount, run.ResidualChildCount, run.ResidualJournalCount))
 	}
 	return result, nil
+}
+
+func ensureChildDirectory(childPath string) error {
+	childDirectory := filepath.Dir(childPath)
+	if err := os.MkdirAll(childDirectory, 0700); err != nil {
+		return benchmarkError(CodeInvalidInput, "prepare-child-directory", childDirectory, err)
+	}
+	return nil
 }
 
 func (s *hardwareSession) runUnity(ctx context.Context, project string, spec RunSpec) (SemanticResult, error) {

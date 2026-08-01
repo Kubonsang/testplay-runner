@@ -4,7 +4,7 @@
 
 ```text
 Harness: IMPLEMENTED
-GNF_ correctness gate: ATTEMPT 2 INCOMPLETE (Legacy PASS; later Backends NOT RUN)
+GNF_ correctness gate: ATTEMPT 3 INCOMPLETE (Legacy/Physical PASS; VHDX NOT RUN)
 GNF_ cold run: NOT RUN
 GNF_ warm 10: NOT RUN
 Compatibility verdict: BLOCKED pending elevated hardware evidence
@@ -183,6 +183,22 @@ not run. Post-attempt inspection found no Unity/Helper process or File Backed
 Virtual disk. The Work Root and raw Evidence were preserved. The Legacy path now
 uses the existing `CopyPackages` isolation option; the general Legacy product
 default is unchanged. Attempt 2 is not a completed correctness gate.
+
+### Hardware attempt 3
+
+The third elevated Smoke attempt passed both Legacy and Physical Image with the
+same selected test and semantic digest. Both Backends reported cleanup success
+and zero structured residual counts. VHDX project preparation and Helper Hello
+succeeded, but Acquire was rejected before Child creation because the Harness
+had not created the benchmark-owned `storage/children` directory required by
+the Helper path-safety contract.
+
+The structured Helper error was `invalid-child-path` at `stat-parent`. No Child
+was created or attached, and post-attempt disk/process differences were zero.
+The Work Root and raw Evidence were preserved. The Harness now creates only the
+owned Child parent directory before Acquire; the Helper remains solely
+responsible for creating the Child VHDX. Attempt 3 is not a completed
+correctness gate.
 
 ```powershell
 cd C:\Dev\testplay-runner
