@@ -151,3 +151,21 @@ unchanged Parent SHA-256, Release, and cleanup passed 5/5, with zero residual
 disks, mounts, Child files, Journals, or fixture items. GNF_, large-project
 performance, forced termination, parallel workers, and production backend
 integration remain separate gates.
+
+## GNF_ single-worker gate
+
+An opt-in benchmark harness now fixes the previously validated GNF_ PlayMode
+selection and compares Legacy, Physical Image, and the actual on-demand VHDX
+Helper sequentially. It uses one common warm Library seed, an immutable Image,
+an immutable Parent with a new Child per run, exact semantic parity, source and
+Parent contamination checks, and a zero-residual cleanup gate.
+
+```text
+Harness: IMPLEMENTED
+GNF_ correctness gate: NOT RUN
+GNF_ cold and warm performance: NOT RUN
+Verdict: AWAITING ELEVATED GNF_ SINGLE-WORKER VALIDATION
+```
+
+This gate does not add a public VHDX Backend, change the default provider, or
+cover parallel workers, sharding, forced termination, or production latency.
