@@ -58,9 +58,10 @@ and storage metrics before production claims.
 Standalone Differencing VHDX correctness: PROVEN
 On-demand Helper lifecycle: PROVEN
 Small Unity Library compatibility: PROVEN
-GNF_ compatibility: NOT YET
+GNF_ single-worker fixed-selection compatibility: COMPATIBLE
+GNF_ single-worker fixed-selection performance: BENEFICIAL
 Forced termination recovery: NOT YET
-Production performance: NOT YET
+Production default readiness: NOT YET
 ```
 
 `PROVEN` is limited to the standalone lifecycle, Parent and sibling isolation,
@@ -120,16 +121,18 @@ Same-process idempotency: PROVEN
 Cleanup safety: PROVEN
 Small Unity fixture readiness: YES
 Small Unity Library compatibility: PROVEN
-GNF_ compatibility: NOT YET
+GNF_ single-worker fixed-selection compatibility: COMPATIBLE
+GNF_ single-worker fixed-selection performance: BENEFICIAL
 Forced termination recovery: NOT YET
-Production performance: NOT YET
+Production default readiness: NOT YET
 ```
 
 These helper results are user-recorded elevated Windows hardware evidence; the
 raw transcript and per-run metrics are not stored in the repository. They
-permit a separate small Unity fixture validation PR, but do not establish Unity
-Library compatibility, forced-termination recovery, or production latency. A
-permanent broker service remains deferred.
+provided the base for the later Small Unity and GNF_ gates below. Those later
+results still do not establish forced-termination recovery, parallel-worker
+behavior, general production latency, or default-backend readiness. A permanent
+broker service remains deferred.
 
 ## Small Unity fixture gate
 
@@ -148,6 +151,27 @@ Verdict: PROVEN - small Unity Library compatible with Differencing VHDX
 The proof used one immutable Parent and five distinct sequential Children.
 Physical/VHDX EditMode and PlayMode semantic parity, stable mount identity,
 unchanged Parent SHA-256, Release, and cleanup passed 5/5, with zero residual
-disks, mounts, Child files, Journals, or fixture items. GNF_, large-project
-performance, forced termination, parallel workers, and production backend
-integration remain separate gates.
+disks, mounts, Child files, Journals, or fixture items. The GNF_ single-worker
+gate is recorded separately below; broader performance, forced termination,
+parallel workers, and production backend integration remain separate gates.
+
+## GNF_ single-worker gate
+
+An opt-in benchmark harness now fixes the previously validated GNF_ PlayMode
+selection and compares Legacy, Physical Image, and the actual on-demand VHDX
+Helper sequentially. It uses one common warm Library seed, an immutable Image,
+an immutable Parent with a new Child per run, exact semantic parity, source and
+Parent contamination checks, and a zero-residual cleanup gate.
+
+```text
+Harness: IMPLEMENTED
+GNF_ correctness gate: COMPATIBLE
+GNF_ cold 1 and warm 10 per Backend: PASS
+Single-worker fixed-selection performance: BENEFICIAL
+Production default readiness: NOT YET
+```
+
+This gate does not add a public VHDX Backend, change the default provider, or
+cover parallel workers, sharding, forced termination, or general production
+latency. The performance verdict is limited to one deterministic PlayMode test,
+one GNF_ revision, one Windows machine, and concurrency one.
