@@ -106,6 +106,9 @@ type Request struct {
 	SkipCacheWriteBack bool // skip Library cache write-back (used in scenario mode to avoid concurrent writes)
 	ForceBridge        bool // --bridge: prefer the warm bridge (still subject to the Pristine Gate)
 	DisableBridge      bool // --no-bridge: never select the warm bridge for this run
+	WorkspaceBackend   string
+	KeepWorkspace      bool
+	WorkspaceStoreRoot string
 }
 
 // Response carries all outputs of a single testplay run.
@@ -121,6 +124,16 @@ type Response struct {
 // encoded as ExitCode); it returns an error only for unrecoverable
 // infrastructure failures (e.g. cannot create artifact directory).
 func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
+	if !ValidWorkspaceBackend(req.WorkspaceBackend) {
+		return Response{}, fmt.Errorf("runsvc: invalid workspace backend %q", req.WorkspaceBackend)
+	}
+	if req.WorkspaceBackend != "" && req.ForceBridge {
+		return Response{}, fmt.Errorf("runsvc: --bridge cannot be combined with --workspace-backend")
+	}
+	if _, err := resolveWorkspaceStoreRoot(req.Config.ProjectPath, req.WorkspaceStoreRoot); err != nil {
+		return Response{}, fmt.Errorf("runsvc: workspace store root: %w", err)
+	}
+
 	clock := s.Clock
 	if clock == nil {
 		clock = time.Now
@@ -187,8 +200,8 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	}
 
 	// Clear cache if requested.
-	if req.ClearCache {
-		_ = shadow.ClearCache(req.Config.ProjectPath)
+	if req.ClearCache && req.WorkspaceBackend != WorkspaceBackendImage {
+		_ = shadow.ClearCacheAt(legacyCacheRoot(req))
 	}
 
 	var warnings []string
@@ -205,7 +218,8 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	// unchanged shadow/process cold path below — correctness wins by default.
 	ranBridge := false
 	bridgeFallbackReason := ""
-	bridgeEligible := !req.ForceShadow && !req.ResetShadow && !req.ClearCache &&
+	bridgeEligible := req.WorkspaceBackend == "" &&
+		!req.ForceShadow && !req.ResetShadow && !req.ClearCache &&
 		!req.DisableBridge && !twoPhaseRequested(req.Config) &&
 		(req.Config.BridgeEnabled() || req.ForceBridge)
 	if bridgeEligible {
@@ -248,23 +262,32 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	// ── Tier-2/3: cold path — shadow if the editor holds the project open,
 	// else a fresh batchmode process against the real project. Unchanged. ───
 	var ws *shadow.Workspace
+	var workspaceMetrics *history.WorkspaceMetrics
+	workspaceCleanupPending := false
 	if !ranBridge {
-		if req.ForceShadow || req.ResetShadow || shadow.IsLocked(req.Config.ProjectPath) {
-			// ResetShadow and ForceShadow behave identically — per-run dirs are always fresh.
-			var opts shadow.PrepareOptions
-			if !req.ClearCache && shadow.ValidateCache(req.Config.ProjectPath) {
-				opts.LibraryCacheDir = shadow.CacheLibraryDir(req.Config.ProjectPath)
-			}
-
+		useShadow := req.WorkspaceBackend != "" ||
+			req.ForceShadow || req.ResetShadow || shadow.IsLocked(req.Config.ProjectPath)
+		if useShadow {
 			var wsErr error
-			ws, wsErr = shadow.Prepare(ctx, req.Config.ProjectPath, runID, opts)
+			if req.WorkspaceBackend == WorkspaceBackendImage {
+				ws, workspaceMetrics, wsErr = s.prepareImageWorkspace(
+					ctx, req, runID, stdoutLog, stderrLog,
+				)
+			} else {
+				ws, workspaceMetrics, wsErr = s.prepareLegacyWorkspace(ctx, req, runID)
+			}
 			if wsErr != nil {
 				if errors.Is(wsErr, os.ErrPermission) {
 					return Response{ExitCode: 7}, fmt.Errorf("runsvc: prepare shadow workspace: %w", wsErr)
 				}
 				return Response{}, fmt.Errorf("runsvc: prepare shadow workspace: %w", wsErr)
 			}
-			defer func() { _ = ws.Cleanup() }()
+			workspaceCleanupPending = true
+			defer func() {
+				if workspaceCleanupPending && !req.KeepWorkspace {
+					_ = ws.Cleanup()
+				}
+			}()
 		}
 
 		execProjectPath := req.Config.ProjectPath
@@ -289,7 +312,16 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 			StderrWriter: stderrLog,
 			ExtraArgs:    extraArgs,
 		}
+		unityStarted := time.Now()
 		result, exitCode = unity.Execute(ctx, s.Runner, execOpts)
+		if workspaceMetrics != nil {
+			workspaceMetrics.UnityExecutionMs = time.Since(unityStarted).Milliseconds()
+			workspaceMetrics.TestExecutionMs = testExecutionMilliseconds(result)
+			workspaceMetrics.UnityStartupMs = workspaceMetrics.UnityExecutionMs - workspaceMetrics.TestExecutionMs
+			if workspaceMetrics.UnityStartupMs < 0 {
+				workspaceMetrics.UnityStartupMs = 0
+			}
+		}
 		if ws != nil {
 			result.Backend = backendShadow
 		} else {
@@ -356,18 +388,72 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		}
 	}
 
-	// Persist to history store.
-	if err := s.Store.Save(runID, result); err != nil {
-		warnings = append(warnings, fmt.Sprintf("result not saved: %v", err))
-		hasSystemError = true
-	}
-
 	// Write Library cache back on successful runs (exit 0 or 3).
 	// Skipped in scenario mode to avoid concurrent writes to the shared cache dir.
-	if ws != nil && !req.SkipCacheWriteBack && (exitCode == 0 || exitCode == 3) {
+	// The image backend never writes a test-mutated Library back into its base.
+	if ws != nil &&
+		workspaceMetrics.WorkspaceBackend == WorkspaceBackendLegacy &&
+		!req.SkipCacheWriteBack && (exitCode == 0 || exitCode == 3) {
 		if cacheErr := ws.UpdateLibraryCache(ctx); cacheErr != nil {
 			warnings = append(warnings, fmt.Sprintf("library cache not updated: %v", cacheErr))
 		}
+		workspaceMetrics.CacheWriteBackMs = ws.Metrics.LegacyCacheWriteBack.Milliseconds()
+	}
+
+	if ws != nil && workspaceMetrics != nil {
+		workspaceUsage, sizeErr := shadow.MeasureDirectoryUsage(ws.ShadowPath)
+		if sizeErr == nil {
+			workspaceMetrics.WorkspaceLogicalBytes = workspaceUsage.LogicalBytes
+			workspaceMetrics.WorkspacePhysicalBytes = workspaceUsage.AllocatedBytes
+			workspaceMetrics.PhysicalBytesAdded += workspaceUsage.AllocatedBytes
+		}
+
+		var persistentPhysicalBytes int64
+		if workspaceMetrics.WorkspaceBackend == WorkspaceBackendImage {
+			persistentPhysicalBytes = workspaceMetrics.ImageStorePhysicalBytes
+		} else {
+			cacheUsage, cacheErr := shadow.MeasureDirectoryUsage(
+				legacyCacheRoot(req),
+			)
+			if cacheErr == nil {
+				persistentPhysicalBytes = cacheUsage.AllocatedBytes
+			}
+			updateObservedPeak(
+				workspaceMetrics,
+				workspaceMetrics.WorkspacePhysicalBytes+
+					ws.Metrics.LegacyCacheWritePeakPhysicalBytes,
+			)
+		}
+		updateObservedPeak(
+			workspaceMetrics,
+			persistentPhysicalBytes+workspaceMetrics.WorkspacePhysicalBytes,
+		)
+
+		if req.KeepWorkspace {
+			workspaceMetrics.WorkspaceKept = true
+			workspaceMetrics.RetainedPhysicalBytes =
+				persistentPhysicalBytes + workspaceMetrics.WorkspacePhysicalBytes
+		} else {
+			cleanupStarted := time.Now()
+			if cleanupErr := ws.Cleanup(); cleanupErr != nil {
+				warnings = append(warnings, fmt.Sprintf("shadow workspace cleanup failed: %v", cleanupErr))
+				workspaceMetrics.RetainedPhysicalBytes =
+					persistentPhysicalBytes + workspaceMetrics.WorkspacePhysicalBytes
+			} else {
+				workspaceCleanupPending = false
+				workspaceMetrics.CleanupReclaimedPhysicalBytes =
+					workspaceMetrics.WorkspacePhysicalBytes
+				workspaceMetrics.RetainedPhysicalBytes = persistentPhysicalBytes
+			}
+			workspaceMetrics.CleanupMs = time.Since(cleanupStarted).Milliseconds()
+		}
+		result.WorkspaceMetrics = workspaceMetrics
+	}
+
+	// Persist after workspace lifecycle metrics are final.
+	if err := s.Store.Save(runID, result); err != nil {
+		warnings = append(warnings, fmt.Sprintf("result not saved: %v", err))
+		hasSystemError = true
 	}
 
 	// Write list cache — persists the full test inventory so subsequent
@@ -440,6 +526,7 @@ func buildSummary(runID string, result *history.RunResult, exitCode int) map[str
 		"schema_version": "1",
 		"run_id":         runID,
 		"exit_code":      exitCode,
+		"backend":        result.Backend,
 		"total":          result.Total,
 		"passed":         result.Passed,
 		"failed":         result.Failed,
@@ -447,6 +534,9 @@ func buildSummary(runID string, result *history.RunResult, exitCode int) map[str
 	}
 	if result.TimeoutType != "" {
 		s["timeout_type"] = result.TimeoutType
+	}
+	if result.WorkspaceMetrics != nil {
+		s["workspace_metrics"] = result.WorkspaceMetrics
 	}
 	return s
 }

@@ -184,17 +184,33 @@ func TestUpdateLibraryCache_CopiesToCacheDir(t *testing.T) {
 		[]byte("pkg-data"), 0644))
 	must(t, os.WriteFile(filepath.Join(libDir, "ArtifactDB"), []byte("db"), 0644))
 
+	cacheLib := shadow.CacheLibraryDir(src)
+	must(t, os.MkdirAll(cacheLib, 0755))
+	must(t, os.WriteFile(filepath.Join(cacheLib, "old-cache.bin"), []byte("old"), 0644))
+	oldUsage, err := shadow.MeasureDirectoryUsage(cacheLib)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if err := ws.UpdateLibraryCache(context.Background()); err != nil {
 		t.Fatalf("UpdateLibraryCache: %v", err)
 	}
 
-	cacheLib := shadow.CacheLibraryDir(src)
 	data, err := os.ReadFile(filepath.Join(cacheLib, "PackageCache", "pkg.dat"))
 	if err != nil {
 		t.Fatalf("cached file missing: %v", err)
 	}
 	if string(data) != "pkg-data" {
 		t.Errorf("cached content: got %q, want %q", data, "pkg-data")
+	}
+	newUsage, err := shadow.MeasureDirectoryUsage(cacheLib)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPeak := oldUsage.AllocatedBytes + newUsage.AllocatedBytes
+	if ws.Metrics.LegacyCacheWritePeakPhysicalBytes != wantPeak {
+		t.Errorf("cache write peak = %d, want old+temporary %d",
+			ws.Metrics.LegacyCacheWritePeakPhysicalBytes, wantPeak)
 	}
 
 	if !shadow.ValidateCache(src) {

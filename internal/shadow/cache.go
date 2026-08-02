@@ -27,22 +27,32 @@ func CacheKey(projectPath string) (string, error) {
 
 // CacheLibraryDir returns the path to the cached Library directory for a project.
 func CacheLibraryDir(projectPath string) string {
-	return filepath.Join(projectPath, ".testplay", "cache", "Library")
+	return CacheLibraryDirAt(filepath.Join(projectPath, ".testplay", "cache"))
 }
 
-// cacheKeyFile returns the path to the stored cache key file.
-func cacheKeyFile(projectPath string) string {
-	return filepath.Join(projectPath, ".testplay", "cache", "cache.key")
+// CacheLibraryDirAt returns the Library path under an explicit cache root.
+func CacheLibraryDirAt(cacheRoot string) string {
+	return filepath.Join(cacheRoot, "Library")
+}
+
+func cacheKeyFileAt(cacheRoot string) string {
+	return filepath.Join(cacheRoot, "cache.key")
 }
 
 // ValidateCache returns true if the cached Library directory exists and
 // the stored cache key matches the current project state.
 func ValidateCache(projectPath string) bool {
+	return ValidateCacheAt(projectPath, filepath.Join(projectPath, ".testplay", "cache"))
+}
+
+// ValidateCacheAt validates an explicit persistent cache root against the
+// current source project.
+func ValidateCacheAt(projectPath, cacheRoot string) bool {
 	// Check that the Library directory actually exists on disk.
-	if _, err := os.Stat(CacheLibraryDir(projectPath)); err != nil {
+	if _, err := os.Stat(CacheLibraryDirAt(cacheRoot)); err != nil {
 		return false
 	}
-	stored, err := os.ReadFile(cacheKeyFile(projectPath))
+	stored, err := os.ReadFile(cacheKeyFileAt(cacheRoot))
 	if err != nil {
 		return false
 	}
@@ -55,11 +65,16 @@ func ValidateCache(projectPath string) bool {
 
 // SaveCacheKey writes the current cache key to disk.
 func SaveCacheKey(projectPath string) error {
+	return SaveCacheKeyAt(projectPath, filepath.Join(projectPath, ".testplay", "cache"))
+}
+
+// SaveCacheKeyAt stores the current project key under an explicit cache root.
+func SaveCacheKeyAt(projectPath, cacheRoot string) error {
 	key, err := CacheKey(projectPath)
 	if err != nil {
 		return err
 	}
-	keyPath := cacheKeyFile(projectPath)
+	keyPath := cacheKeyFileAt(cacheRoot)
 	if err := os.MkdirAll(filepath.Dir(keyPath), 0755); err != nil {
 		return err
 	}
@@ -68,5 +83,10 @@ func SaveCacheKey(projectPath string) error {
 
 // ClearCache removes the entire cache directory for a project.
 func ClearCache(projectPath string) error {
-	return os.RemoveAll(filepath.Join(projectPath, ".testplay", "cache"))
+	return ClearCacheAt(filepath.Join(projectPath, ".testplay", "cache"))
+}
+
+// ClearCacheAt removes only the selected persistent cache root.
+func ClearCacheAt(cacheRoot string) error {
+	return os.RemoveAll(cacheRoot)
 }

@@ -23,14 +23,17 @@ import (
 
 // RunCmdOptions holds the flag values for `testplay run`.
 type RunCmdOptions struct {
-	Filter        string
-	Category      string
-	CompareRun    string
-	ResetShadow   bool
-	ForceShadow   bool // activate shadow workspace without resetting Library cache
-	ClearCache    bool // remove cached Library before shadow workspace creation
-	ForceBridge   bool // --bridge: prefer the warm-editor bridge (still gated by the Pristine Gate)
-	DisableBridge bool // --no-bridge: never select the warm-editor bridge
+	Filter             string
+	Category           string
+	CompareRun         string
+	ResetShadow        bool
+	ForceShadow        bool // activate shadow workspace without resetting Library cache
+	ClearCache         bool // remove cached Library before shadow workspace creation
+	ForceBridge        bool // --bridge: prefer the warm-editor bridge (still gated by the Pristine Gate)
+	DisableBridge      bool // --no-bridge: never select the warm-editor bridge
+	WorkspaceBackend   string
+	WorkspaceStoreRoot string
+	KeepWorkspace      bool
 }
 
 type runDeps struct {
@@ -46,6 +49,16 @@ func runRun(w io.Writer, deps runDeps) int {
 	baseCtx := deps.ctx
 	if baseCtx == nil {
 		baseCtx = context.Background()
+	}
+	if !runsvc.ValidWorkspaceBackend(deps.opts.WorkspaceBackend) {
+		writeJSON(w, map[string]any{
+			"schema_version": "1",
+			"error": fmt.Sprintf(
+				"invalid --workspace-backend %q: expected legacy or image",
+				deps.opts.WorkspaceBackend,
+			),
+		})
+		return 5
 	}
 
 	cfg, err := deps.loadConfig(configPath)
@@ -77,15 +90,18 @@ func runRun(w io.Writer, deps runDeps) int {
 	}
 
 	resp, infraErr := svc.Run(ctx, runsvc.Request{
-		Config:        cfg,
-		Filter:        deps.opts.Filter,
-		Category:      deps.opts.Category,
-		CompareRun:    deps.opts.CompareRun,
-		ResetShadow:   deps.opts.ResetShadow,
-		ForceShadow:   deps.opts.ForceShadow,
-		ClearCache:    deps.opts.ClearCache,
-		ForceBridge:   deps.opts.ForceBridge,
-		DisableBridge: deps.opts.DisableBridge,
+		Config:             cfg,
+		Filter:             deps.opts.Filter,
+		Category:           deps.opts.Category,
+		CompareRun:         deps.opts.CompareRun,
+		ResetShadow:        deps.opts.ResetShadow,
+		ForceShadow:        deps.opts.ForceShadow,
+		ClearCache:         deps.opts.ClearCache,
+		ForceBridge:        deps.opts.ForceBridge,
+		DisableBridge:      deps.opts.DisableBridge,
+		WorkspaceBackend:   deps.opts.WorkspaceBackend,
+		WorkspaceStoreRoot: deps.opts.WorkspaceStoreRoot,
+		KeepWorkspace:      deps.opts.KeepWorkspace,
 	})
 	if infraErr != nil {
 		writeJSON(w, map[string]any{"schema_version": "1", "error": infraErr.Error()})
@@ -117,6 +133,20 @@ func runRun(w io.Writer, deps runDeps) int {
 	}
 	if result.Hint != "" {
 		output["hint"] = result.Hint
+	}
+	if result.WorkspaceMetrics != nil {
+		output["workspace_metrics"] = result.WorkspaceMetrics
+		fmt.Fprintf(
+			os.Stderr,
+			"workspace: backend=%s image=%s prepare=%dms library=%dms peak=%dB retained=%dB reclaimed=%dB\n",
+			result.WorkspaceMetrics.WorkspaceBackend,
+			result.WorkspaceMetrics.ImageStatus,
+			result.WorkspaceMetrics.WorkspacePreparationMs,
+			result.WorkspaceMetrics.LibraryMaterializationMs,
+			result.WorkspaceMetrics.ObservedPeakAdditionalPhysicalBytes,
+			result.WorkspaceMetrics.RetainedPhysicalBytes,
+			result.WorkspaceMetrics.CleanupReclaimedPhysicalBytes,
+		)
 	}
 	if len(resp.Warnings) > 0 {
 		for _, w2 := range resp.Warnings {
@@ -154,6 +184,13 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 	ctx := deps.ctx
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if deps.opts.WorkspaceBackend != "" || deps.opts.WorkspaceStoreRoot != "" || deps.opts.KeepWorkspace {
+		writeJSON(w, map[string]any{
+			"schema_version": "1",
+			"error":          "--workspace-backend, --workspace-store-root, and --keep-workspace are not supported with --scenario in this experimental slice",
+		})
+		return 5
 	}
 
 	spec, err := scenario.Load(specPath)
@@ -446,6 +483,9 @@ var forceShadow bool
 var clearCache bool
 var forceBridge bool
 var noBridge bool
+var workspaceBackend string
+var workspaceStoreRoot string
+var keepWorkspace bool
 var scenarioPath string
 
 var runCmd = &cobra.Command{
@@ -469,12 +509,15 @@ var runCmd = &cobra.Command{
 				ctx:        ctx,
 				clearCache: clearCache,
 				opts: RunCmdOptions{
-					Filter:      runFilter,
-					Category:    runCategory,
-					CompareRun:  runCompareRun,
-					ResetShadow: resetShadow,
-					ForceShadow: forceShadow,
-					ClearCache:  clearCache,
+					Filter:             runFilter,
+					Category:           runCategory,
+					CompareRun:         runCompareRun,
+					ResetShadow:        resetShadow,
+					ForceShadow:        forceShadow,
+					ClearCache:         clearCache,
+					WorkspaceBackend:   workspaceBackend,
+					WorkspaceStoreRoot: workspaceStoreRoot,
+					KeepWorkspace:      keepWorkspace,
 				},
 			})
 		} else {
@@ -485,14 +528,17 @@ var runCmd = &cobra.Command{
 				// from config after loading, avoiding a double config-load.
 				statusPath: statusPath,
 				opts: RunCmdOptions{
-					Filter:        runFilter,
-					Category:      runCategory,
-					CompareRun:    runCompareRun,
-					ResetShadow:   resetShadow,
-					ForceShadow:   forceShadow,
-					ClearCache:    clearCache,
-					ForceBridge:   forceBridge,
-					DisableBridge: noBridge,
+					Filter:             runFilter,
+					Category:           runCategory,
+					CompareRun:         runCompareRun,
+					ResetShadow:        resetShadow,
+					ForceShadow:        forceShadow,
+					ClearCache:         clearCache,
+					ForceBridge:        forceBridge,
+					DisableBridge:      noBridge,
+					WorkspaceBackend:   workspaceBackend,
+					WorkspaceStoreRoot: workspaceStoreRoot,
+					KeepWorkspace:      keepWorkspace,
 				},
 			}
 			code = runRun(cmd.OutOrStdout(), deps)
@@ -512,5 +558,8 @@ func init() {
 	runCmd.Flags().BoolVar(&clearCache, "clear-cache", false, "Remove cached Library before shadow workspace creation")
 	runCmd.Flags().BoolVar(&forceBridge, "bridge", false, "Prefer the warm-editor bridge backend (still gated by the Pristine Gate)")
 	runCmd.Flags().BoolVar(&noBridge, "no-bridge", false, "Never select the warm-editor bridge; force the cold shadow/process path")
+	runCmd.Flags().StringVar(&workspaceBackend, "workspace-backend", "", "Shadow workspace backend: legacy or image (experimental)")
+	runCmd.Flags().StringVar(&workspaceStoreRoot, "workspace-store-root", "", "Absolute root for persistent workspace cache/image data (experimental)")
+	runCmd.Flags().BoolVar(&keepWorkspace, "keep-workspace", false, "Keep the prepared shadow workspace for debugging")
 	runCmd.Flags().StringVar(&scenarioPath, "scenario", "", "Path to scenario JSON file for multi-instance execution")
 }
