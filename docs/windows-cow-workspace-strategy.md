@@ -57,8 +57,8 @@ and storage metrics before production claims.
 ```text
 Standalone Differencing VHDX correctness: PROVEN
 On-demand Helper lifecycle: PROVEN
-Small Unity fixture readiness: YES
-Unity workspace readiness: NOT YET
+Small Unity Library compatibility: PROVEN
+GNF_ compatibility: NOT YET
 Forced termination recovery: NOT YET
 Production performance: NOT YET
 ```
@@ -119,7 +119,8 @@ Lease lifetime management: PROVEN
 Same-process idempotency: PROVEN
 Cleanup safety: PROVEN
 Small Unity fixture readiness: YES
-Unity workspace readiness: NOT YET
+Small Unity Library compatibility: PROVEN
+GNF_ compatibility: NOT YET
 Forced termination recovery: NOT YET
 Production performance: NOT YET
 ```
@@ -129,3 +130,24 @@ raw transcript and per-run metrics are not stored in the repository. They
 permit a separate small Unity fixture validation PR, but do not establish Unity
 Library compatibility, forced-termination recovery, or production latency. A
 permanent broker service remains deferred.
+
+## Small Unity fixture gate
+
+The stacked `unity-vhdx-library-fixture` harness is implemented without
+changing the public CLI or Image Backend. It prepares a warm Parent Library,
+runs the same deterministic EditMode and PlayMode tests against a Physical
+Library and a Helper-mounted Differencing Child, compares semantic NUnit
+results, verifies the Parent hash and marker isolation, and checks cleanup.
+
+```text
+Fixture implementation: COMPLETE
+Elevated Unity VHDX validation: 5/5 PASS
+Verdict: PROVEN - small Unity Library compatible with Differencing VHDX
+```
+
+The proof used one immutable Parent and five distinct sequential Children.
+Physical/VHDX EditMode and PlayMode semantic parity, stable mount identity,
+unchanged Parent SHA-256, Release, and cleanup passed 5/5, with zero residual
+disks, mounts, Child files, Journals, or fixture items. GNF_, large-project
+performance, forced termination, parallel workers, and production backend
+integration remain separate gates.

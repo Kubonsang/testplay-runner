@@ -95,7 +95,9 @@ WSL
 → Linux Agent Runtime only
 ```
 
-The standalone VHDX lifecycle is proven, so the on-demand helper protocol is
-ready to design. Unity compatibility, path sensitivity, GNF_ behavior,
-concurrent workers, crash recovery, and production performance remain separate
-gates.
+The standalone VHDX lifecycle and on-demand Helper lifecycle are proven. A
+small Unity `Library` fixture also passed Physical/VHDX EditMode and PlayMode
+semantic parity, Parent isolation, mount integrity, and cleanup across five
+distinct sequential Children. That proof is intentionally limited to the small
+fixture; GNF_ behavior, large-project performance, concurrent workers, crash
+recovery, and production backend integration remain separate gates.
