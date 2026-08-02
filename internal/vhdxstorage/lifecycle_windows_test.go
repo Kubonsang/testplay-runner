@@ -1,6 +1,6 @@
 //go:build windows
 
-package vhdxprobe
+package vhdxstorage
 
 import (
 	"os"
@@ -13,22 +13,22 @@ import (
 
 func TestVirtDiskStructureLayouts(t *testing.T) {
 	if got := unsafe.Sizeof(virtualStorageType{}); got != 20 {
-		t.Fatalf("VIRTUAL_STORAGE_TYPE size = %d, want 20", got)
+		t.Fatalf("VIRTUAL_STORAGE_TYPE size=%d", got)
 	}
 	if got := unsafe.Sizeof(createVirtualDiskParametersV2{}); got != 128 {
-		t.Fatalf("CREATE_VIRTUAL_DISK_PARAMETERS_V2 size = %d, want 128", got)
+		t.Fatalf("CREATE_VIRTUAL_DISK_PARAMETERS_V2 size=%d", got)
 	}
 	if got := unsafe.Offsetof(createVirtualDiskParametersV2{}.ParentPath); got != 48 {
-		t.Fatalf("ParentPath offset = %d, want 48", got)
+		t.Fatalf("ParentPath offset=%d", got)
 	}
 	if got := unsafe.Offsetof(createVirtualDiskParametersV2{}.ParentVirtualStorageType); got != 68 {
-		t.Fatalf("ParentVirtualStorageType offset = %d, want 68", got)
+		t.Fatalf("ParentVirtualStorageType offset=%d", got)
 	}
 	if got := unsafe.Sizeof(openVirtualDiskParametersV1{}); got != 8 {
-		t.Fatalf("OPEN_VIRTUAL_DISK_PARAMETERS_V1 size = %d, want 8", got)
+		t.Fatalf("OPEN_VIRTUAL_DISK_PARAMETERS_V1 size=%d", got)
 	}
 	if got := unsafe.Sizeof(attachVirtualDiskParametersV1{}); got != 8 {
-		t.Fatalf("ATTACH_VIRTUAL_DISK_PARAMETERS_V1 size = %d, want 8", got)
+		t.Fatalf("ATTACH_VIRTUAL_DISK_PARAMETERS_V1 size=%d", got)
 	}
 }
 
@@ -40,30 +40,21 @@ func TestUTF16ParentPathParameter(t *testing.T) {
 	}
 	words := unsafe.Slice(pointer, len([]rune(parent))+2)
 	if got := syscall.UTF16ToString(words); got != parent {
-		t.Fatalf("UTF-16 round trip = %q", got)
+		t.Fatalf("round trip=%q", got)
 	}
-	parameters := createVirtualDiskParametersV2{
-		Version:                  createVirtualDiskVersion2,
-		ParentPath:               pointer,
-		ParentVirtualStorageType: vhdxStorageType(),
-	}
+	parameters := createVirtualDiskParametersV2{Version: createVirtualDiskVersion2, ParentPath: pointer, ParentVirtualStorageType: vhdxStorageType()}
 	if parameters.ParentPath == nil {
 		t.Fatal("ParentPath was nil")
 	}
 }
 
 func TestPhysicalDiskSafetyGate(t *testing.T) {
-	number, err := diskNumberFromPhysicalPath(`\\.\PhysicalDrive42`)
+	number, err := DiskNumberFromPhysicalPath(`\\.\PhysicalDrive42`)
 	if err != nil || number != 42 {
 		t.Fatalf("number=%d err=%v", number, err)
 	}
-	for _, path := range []string{
-		`C:\`,
-		`\\.\C:`,
-		`\\?\Volume{01234567-89ab-cdef-0123-456789abcdef}\`,
-		`\\.\PhysicalDrive1\partition0`,
-	} {
-		if _, err := diskNumberFromPhysicalPath(path); err == nil {
+	for _, path := range []string{`C:\`, `\\.\C:`, `\\?\Volume{01234567-89ab-cdef-0123-456789abcdef}\`, `\\.\PhysicalDrive1\partition0`} {
+		if _, err := DiskNumberFromPhysicalPath(path); err == nil {
 			t.Fatalf("unsafe path accepted: %q", path)
 		}
 	}
@@ -75,12 +66,13 @@ func TestPhysicalDiskSafetyGate(t *testing.T) {
 }
 
 func TestCloseZeroHandle(t *testing.T) {
-	if err := closeVirtualDiskHandle(0); err != nil {
+	attachment := &Attachment{}
+	if err := attachment.CloseHandle(); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestStorageBootstrapPowerShellParses(t *testing.T) {
+func TestStoragePowerShellParses(t *testing.T) {
 	parser := `
 $tokens = $null
 $parseErrors = $null
@@ -94,30 +86,31 @@ if ($parseErrors.Count -ne 0) {
   exit 1
 }
 `
-	scripts := map[string]string{
-		"initialize": initializeDiskScript,
-		"mount":      mountDiskScript,
-		"unmount":    unmountDiskScript,
-	}
+	scripts := map[string]string{"initialize": initializeDiskScript, "resolve": resolveVolumeScript, "mount": mountDiskScript, "unmount": unmountDiskScript, "wait-detach": waitDetachScript}
 	for name, script := range scripts {
 		t.Run(name, func(t *testing.T) {
 			if strings.Contains(script, "$diskNumber:") {
-				t.Fatal("ambiguous PowerShell variable interpolation before ':'")
+				t.Fatal("ambiguous PowerShell interpolation")
 			}
-			command := exec.Command(
-				"powershell.exe",
-				"-NoProfile",
-				"-NonInteractive",
-				"-Command",
-				parser,
-			)
-			command.Env = append(
-				os.Environ(),
-				"TESTPLAY_VHDX_BOOTSTRAP_SCRIPT="+script,
-			)
+			command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", parser)
+			command.Env = append(os.Environ(), "TESTPLAY_VHDX_BOOTSTRAP_SCRIPT="+script)
 			if output, err := command.CombinedOutput(); err != nil {
-				t.Fatalf("PowerShell parse failed: %v\n%s", err, output)
+				t.Fatalf("parse failed: %v\n%s", err, output)
 			}
 		})
+	}
+}
+
+func TestAllocatedFileSize(t *testing.T) {
+	path := t.TempDir() + `\file.bin`
+	if err := os.WriteFile(path, make([]byte, 4096), 0600); err != nil {
+		t.Fatal(err)
+	}
+	value, err := allocatedFileSize(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value == nil || *value <= 0 {
+		t.Fatalf("allocated=%v", value)
 	}
 }
