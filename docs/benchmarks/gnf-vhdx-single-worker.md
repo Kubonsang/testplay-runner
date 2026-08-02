@@ -5,10 +5,11 @@
 ```text
 Harness: IMPLEMENTED
 GNF_ correctness gate: PASS (Legacy/Physical/VHDX semantic parity)
-GNF_ cold run: NOT RUN
-GNF_ warm 10: NOT RUN
-Compatibility verdict: COMPATIBLE (single-worker Smoke correctness)
-Performance verdict: NOT MEASURED
+GNF_ cold run: PASS (1/backend)
+GNF_ warm 10: PASS (10/backend)
+Compatibility verdict: COMPATIBLE (single-worker fixed selection)
+Performance verdict: BENEFICIAL (single-worker fixed selection)
+Production default readiness: NOT YET
 ```
 
 This opt-in benchmark compares the existing Legacy workspace, the existing
@@ -231,6 +232,68 @@ Raw Evidence is preserved under session
 `session-20260801T180750.829124000Z`. Correctness is `COMPATIBLE`; Cold 1 and
 Warm 10 remain unexecuted, so performance remains `NOT MEASURED`.
 
+### Hardware attempt 5 — Full PASS
+
+Elevated Administrator PowerShell completed the Full plan on Unity `6000.3.8f1`
+and GNF_ revision `1ed151ca3f29e587ad92d2f89f102fa1e50641ef` with concurrency
+one. The test body passed in 4,757.46 seconds. Final Runner JSON reported
+`success: true` and `testExitCode: 0`, with no disk or process difference and no
+residual Work Root items.
+
+The Full session contains 36 sequential Backend executions: a three-Backend
+correctness gate, one cold execution per Backend, and ten warm executions per
+Backend. Every execution passed the one fixed test and produced semantic digest
+`20e4343f5e384b1cc13a0ca98a4be26dc76f83ec0d4d821dbc9d1d8885fcdc39`.
+
+| Gate | Result |
+|---|---:|
+| Correctness gate | 3/3 PASS |
+| Cold | 3/3 PASS |
+| Warm Legacy | 10/10 PASS |
+| Warm Physical Image | 10/10 PASS |
+| Warm Differencing VHDX | 10/10 PASS |
+| Semantic parity | 36/36 PASS |
+| Cleanup | 36/36 PASS |
+| Structured residual disk/mount/Child/Journal | 0 |
+
+The 12 VHDX executions used 12 distinct Child paths and 12 distinct Lease IDs.
+Parent isolation and mount integrity passed 12/12. Each released mount snapshot
+was absent, every Journal reached Release, and no Child, mount, File Backed
+Virtual disk, Unity/Helper process, or Work Root remained.
+
+Warm Total Wall Clock statistics, in milliseconds:
+
+| Backend | Mean | Median | Min | Max | P95 | Population SD |
+|---|---:|---:|---:|---:|---:|---:|
+| Legacy | 134,403.8 | 127,170.5 | 112,402 | 156,364 | 156,364 | 14,339.84 |
+| Physical Image | 103,345.1 | 109,651.0 | 83,024 | 114,565 | 114,565 | 10,810.59 |
+| Differencing VHDX | 71,013.5 | 71,682.5 | 66,859 | 75,274 | 75,274 | 2,728.16 |
+
+Warm Unity Wall Clock statistics, in milliseconds:
+
+| Backend | Mean | Median | Min | Max | P95 | Population SD |
+|---|---:|---:|---:|---:|---:|---:|
+| Legacy | 47,763.2 | 45,280.5 | 39,785 | 57,322 | 57,322 | 6,015.50 |
+| Physical Image | 51,588.9 | 54,015.0 | 41,185 | 57,825 | 57,825 | 5,531.57 |
+| Differencing VHDX | 45,469.0 | 45,788.5 | 42,901 | 48,672 | 48,672 | 1,714.81 |
+
+The Evidence classifier reports `BENEFICIAL` because the VHDX warm Total Wall
+Clock median is below both alternatives. The Unity-only medians are much closer:
+VHDX is slightly above Legacy and below Physical Image. The observed total
+advantage therefore must not be presented as a general Unity execution-speed
+claim. It applies only to this deterministic PlayMode selection, this revision,
+one machine, and concurrency one.
+
+The Parent was a 17,179,869,184-byte dynamic VHDX whose detached logical and
+allocated file size was 5,171,576,832 bytes. Each VHDX Child began at 37,748,736
+logical/allocated bytes; per-run post-Unity sizes are retained in raw Evidence.
+No aggregate storage statistic is invented where the generated summary does not
+provide one.
+
+Raw Evidence is preserved under session
+`session-20260802T102851.901425300Z`. The source revision remained clean and the
+benchmark-owned Work Root was removed after complete success.
+
 ```powershell
 cd C:\Dev\testplay-runner
 
@@ -254,4 +317,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
 ```
 
 Specifying both switches or neither is an error. The Smoke correctness gate is
-`COMPATIBLE`. A performance verdict requires the separate elevated Full run.
+`COMPATIBLE`. The completed Full run classifies this fixed single-worker
+selection as `BENEFICIAL`. This does not establish a production default, forced
+termination recovery, parallel-worker behavior, sharding, or general GNF_
+performance.
