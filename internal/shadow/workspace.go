@@ -323,20 +323,37 @@ func (r *ctxReader) Read(p []byte) (n int, err error) {
 
 const copyDirWorkers = 8
 
+// CopyStats reports regular-file counts and logical bytes observed during a
+// directory copy. Symlinks and directories do not contribute to these totals.
+type CopyStats struct {
+	FileCount    int64
+	LogicalBytes int64
+}
+
 // CopyDirParallel removes dst and recursively copies all files from src to dst
 // using a bounded pool of worker goroutines for file copies. Directories and
 // symlinks are handled inline by the WalkDir goroutine. workers <= 0 defaults
 // to copyDirWorkers.
 func CopyDirParallel(ctx context.Context, src, dst string, workers int) error {
+	_, err := CopyDirParallelWithStats(ctx, src, dst, workers)
+	return err
+}
+
+// CopyDirParallelWithStats preserves CopyDirParallel's behavior and also
+// reports regular-file counts and logical bytes gathered during its existing
+// source traversal.
+func CopyDirParallelWithStats(ctx context.Context, src, dst string, workers int) (CopyStats, error) {
+	var stats CopyStats
 	if workers <= 0 {
 		workers = copyDirWorkers
 	}
 	if err := os.RemoveAll(dst); err != nil {
-		return err
+		return stats, err
 	}
 
 	type copyJob struct {
 		src, dst string
+		mode     fs.FileMode
 	}
 
 	jobs := make(chan copyJob, workers*2)
@@ -354,7 +371,7 @@ func CopyDirParallel(ctx context.Context, src, dst string, workers int) error {
 				if copyErr.Load() != nil {
 					return
 				}
-				if err := copyFile(ctx, job.src, job.dst); err != nil {
+				if err := copyFileWithMode(ctx, job.src, job.dst, job.mode); err != nil {
 					copyErr.CompareAndSwap(nil, err)
 					return
 				}
@@ -386,9 +403,17 @@ func CopyDirParallel(ctx context.Context, src, dst string, workers int) error {
 			}
 			return os.Symlink(linkTarget, target)
 		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() {
+			stats.FileCount++
+			stats.LogicalBytes += info.Size()
+		}
 
 		select {
-		case jobs <- copyJob{src: path, dst: target}:
+		case jobs <- copyJob{src: path, dst: target, mode: info.Mode()}:
 			return nil
 		case <-ctx.Done():
 			return ctx.Err()
@@ -399,12 +424,12 @@ func CopyDirParallel(ctx context.Context, src, dst string, workers int) error {
 	wg.Wait()
 
 	if walkErr != nil {
-		return walkErr
+		return stats, walkErr
 	}
 	if v := copyErr.Load(); v != nil {
-		return v.(error)
+		return stats, v.(error)
 	}
-	return nil
+	return stats, nil
 }
 
 // copyDir removes dst and recursively copies all files from src to dst.
@@ -414,11 +439,15 @@ func copyDir(ctx context.Context, src, dst string) error {
 }
 
 func copyFile(ctx context.Context, src, dst string) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-		return err
-	}
 	info, err := os.Stat(src)
 	if err != nil {
+		return err
+	}
+	return copyFileWithMode(ctx, src, dst, info.Mode())
+}
+
+func copyFileWithMode(ctx context.Context, src, dst string, mode fs.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return err
 	}
 	in, err := os.Open(src)
@@ -426,7 +455,7 @@ func copyFile(ctx context.Context, src, dst string) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode())
+	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
 		return err
 	}

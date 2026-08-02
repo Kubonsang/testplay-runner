@@ -489,14 +489,23 @@ camelCase 필드로 구분한다.
     "imageStatus": "valid",
     "imageResolutionStatus": "valid",
     "imageKey": "sha256...",
+    "materializer": "physical-copy",
+    "imageResolveMs": 14,
+    "imageMetadataVerifyMs": 2,
+    "imageFullHashMs": 11843,
+    "libraryMaterializeMs": 11927,
+    "workspaceVerifyMs": 0,
     "libraryMaterializationMs": 11927,
+    "cleanupMs": 530,
     "fallbackUsed": false
   }
 }
 ```
 
-Materializer Interface 분리 후 검토할 additive 후보는 다음과 같다.
-아래 필드는 아직 구현되지 않았다.
+`materializer`, `imageResolveMs`, `imageMetadataVerifyMs`,
+`imageFullHashMs`, `libraryMaterializeMs`, `workspaceVerifyMs`는 T1/T2에서
+구현된 additive 필드다. 기존 `libraryMaterializationMs`와 `cleanupMs`의
+이름과 의미는 유지한다. 다음 ReFS 전용 필드는 아직 구현되지 않았다.
 
 ```json
 {
@@ -1039,29 +1048,34 @@ Script Compile과 Asset Import가 Unity 로그에서 안정적으로 분리되�
 - `GetCompressedFileSize`
 - Volume Free-space Delta
 
-## 16.3 향후 Materializer 계측 결과 예시
+## 16.3 Materializer 단계 계측
 
-다음은 기존 camelCase `workspace_metrics` 계약을 확장하는 후보이며 아직
-구현되지 않았다.
+Physical Copy 구현은 다음 camelCase 단계 필드를 기록한다. `resolve`는
+Image Key 계산과 상태 조회에서 metadata/hash 시간을 제외한 값이고,
+`imageFullHashMs`는 실행 중 수행된 전체 무결성 Hash의 누적 시간이다.
+Warm valid Image는 `Resolve`와 materialize 직전 `Verify`에서 전체 Hash를
+각 1회, 합계 2회 수행한다. 이 중복은 이번 단계에서 의도적으로 유지했다.
 
 ```json
 {
   "backend": "shadow",
   "workspace_metrics": {
     "workspaceBackend": "image",
-    "materializer": "refs-block-clone",
+    "materializer": "physical-copy",
     "imageKey": "...",
     "imageStatus": "valid",
-    "resolveMs": 25,
-    "fullHashMs": 0,
-    "materializeMs": 842,
-    "verifyMs": 112,
-    "logicalBytes": 5690831667,
-    "physicalBytesDelta": 81788928,
-    "pathStrategy": "common-image"
+    "imageResolveMs": 25,
+    "imageMetadataVerifyMs": 3,
+    "imageFullHashMs": 11234,
+    "libraryMaterializeMs": 11927,
+    "workspaceVerifyMs": 0,
+    "cleanupMs": 530
   }
 }
 ```
+
+ReFS의 clone 시간, 물리 delta, path strategy는 후속 Spike에서 별도
+additive 필드가 필요한지 실측 후 결정한다.
 
 ---
 
@@ -1293,6 +1307,8 @@ Fallback 발생 시 다음을 기록한다.
 
 ## T1 — ImageStore와 LibraryMaterializer 책임 분리
 
+상태: **implemented**
+
 - 현재 Physical Copy 동작 보존
 - Interface 도입
 - 결과에 Materializer ID 추가
@@ -1301,6 +1317,8 @@ Fallback 발생 시 다음을 기록한다.
 - 추가 리팩터링 금지
 
 ## T2 — 계측 분해
+
+상태: **implemented for workspace preparation**
 
 - Resolve
 - Metadata Verify
@@ -1311,7 +1329,10 @@ Fallback 발생 시 다음을 기록한다.
 - Unity Startup
 - Compile/Import/Test 가능 범위 분리
 
-중복 Full Hash 제거 여부는 이 단계 실측 후 결정한다.
+Warm valid Image에서 `Resolve`와 materialize 직전 `Verify`가 각각 전체
+Hash를 1회 수행함을 테스트로 고정했다. Hash 제거 또는 약화는 하지
+않았으며, 제거 여부는 새 계측 결과를 분석하는 후속 PR에서 결정한다.
+Unity compile과 Asset Import의 독립 구간은 아직 분리되지 않았다.
 
 ## T3 — Windows ReFS 작은 Probe
 

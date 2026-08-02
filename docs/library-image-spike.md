@@ -115,6 +115,10 @@ cold 223초, warm 평균 30.4초를 기록했다. 기존 구현은 이 시간을
 
 - project file copy
 - Library materialization
+- Image key/state resolve
+- Image metadata verification
+- Base Image full integrity hash
+- materialized workspace verification
 - image creation
 - Unity 전체 실행
 - NUnit test duration 합계
@@ -128,6 +132,20 @@ Unity가 구조화된 import/compile 경계를 제공하지 않으므로 script
 compilation과 asset import는 아직 각각 분리하지 못한다.
 
 ## 구현한 설계
+
+### ImageStore와 LibraryMaterializer
+
+ImageStore는 Key, Metadata, Lock, Staging, 전체 Integrity Hash, Atomic
+Commit, Quarantine과 Image 삭제만 소유한다. `LibraryMaterializer`는
+검증된 Base Image의 `Library`를 writable destination으로 배치하는 좁은
+책임만 가진다. 현재 구현은 `PhysicalCopyMaterializer` 하나이며 ID는
+`physical-copy`다. ReFS, APFS clone, Linux reflink와 자동 선택은
+구현하지 않았다.
+
+Physical Copy는 기존 복사 helper를 재사용하며 file count와 logical bytes를
+같은 순회에서 수집한다. 배치 후 Backend는 이 통계를 Image Metadata와
+비교한다. Hardlink를 만들지 않으므로 destination 변경은 Base Image에
+전파되지 않는다.
 
 ### CLI와 선택 정책
 
@@ -335,6 +353,12 @@ run stdout, history JSON, summary JSON에 다음 additive object가 기록된다
     "imageCreationMs": 0,
     "workspacePreparationMs": 208,
     "fileCopyMs": 29,
+    "materializer": "physical-copy",
+    "imageResolveMs": 4,
+    "imageMetadataVerifyMs": 1,
+    "imageFullHashMs": 76,
+    "libraryMaterializeMs": 100,
+    "workspaceVerifyMs": 0,
     "libraryMaterializationMs": 100,
     "unityStartupMs": 6583,
     "unityExecutionMs": 6589,
@@ -357,6 +381,15 @@ run stdout, history JSON, summary JSON에 다음 additive object가 기록된다
   }
 }
 ```
+
+새 단계 필드는 기존 aggregate를 대체하지 않는다.
+`libraryMaterializeMs`는 현재 실행 Materializer 자체의 시간이고 기존
+`libraryMaterializationMs`는 같은 값을 유지하는 호환 필드다.
+`imageFullHashMs`는 Store가 해당 실행 중 수행한 전체 Hash 누적값이다.
+Warm valid Image에서는 Resolve와 materialize 직전 Verify가 각각 1회씩
+전체 Hash를 수행한다. 이번 변경은 이를 계측했을 뿐 제거하거나 약화하지
+않았다. `workspaceVerifyMs`는 복사 중 수집된 file count와 logical bytes를
+Metadata와 비교하는 시간이며, 계측을 위해 추가 Hash를 수행하지 않는다.
 
 사람용 한 줄 workspace 요약은 stderr에만 기록된다. stdout의 단일 JSON
 계약은 유지된다.

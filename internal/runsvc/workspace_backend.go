@@ -13,6 +13,7 @@ import (
 
 	"github.com/Kubonsang/testplay-runner/internal/history"
 	"github.com/Kubonsang/testplay-runner/internal/libraryimage"
+	"github.com/Kubonsang/testplay-runner/internal/librarymaterializer"
 	"github.com/Kubonsang/testplay-runner/internal/shadow"
 	"github.com/Kubonsang/testplay-runner/internal/unity"
 )
@@ -52,6 +53,25 @@ func updateObservedPeak(metrics *history.WorkspaceMetrics, bytes int64) {
 	if bytes > metrics.ObservedPeakAdditionalPhysicalBytes {
 		metrics.ObservedPeakAdditionalPhysicalBytes = bytes
 	}
+}
+
+func durationWithoutVerification(
+	total time.Duration,
+	verification libraryimage.VerificationMetrics,
+) time.Duration {
+	excluded := verification.MetadataVerify + verification.FullHash
+	if excluded >= total {
+		return 0
+	}
+	return total - excluded
+}
+
+func updateImageVerificationMetrics(
+	metrics *history.WorkspaceMetrics,
+	verification libraryimage.VerificationMetrics,
+) {
+	metrics.ImageMetadataVerifyMs = verification.MetadataVerify.Milliseconds()
+	metrics.ImageFullHashMs = verification.FullHash.Milliseconds()
 }
 
 func resolveWorkspaceStoreRoot(projectPath, requested string) (string, error) {
@@ -100,6 +120,13 @@ func imageStoreRoot(req Request) string {
 	return filepath.Join(root, "library-images")
 }
 
+func (s *Service) selectedLibraryMaterializer() librarymaterializer.LibraryMaterializer {
+	if s.LibraryMaterializer != nil {
+		return s.LibraryMaterializer
+	}
+	return librarymaterializer.PhysicalCopyMaterializer{}
+}
+
 func (s *Service) prepareLegacyWorkspace(
 	ctx context.Context,
 	req Request,
@@ -138,6 +165,7 @@ func (s *Service) prepareImageWorkspace(
 		}
 	}
 
+	resolveStarted := time.Now()
 	key, err := libraryimage.ComputeKey(req.Config.ProjectPath, req.Config.UnityPath)
 	if err != nil {
 		return nil, metrics, err
@@ -148,6 +176,12 @@ func (s *Service) prepareImageWorkspace(
 	if err != nil {
 		return nil, metrics, err
 	}
+	resolveVerification := store.VerificationMetrics()
+	metrics.ImageResolveMs = durationWithoutVerification(
+		time.Since(resolveStarted),
+		resolveVerification,
+	).Milliseconds()
+	updateImageVerificationMetrics(metrics, resolveVerification)
 	metrics.ImageResolutionStatus = string(resolution.Status)
 	if resolution.Status == libraryimage.StatusUnsupported {
 		return nil, metrics, fmt.Errorf("Library image unsupported: %s", resolution.Reason)
@@ -203,8 +237,10 @@ func (s *Service) prepareImageWorkspace(
 			}, nil
 		})
 		if err != nil {
+			updateImageVerificationMetrics(metrics, store.VerificationMetrics())
 			return nil, metrics, err
 		}
+		updateImageVerificationMetrics(metrics, store.VerificationMetrics())
 		metrics.ImageResolutionStatus = string(lockedStatus)
 		if lockedStatus != libraryimage.StatusValid {
 			metrics.ImageCreationMs = time.Since(creationStarted).Milliseconds()
@@ -240,11 +276,49 @@ func (s *Service) prepareImageWorkspace(
 	if err != nil {
 		return nil, metrics, err
 	}
-	materialized, err := store.Materialize(ctx, image, filepath.Join(ws.ShadowPath, "Library"))
+	materializer := s.selectedLibraryMaterializer()
+	metrics.Materializer = materializer.ID()
+	verification, err := store.Verify(ctx, image)
+	updateImageVerificationMetrics(metrics, store.VerificationMetrics())
 	if err != nil {
 		_ = ws.Cleanup()
-		return nil, metrics, err
+		return nil, metrics, fmt.Errorf("verify Library image before materialization: %w", err)
 	}
+	if verification.Status != libraryimage.StatusValid {
+		_ = ws.Cleanup()
+		return nil, metrics, fmt.Errorf(
+			"verify Library image before materialization: %s",
+			verification.Reason,
+		)
+	}
+
+	materialized, err := materializer.Materialize(ctx, librarymaterializer.Request{
+		SourcePath:      image.LibraryPath,
+		DestinationPath: filepath.Join(ws.ShadowPath, "Library"),
+	})
+	if materialized != nil {
+		metrics.LibraryMaterializeMs = materialized.Duration.Milliseconds()
+	}
+	if err != nil {
+		_ = ws.Cleanup()
+		return nil, metrics, fmt.Errorf("materialize Library: %w", err)
+	}
+	workspaceVerifyStarted := time.Now()
+	if materialized.MaterializerID != materializer.ID() ||
+		materialized.FileCount != image.Metadata.FileCount ||
+		materialized.LogicalBytes != image.Metadata.LogicalBytes {
+		metrics.WorkspaceVerifyMs = time.Since(workspaceVerifyStarted).Milliseconds()
+		_ = ws.Cleanup()
+		return nil, metrics, fmt.Errorf(
+			"verify materialized Library: materializer=%q files=%d/%d bytes=%d/%d",
+			materialized.MaterializerID,
+			materialized.FileCount,
+			image.Metadata.FileCount,
+			materialized.LogicalBytes,
+			image.Metadata.LogicalBytes,
+		)
+	}
+	metrics.WorkspaceVerifyMs = time.Since(workspaceVerifyStarted).Milliseconds()
 	metrics.WorkspacePreparationMs = time.Since(preparationStarted).Milliseconds()
 	metrics.FileCopyMs = (ws.Metrics.AssetsCopy + ws.Metrics.ProjectSettingsCopy + ws.Metrics.PackagesCopy).Milliseconds()
 	metrics.LibraryMaterializationMs = materialized.Duration.Milliseconds()

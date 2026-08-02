@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Kubonsang/testplay-runner/internal/atomicfile"
@@ -50,15 +51,18 @@ type Resolution struct {
 	Reason string
 }
 
-type MaterializedLibrary struct {
-	Path         string
-	Duration     time.Duration
-	LogicalBytes int64
-}
-
 type ImageSource struct {
 	LibraryPath string
 	Release     func()
+}
+
+// VerificationMetrics reports cumulative Store verification work. Callers can
+// take snapshots before and after a lifecycle operation to attribute phases
+// without weakening or repeating integrity checks.
+type VerificationMetrics struct {
+	MetadataVerify time.Duration
+	FullHash       time.Duration
+	FullHashCount  int64
 }
 
 type Store struct {
@@ -66,6 +70,8 @@ type Store struct {
 	now          func() time.Time
 	pid          int
 	processAlive func(int) bool
+	metricsMu    sync.Mutex
+	metrics      VerificationMetrics
 }
 
 func NewStore(projectPath string) *Store {
@@ -85,6 +91,25 @@ func NewStoreAt(root string) *Store {
 
 func (s *Store) Root() string {
 	return s.root
+}
+
+func (s *Store) VerificationMetrics() VerificationMetrics {
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+	return s.metrics
+}
+
+func (s *Store) recordMetadataVerify(duration time.Duration) {
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+	s.metrics.MetadataVerify += duration
+}
+
+func (s *Store) recordFullHash(duration time.Duration) {
+	s.metricsMu.Lock()
+	defer s.metricsMu.Unlock()
+	s.metrics.FullHash += duration
+	s.metrics.FullHashCount++
 }
 
 // Clear removes all images only when no image creation lock is present.
@@ -230,7 +255,9 @@ func (s *Store) createLocked(ctx context.Context, key Key, sourceLibrary string)
 	if err := shadow.CopyDirParallel(ctx, sourceLibrary, libraryPath, 0); err != nil {
 		return nil, fmt.Errorf("create library image: copy Library: %w", err)
 	}
+	hashStarted := time.Now()
 	digest, fileCount, logicalBytes, err := hashTree(libraryPath)
+	s.recordFullHash(time.Since(hashStarted))
 	if err != nil {
 		return nil, fmt.Errorf("create library image: verify staged Library: %w", err)
 	}
@@ -270,29 +297,14 @@ func (s *Store) createLocked(ctx context.Context, key Key, sourceLibrary string)
 	return stagedImage, nil
 }
 
-// Materialize physically copies an image into a writable workspace Library.
-// No hardlinks are used, so Unity writes cannot mutate the base image.
-func (s *Store) Materialize(ctx context.Context, image *Image, destination string) (MaterializedLibrary, error) {
-	verification, err := s.Verify(ctx, image)
-	if err != nil {
-		return MaterializedLibrary{}, err
-	}
-	if verification.Status != StatusValid {
-		return MaterializedLibrary{}, fmt.Errorf("materialize library image: %s", verification.Reason)
-	}
-
-	started := s.now()
-	if err := shadow.CopyDirParallel(ctx, image.LibraryPath, destination, 0); err != nil {
-		return MaterializedLibrary{}, fmt.Errorf("materialize library image: %w", err)
-	}
-	return MaterializedLibrary{
-		Path:         destination,
-		Duration:     s.now().Sub(started),
-		LogicalBytes: image.Metadata.LogicalBytes,
-	}, nil
-}
-
 func (s *Store) verifyPath(ctx context.Context, path string, key Key) (*Image, string, error) {
+	metadataStarted := time.Now()
+	metadataRecorded := false
+	defer func() {
+		if !metadataRecorded {
+			s.recordMetadataVerify(time.Since(metadataStarted))
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return nil, "", err
 	}
@@ -320,7 +332,11 @@ func (s *Store) verifyPath(ctx context.Context, path string, key Key) (*Image, s
 		return nil, "metadata key does not match requested key", nil
 	}
 	libraryPath := filepath.Join(path, "Library")
+	s.recordMetadataVerify(time.Since(metadataStarted))
+	metadataRecorded = true
+	hashStarted := time.Now()
 	digest, fileCount, logicalBytes, err := hashTree(libraryPath)
+	s.recordFullHash(time.Since(hashStarted))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, "Library directory is missing", nil
