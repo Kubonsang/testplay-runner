@@ -145,17 +145,18 @@ func (s *Server) handle(ctx context.Context, request Request) (Response, bool) {
 
 func (s *Server) hello(request Request) Response {
 	elevated := s.elevated
-	return Response{SchemaVersion: SchemaVersion, RequestID: request.RequestID, OK: true, HelperVersion: HelperVersion, Platform: s.backend.Platform(), Elevated: &elevated}
+	requiresElevation := s.backend.RequiresElevation()
+	return Response{SchemaVersion: SchemaVersion, RequestID: request.RequestID, OK: true, HelperVersion: HelperVersion, Platform: s.backend.Platform(), Provider: s.backend.Provider(), Elevated: &elevated, RequiresElevation: &requiresElevation}
 }
 
 func (s *Server) acquire(ctx context.Context, request Request) Response {
-	if s.backend.Platform() != "windows" {
-		return responseError(request.RequestID, helperError(CodeUnsupportedPlatform, "acquire", "", nil))
+	if !s.backend.Supported() {
+		return responseError(request.RequestID, helperError(CodeUnsupportedPlatform, "acquire", s.backend.Platform(), nil))
 	}
-	if s.elevationErr != nil {
+	if s.backend.RequiresElevation() && s.elevationErr != nil {
 		return responseError(request.RequestID, helperError(CodeNotElevated, "check-administrator", "", s.elevationErr))
 	}
-	if !s.elevated {
+	if s.backend.RequiresElevation() && !s.elevated {
 		return responseError(request.RequestID, helperError(CodeNotElevated, "acquire", "", fmt.Errorf("launch the helper from an elevated caller")))
 	}
 	if s.active != nil {
@@ -170,7 +171,7 @@ func (s *Server) acquire(ctx context.Context, request Request) Response {
 		}
 		return responseError(request.RequestID, helperError(CodeLeaseConflict, "acquire", s.active.lease.LeaseID, fmt.Errorf("one lease per helper process")))
 	}
-	paths, err := validateAcquirePaths(request)
+	paths, err := validateAcquirePaths(request, s.backend.Platform())
 	if err != nil {
 		return responseError(request.RequestID, err)
 	}
@@ -191,7 +192,7 @@ func (s *Server) acquire(ctx context.Context, request Request) Response {
 	request.ChildPath = paths.ChildPath
 	request.MountPath = paths.MountPath
 	now := time.Now().UTC()
-	lease := WorkspaceLease{LeaseID: leaseID, Provider: vhdxstorage.Provider, RequestID: request.RequestID, ParentPath: paths.ParentPath, ChildPath: paths.ChildPath, MountPath: paths.MountPath, State: StateRequested, CreatedAt: now}
+	lease := WorkspaceLease{LeaseID: leaseID, Provider: s.backend.Provider(), RequestID: request.RequestID, ParentPath: paths.ParentPath, ChildPath: paths.ChildPath, MountPath: paths.MountPath, State: StateRequested, CreatedAt: now}
 	journal := Journal{SchemaVersion: SchemaVersion, LeaseID: leaseID, RequestID: request.RequestID, State: StateRequested, HelperPID: os.Getpid(), ParentPath: paths.ParentPath, ChildPath: paths.ChildPath, MountPath: paths.MountPath, DeleteChildOnRelease: request.DeleteChildOnRelease, CreatedAt: now, UpdatedAt: now}
 	if err := s.journals.Write(paths.StoreRoot, journal); err != nil {
 		return responseError(request.RequestID, err)

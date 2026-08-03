@@ -1,5 +1,5 @@
-// testplay-storage-helper is an on-demand child process. It is not a Windows
-// service and is not connected to the public testplay CLI.
+// testplay-storage-helper is an on-demand child process. It uses the native
+// platform CoW provider and is not connected to the public testplay CLI.
 package main
 
 import (

@@ -629,6 +629,9 @@ type windowsBackend struct{}
 
 func NewBackend() Backend                                           { return windowsBackend{} }
 func (windowsBackend) Platform() string                             { return "windows" }
+func (windowsBackend) Provider() string                             { return Provider }
+func (windowsBackend) Supported() bool                              { return true }
+func (windowsBackend) RequiresElevation() bool                      { return true }
 func (windowsBackend) IsElevated(ctx context.Context) (bool, error) { return IsElevated(ctx) }
 
 func (windowsBackend) Acquire(ctx context.Context, request AcquireRequest, progress ProgressFunc) (Lease, Metrics, error) {

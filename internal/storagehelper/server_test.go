@@ -32,6 +32,9 @@ func (f *fakeBackend) Platform() string {
 	}
 	return f.platform
 }
+func (f *fakeBackend) Provider() string                         { return vhdxstorage.Provider }
+func (f *fakeBackend) Supported() bool                          { return f.Platform() != "unsupported" }
+func (f *fakeBackend) RequiresElevation() bool                  { return f.Platform() == "windows" }
 func (f *fakeBackend) IsElevated(context.Context) (bool, error) { return f.elevated, nil }
 func (f *fakeBackend) Acquire(_ context.Context, request vhdxstorage.AcquireRequest, progress vhdxstorage.ProgressFunc) (vhdxstorage.Lease, vhdxstorage.Metrics, error) {
 	f.mu.Lock()
@@ -142,7 +145,7 @@ func TestHello(t *testing.T) {
 	if err != nil || stderr != "" || len(responses) != 1 {
 		t.Fatalf("responses=%#v stderr=%q err=%v", responses, stderr, err)
 	}
-	if !responses[0].OK || responses[0].Platform != "windows" || responses[0].Elevated == nil || !*responses[0].Elevated {
+	if !responses[0].OK || responses[0].HelperVersion != HelperVersion || responses[0].Platform != "windows" || responses[0].Provider != vhdxstorage.Provider || responses[0].Elevated == nil || !*responses[0].Elevated || responses[0].RequiresElevation == nil || !*responses[0].RequiresElevation {
 		t.Fatalf("response=%#v", responses[0])
 	}
 }
@@ -255,7 +258,7 @@ func TestPathValidationRejectsChildAndMountCollisions(t *testing.T) {
 	if err := os.WriteFile(p.child, []byte("existing"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := validateAcquirePaths(acquireRequest("req", p))
+	_, err := validateAcquirePaths(acquireRequest("req", p), "windows")
 	if errorCode(err) != CodeChildExists {
 		t.Fatalf("err=%v", err)
 	}
@@ -268,7 +271,7 @@ func TestPathValidationRejectsChildAndMountCollisions(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(p.mount, "owned.txt"), []byte("x"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	_, err = validateAcquirePaths(acquireRequest("req", p))
+	_, err = validateAcquirePaths(acquireRequest("req", p), "windows")
 	if errorCode(err) != CodeMountPathNotEmpty {
 		t.Fatalf("err=%v", err)
 	}
@@ -330,13 +333,13 @@ func TestPathValidationRejectsRootEscape(t *testing.T) {
 	p := makeTestPaths(t)
 	request := acquireRequest("req", p)
 	request.ChildPath = filepath.Join(filepath.Dir(p.store), "outside.vhdx")
-	_, err := validateAcquirePaths(request)
+	_, err := validateAcquirePaths(request, "windows")
 	if errorCode(err) != CodeInvalidChildPath {
 		t.Fatalf("err=%v", err)
 	}
 	request = acquireRequest("req", p)
 	request.MountPath = filepath.Join(filepath.Dir(p.workspace), "outside-mount")
-	_, err = validateAcquirePaths(request)
+	_, err = validateAcquirePaths(request, "windows")
 	if errorCode(err) != CodeInvalidMountPath {
 		t.Fatalf("err=%v", err)
 	}

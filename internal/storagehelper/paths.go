@@ -10,7 +10,7 @@ import (
 
 type validatedPaths struct{ StoreRoot, WorkspaceRoot, ParentPath, ChildPath, MountPath string }
 
-func validateAcquirePaths(request Request) (validatedPaths, error) {
+func validateAcquirePaths(request Request, platform string) (validatedPaths, error) {
 	store, err := validateRoot(request.StoreRoot, CodeInvalidStoreRoot)
 	if err != nil {
 		return validatedPaths{}, err
@@ -34,11 +34,13 @@ func validateAcquirePaths(request Request) (validatedPaths, error) {
 	if samePath(parent, child) {
 		return validatedPaths{}, helperError(CodeInvalidChildPath, "validate-child", child, fmt.Errorf("parent and child paths must differ"))
 	}
-	if !strings.EqualFold(filepath.Ext(parent), ".vhdx") {
-		return validatedPaths{}, helperError(CodeInvalidParentPath, "validate-parent", parent, fmt.Errorf("parent must use the .vhdx extension"))
-	}
-	if !strings.EqualFold(filepath.Ext(child), ".vhdx") {
-		return validatedPaths{}, helperError(CodeInvalidChildPath, "validate-child", child, fmt.Errorf("child must use the .vhdx extension"))
+	if platform == "windows" {
+		if !strings.EqualFold(filepath.Ext(parent), ".vhdx") {
+			return validatedPaths{}, helperError(CodeInvalidParentPath, "validate-parent", parent, fmt.Errorf("parent must use the .vhdx extension"))
+		}
+		if !strings.EqualFold(filepath.Ext(child), ".vhdx") {
+			return validatedPaths{}, helperError(CodeInvalidChildPath, "validate-child", child, fmt.Errorf("child must use the .vhdx extension"))
+		}
 	}
 	if !pathWithinOrEqual(store, child, false) {
 		return validatedPaths{}, helperError(CodeInvalidChildPath, "validate-child-root", child, fmt.Errorf("child must be below storeRoot"))
@@ -59,15 +61,22 @@ func validateAcquirePaths(request Request) (validatedPaths, error) {
 	if err != nil {
 		return validatedPaths{}, helperError(CodeParentInvalid, "stat-parent", parent, err)
 	}
-	if !parentInfo.Mode().IsRegular() || parentInfo.Mode()&os.ModeSymlink != 0 {
-		return validatedPaths{}, helperError(CodeParentInvalid, "validate-parent", parent, fmt.Errorf("parent must be a regular non-link file"))
+	if platform == "windows" {
+		if !parentInfo.Mode().IsRegular() || parentInfo.Mode()&os.ModeSymlink != 0 {
+			return validatedPaths{}, helperError(CodeParentInvalid, "validate-parent", parent, fmt.Errorf("parent must be a regular non-link file"))
+		}
+	} else if !parentInfo.IsDir() || parentInfo.Mode()&os.ModeSymlink != 0 {
+		return validatedPaths{}, helperError(CodeParentInvalid, "validate-parent", parent, fmt.Errorf("parent must be a real directory"))
 	}
-	resolvedParentDir, err := filepath.EvalSymlinks(filepath.Dir(parent))
+	resolvedParent, err := filepath.EvalSymlinks(parent)
 	if err != nil {
-		return validatedPaths{}, helperError(CodeInvalidParentPath, "resolve-parent-directory", parent, err)
+		return validatedPaths{}, helperError(CodeInvalidParentPath, "resolve-parent", parent, err)
 	}
-	if !samePath(filepath.Dir(parent), resolvedParentDir) {
-		return validatedPaths{}, helperError(CodeInvalidParentPath, "validate-parent-directory", parent, fmt.Errorf("parent path traverses a symlink or reparse point"))
+	if !samePath(parent, resolvedParent) {
+		return validatedPaths{}, helperError(CodeInvalidParentPath, "validate-parent", parent, fmt.Errorf("parent path traverses a symlink or reparse point"))
+	}
+	if platform != "windows" && pathWithinOrEqual(parent, child, true) {
+		return validatedPaths{}, helperError(CodeInvalidChildPath, "validate-child", child, fmt.Errorf("child must not be inside parent"))
 	}
 	if _, err := os.Lstat(child); err == nil {
 		return validatedPaths{}, helperError(CodeChildExists, "stat-child", child, nil)

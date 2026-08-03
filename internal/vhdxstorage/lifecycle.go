@@ -1,5 +1,6 @@
-// Package vhdxstorage owns the reusable Windows Differencing VHDX lifecycle.
-// It deliberately contains no Unity, image-store, or public CLI integration.
+// Package vhdxstorage owns the storage-helper workspace lifecycle. The package
+// name is retained for compatibility with the original Windows VHDX probe;
+// platform backends may use a different native copy-on-write primitive.
 package vhdxstorage
 
 import (
@@ -7,7 +8,12 @@ import (
 	"fmt"
 )
 
-const Provider = "vhdx-differencing"
+const (
+	// Provider is retained for callers that name the original Windows backend.
+	Provider        = "vhdx-differencing"
+	ProviderAPFS    = "apfs-clonefile"
+	ProviderReflink = "linux-reflink"
+)
 
 const (
 	CodeUnsupportedPlatform          = "unsupported-platform"
@@ -29,6 +35,9 @@ const (
 	CodeCancelled                    = "cancelled"
 	CodeVirtDiskAPIUnavailable       = "virt-disk-api-unavailable"
 	CodeUnsafePhysicalDisk           = "unsafe-physical-disk"
+	CodeCoWUnavailable               = "cow-unavailable"
+	CodeUnsafeSource                 = "unsafe-source"
+	CodeMountOwnershipLost           = "mount-ownership-lost"
 )
 
 const (
@@ -139,6 +148,9 @@ type Lease interface {
 
 type Backend interface {
 	Platform() string
+	Provider() string
+	Supported() bool
+	RequiresElevation() bool
 	IsElevated(context.Context) (bool, error)
 	Acquire(context.Context, AcquireRequest, ProgressFunc) (Lease, Metrics, error)
 }
