@@ -38,6 +38,7 @@ const (
 	CodeCoWUnavailable               = "cow-unavailable"
 	CodeUnsafeSource                 = "unsafe-source"
 	CodeMountOwnershipLost           = "mount-ownership-lost"
+	CodeChildOwnershipLost           = "child-ownership-lost"
 )
 
 const (
@@ -104,6 +105,10 @@ type AcquireRequest struct {
 	ParentPath string
 	ChildPath  string
 	MountPath  string
+	// StoreRoot and LeaseID are internal ownership inputs. They are not part of
+	// the public storage-helper request schema.
+	StoreRoot string
+	LeaseID   string
 }
 
 type LeaseInfo struct {

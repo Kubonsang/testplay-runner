@@ -200,7 +200,13 @@ func (s *Server) acquire(ctx context.Context, request Request) Response {
 	active := &activeLease{request: request, lease: lease, journal: journal}
 	s.active = active
 	progress := func(value vhdxstorage.Progress) error { return s.transition(paths.StoreRoot, active, value) }
-	backendLease, metrics, err := s.backend.Acquire(ctx, vhdxstorage.AcquireRequest{ParentPath: paths.ParentPath, ChildPath: paths.ChildPath, MountPath: paths.MountPath}, progress)
+	backendLease, metrics, err := s.backend.Acquire(ctx, vhdxstorage.AcquireRequest{
+		ParentPath: paths.ParentPath,
+		ChildPath:  paths.ChildPath,
+		MountPath:  paths.MountPath,
+		StoreRoot:  paths.StoreRoot,
+		LeaseID:    leaseID,
+	}, progress)
 	if err != nil {
 		active.lease.State = StateQuarantined
 		active.journal.State = StateQuarantined

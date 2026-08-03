@@ -24,6 +24,7 @@ type fakeBackend struct {
 	acquires, releases     int
 	acquireErr, releaseErr error
 	last                   *fakeLease
+	lastRequest            vhdxstorage.AcquireRequest
 }
 
 func (f *fakeBackend) Platform() string {
@@ -39,6 +40,7 @@ func (f *fakeBackend) IsElevated(context.Context) (bool, error) { return f.eleva
 func (f *fakeBackend) Acquire(_ context.Context, request vhdxstorage.AcquireRequest, progress vhdxstorage.ProgressFunc) (vhdxstorage.Lease, vhdxstorage.Metrics, error) {
 	f.mu.Lock()
 	f.acquires++
+	f.lastRequest = request
 	f.mu.Unlock()
 	if f.acquireErr != nil {
 		return nil, vhdxstorage.Metrics{}, f.acquireErr
@@ -171,6 +173,9 @@ func TestAcquireReleaseAndDuplicate(t *testing.T) {
 	}
 	if backend.acquires != 1 || backend.releases != 1 {
 		t.Fatalf("acquires=%d releases=%d", backend.acquires, backend.releases)
+	}
+	if backend.lastRequest.StoreRoot != p.store || backend.lastRequest.LeaseID != "lease-test" {
+		t.Fatalf("backend ownership inputs=%#v", backend.lastRequest)
 	}
 	data, err := os.ReadFile(journalPath(p.store, "lease-test"))
 	if err != nil {
