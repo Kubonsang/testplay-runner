@@ -99,7 +99,7 @@ func TestUnixBackendRefusesReplacedChild(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(paths.parent, "payload.bin"), []byte("payload"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	lease, _ := acquireUnixLease(t, NewBackend(), paths)
+	lease, _ := acquireUnixLease(t, newTestUnixBackend(), paths)
 	originalIdentity := lease.(*unixLease).ownership.identity
 	if err := os.RemoveAll(paths.child); err != nil {
 		t.Fatal(err)
@@ -175,7 +175,7 @@ func TestUnixBackendRefusesMissingOrTamperedOwnershipMarker(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(paths.parent, "payload.bin"), []byte("payload"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			genericLease, _ := acquireUnixLease(t, NewBackend(), paths)
+			genericLease, _ := acquireUnixLease(t, newTestUnixBackend(), paths)
 			lease := genericLease.(*unixLease)
 			test.mutate(t, paths, lease)
 			_, err := lease.Release(context.Background(), true, nil)
@@ -208,7 +208,7 @@ func TestUnixBackendAcquireFailureUsesOwnedQuarantineCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	progressErr := errors.New("injected mount transition failure")
-	_, _, err := NewBackend().Acquire(context.Background(), paths.request(), func(progress Progress) error {
+	_, _, err := newTestUnixBackend().Acquire(context.Background(), paths.request(), func(progress Progress) error {
 		if progress.State == StateMounting {
 			return progressErr
 		}
@@ -273,7 +273,7 @@ func TestUnixBackendQuarantineCollisionDoesNotOverwrite(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(paths.parent, "payload.bin"), []byte("payload"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	genericLease, _ := acquireUnixLease(t, NewBackend(), paths)
+	genericLease, _ := acquireUnixLease(t, newTestUnixBackend(), paths)
 	lease := genericLease.(*unixLease)
 	collision := filepath.Join(filepath.Dir(paths.child), quarantineNamePrefix+"collision")
 	if err := os.Mkdir(collision, 0700); err != nil {
@@ -299,7 +299,7 @@ func TestUnixBackendDoesNotDeleteQuarantineReplacement(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(paths.parent, "payload.bin"), []byte("payload"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	genericLease, _ := acquireUnixLease(t, NewBackend(), paths)
+	genericLease, _ := acquireUnixLease(t, newTestUnixBackend(), paths)
 	lease := genericLease.(*unixLease)
 	quarantine := filepath.Join(filepath.Dir(paths.child), quarantineNamePrefix+"post-rename-race")
 	preservedOwnedChild := filepath.Join(paths.root, "preserved-owned-child")
@@ -334,7 +334,7 @@ func TestUnixBackendRestoresOwnedChildWhenQuarantineMarkerChanges(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(paths.parent, "payload.bin"), []byte("payload"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	genericLease, _ := acquireUnixLease(t, NewBackend(), paths)
+	genericLease, _ := acquireUnixLease(t, newTestUnixBackend(), paths)
 	lease := genericLease.(*unixLease)
 	quarantine := filepath.Join(filepath.Dir(paths.child), quarantineNamePrefix+"marker-race")
 	lease.removeHooks.quarantinePath = func(string) (string, error) { return quarantine, nil }
@@ -360,7 +360,7 @@ func TestUnixBackendChildSymlinkCannotEscapeRemovalRoot(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(paths.parent, "payload.bin"), []byte("payload"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	genericLease, _ := acquireUnixLease(t, NewBackend(), paths)
+	genericLease, _ := acquireUnixLease(t, newTestUnixBackend(), paths)
 	external := filepath.Join(paths.root, "external")
 	if err := os.Mkdir(external, 0700); err != nil {
 		t.Fatal(err)
@@ -431,6 +431,38 @@ func acquireUnixLease(t *testing.T, backend Backend, paths unixLifecyclePaths) (
 		t.Fatal(err)
 	}
 	return lease, metrics
+}
+
+func newTestUnixBackend() Backend {
+	return unixBackend{clone: cloneTreeForOwnershipTest}
+}
+
+func cloneTreeForOwnershipTest(_ context.Context, source, destination string) error {
+	return filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		target := destination
+		if relative != "." {
+			target = filepath.Join(destination, relative)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return os.Mkdir(target, info.Mode().Perm())
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode().Perm())
+	})
 }
 
 func writeMarkerForTest(t *testing.T, childPath string, marker ownershipMarker) {
