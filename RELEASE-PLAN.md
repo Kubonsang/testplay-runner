@@ -8,7 +8,7 @@
 
 ---
 
-## 🧪 미릴리스 main — 플랫폼 네이티브 CoW Storage Helper
+## 🧪 미릴리스 개발 — 플랫폼 네이티브 CoW Storage Helper
 
 - 동일 schema 1 NDJSON `hello`/`acquire`/`release`/`shutdown` 계약
 - Windows: 관리자 권한이 필요한 Differencing VHDX
@@ -16,12 +16,21 @@
 - Linux: GNU `cp --reflink=always` 기반 디렉터리 Child, 관리자 권한 불필요
 - macOS/Linux는 CoW 미지원 파일시스템에서 물리 복사로 폴백하지 않고
   `cow-unavailable`로 실패
+- Unix Child는 Lease token, `.testplay-storage-owner` marker, device/inode를
+  검증하고 동일 filesystem의 덮어쓰기 없는 quarantine 경로로 옮긴 뒤
+  재검증해야만 삭제한다. 이 절차가 모든 적대적 TOCTOU 경쟁을 완전히
+  제거한다고 주장하지 않는다.
+- 기존의 빈 Mount 디렉터리는 기록한 permission bit로 빈 디렉터리를 새로
+  생성한다. 원래 inode, owner/group, ACL, extended attribute, filesystem
+  flag, 생성 시각 또는 정확한 timestamp 복원을 보장하지 않는다.
 - **현재 경계:** storage helper와 자동 테스트까지만 구현. 공개 `testplay`
   CLI, Image backend, 기본 backend에는 아직 연결하지 않았으므로 v0.11.0
   릴리스 계약이나 버전 번호를 바꾸지 않는다.
-- **검증 상태:** macOS 26.5.1 arm64 APFS 실제 Acquire/격리/Release PASS;
-  Linux/Windows helper 교차 컴파일 PASS. Linux 실제 reflink 파일시스템과
-  Unity Library 호환성은 아직 별도 하드웨어 게이트가 필요하다.
+- **검증 상태:** macOS arm64 APFS 한 로컬 환경에서 실제
+  Acquire/격리/Release PASS. Linux reflink 구현은 완료했지만 실제
+  reflink filesystem 검증은 아직 실행하지 않았다. Linux/Windows helper
+  교차 컴파일 PASS. macOS/Linux Unity Library 호환성과 강제 종료 복구는
+  아직 검증하지 않았으며 Production readiness도 아직 아니다.
 
 ---
 

@@ -5,6 +5,9 @@ This document covers the Windows provider. The same
 to APFS clonefile on macOS and reflink on Linux; see
 [`unix-cow-storage-helper.md`](unix-cow-storage-helper.md). The providers share
 the process protocol and journal but not the storage implementation.
+Unix directory Children additionally use a lease marker, random token,
+device/inode identity, and a no-replace quarantine rename before recursive
+deletion. Those Unix safeguards do not change Windows VHDX behavior.
 
 ## Status
 
