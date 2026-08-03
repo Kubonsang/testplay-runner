@@ -44,6 +44,9 @@ jobs:
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "v2.17.0"
-          args: release --clean
+          args: >-
+            release --clean
+            --release-notes docs/28_v0.12.0_release_notes.md
+            --release-footer docs/29_v0.12.0_release_notes.ko.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

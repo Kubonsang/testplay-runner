@@ -15,9 +15,10 @@ Public testplay CLI or Image backend integration: NOT PRESENT
 Production default readiness: NOT YET
 ```
 
-This is an unreleased integration primitive after v0.11.0. It does not add a
-seventh public `testplay` command, change `testplay run`, or change the released
-CLI version. The executable remains `testplay-storage-helper` and accepts the
+This helper is included in v0.12.0 archives as an experimental integration
+primitive. It does not add a seventh public `testplay` command, change
+`testplay run`, or change the production default backend. The executable
+remains `testplay-storage-helper` and accepts the
 same schema-1 NDJSON operations as the Windows Differencing VHDX provider.
 The additive cross-platform implementation reports `helperVersion: "v2"`;
 `schemaVersion` remains 1.
@@ -66,7 +67,7 @@ exclusive marker inside the cloned Unity Library:
 
 The experimental schema-1 marker contains `schemaVersion`, `leaseId`, and
 `ownerToken`, is created with exclusive-create semantics and mode `0600`, and
-is reserved for this unreleased helper contract. A Parent containing the exact
+is reserved for this experimental helper contract. A Parent containing the exact
 reserved marker name is rejected as `unsafe-source` so a clone cannot inherit
 stale ownership evidence.
 

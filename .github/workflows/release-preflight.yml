@@ -6,11 +6,11 @@ on:
       version:
         description: Candidate tag, including the leading v
         required: true
-        default: v0.11.0
+        default: v0.12.0
       previous_tag:
         description: Previous release tag used for changelog calculation
         required: true
-        default: v0.10.0
+        default: v0.11.0
 
 permissions:
   contents: read
@@ -61,23 +61,55 @@ jobs:
           set -euo pipefail
           jq -e '
             ([.[] | select(.type == "Archive") |
-              (.goos + "/" + .goarch + "/" +
+              (.extra.ID + "/" + .goos + "/" + .goarch + "/" +
                 (if (.name | endswith(".zip")) then "zip" else "tar.gz" end))
              ] | sort)
             ==
             [
-              "darwin/amd64/tar.gz",
-              "darwin/arm64/tar.gz",
-              "linux/amd64/tar.gz",
-              "linux/arm64/tar.gz",
-              "windows/amd64/zip"
+              "testplay-storage-helper/darwin/amd64/tar.gz",
+              "testplay-storage-helper/darwin/arm64/tar.gz",
+              "testplay-storage-helper/linux/amd64/tar.gz",
+              "testplay-storage-helper/windows/amd64/zip",
+              "testplay/darwin/amd64/tar.gz",
+              "testplay/darwin/arm64/tar.gz",
+              "testplay/linux/amd64/tar.gz",
+              "testplay/linux/arm64/tar.gz",
+              "testplay/windows/amd64/zip"
             ]
           ' dist/artifacts.json
-          test "$(awk 'NF { n++ } END { print n+0 }' dist/checksums.txt)" -eq 5
+          test "$(awk 'NF { n++ } END { print n+0 }' dist/checksums.txt)" -eq 9
           diff -u \
             <(jq -r '.[] | select(.type == "Archive") | .name' dist/artifacts.json | sort) \
             <(awk '{print $2}' dist/checksums.txt | sort)
           (cd dist && sha256sum --check checksums.txt)
+
+          for target in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64; do
+            archive="$(find dist -maxdepth 1 -name "testplay_*_${target}.tar.gz" -print -quit)"
+            test -n "$archive"
+            listing="$(tar -tzf "$archive")"
+            grep -qx 'testplay' <<<"$listing"
+            if grep -qx 'testplay-storage-helper' <<<"$listing"; then
+              echo "unexpected helper in CLI $target archive" >&2
+              exit 1
+            fi
+          done
+
+          cli_windows_archive="$(find dist -maxdepth 1 -name 'testplay_*_windows_amd64.zip' -print -quit)"
+          test -n "$cli_windows_archive"
+          cli_windows_listing="$(unzip -Z1 "$cli_windows_archive")"
+          grep -qx 'testplay.exe' <<<"$cli_windows_listing"
+
+          for target in darwin_amd64 darwin_arm64 linux_amd64; do
+            archive="$(find dist -maxdepth 1 -name "testplay-storage-helper_*_${target}.tar.gz" -print -quit)"
+            test -n "$archive"
+            listing="$(tar -tzf "$archive")"
+            grep -qx 'testplay-storage-helper' <<<"$listing"
+          done
+
+          helper_windows_archive="$(find dist -maxdepth 1 -name 'testplay-storage-helper_*_windows_amd64.zip' -print -quit)"
+          test -n "$helper_windows_archive"
+          helper_windows_listing="$(unzip -Z1 "$helper_windows_archive")"
+          grep -qx 'testplay-storage-helper.exe' <<<"$helper_windows_listing"
 
       - name: Execute Linux candidate
         shell: bash
@@ -86,8 +118,10 @@ jobs:
         run: |
           set -euo pipefail
           archive="$(find dist -maxdepth 1 -name 'testplay_*_linux_amd64.tar.gz' -print -quit)"
+          helper_archive="$(find dist -maxdepth 1 -name 'testplay-storage-helper_*_linux_amd64.tar.gz' -print -quit)"
           mkdir extracted-linux
           tar -xzf "$archive" -C extracted-linux
+          tar -xzf "$helper_archive" -C extracted-linux
           ./extracted-linux/testplay version | jq -e \
             --arg prefix "${RELEASE_VERSION}-SNAPSHOT-" '
             .schema_version == "1"
@@ -95,6 +129,16 @@ jobs:
             and (.commit | length > 0)
             and (.date | length > 0)
           '
+          printf '%s\n' \
+            '{"schemaVersion":1,"operation":"hello","requestId":"release-smoke"}' |
+            ./extracted-linux/testplay-storage-helper | jq -e '
+              .schemaVersion == 1
+              and .requestId == "release-smoke"
+              and .ok == true
+              and .helperVersion == "v2"
+              and .provider == "linux-reflink"
+              and .requiresElevation == false
+            '
 
       - uses: actions/upload-artifact@v4
         with:
@@ -122,12 +166,16 @@ jobs:
           set -euo pipefail
           for arch in amd64 arm64; do
             archive="$(find dist -maxdepth 1 -name "testplay_*_darwin_${arch}.tar.gz" -print -quit)"
+            helper_archive="$(find dist -maxdepth 1 -name "testplay-storage-helper_*_darwin_${arch}.tar.gz" -print -quit)"
             out="$RUNNER_TEMP/darwin-$arch"
             mkdir -p "$out"
             tar -xzf "$archive" -C "$out"
-            count="$(otool -l "$out/testplay" |
-              awk '$1 == "cmd" && $2 == "LC_UUID" { n++ } END { print n+0 }')"
-            test "$count" -eq 1
+            tar -xzf "$helper_archive" -C "$out"
+            for binary in testplay testplay-storage-helper; do
+              count="$(otool -l "$out/$binary" |
+                awk '$1 == "cmd" && $2 == "LC_UUID" { n++ } END { print n+0 }')"
+              test "$count" -eq 1
+            done
           done
           chmod +x "$RUNNER_TEMP/darwin-arm64/testplay"
           "$RUNNER_TEMP/darwin-arm64/testplay" version | jq -e \
@@ -137,3 +185,14 @@ jobs:
             and (.commit | length > 0)
             and (.date | length > 0)
           '
+          chmod +x "$RUNNER_TEMP/darwin-arm64/testplay-storage-helper"
+          printf '%s\n' \
+            '{"schemaVersion":1,"operation":"hello","requestId":"release-smoke"}' |
+            "$RUNNER_TEMP/darwin-arm64/testplay-storage-helper" | jq -e '
+              .schemaVersion == 1
+              and .requestId == "release-smoke"
+              and .ok == true
+              and .helperVersion == "v2"
+              and .provider == "apfs-clonefile"
+              and .requiresElevation == false
+            '
