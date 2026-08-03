@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>testplay 시장성 평가 메모 — 2026-07</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --desk: #E9EEE4;
+    --paper: #FBFCF8;
+    --paper-2: #F4F7F0;
+    --bar: rgba(29,107,76,0.075);
+    --ink: #20241F;
+    --fade: #5F6A5E;
+    --hair: #D6DDD2;
+    --grid: #DCE3D8;
+    --ledger: #1D6B4C;
+    --stamp: #C63B2F;
+    --mustard: #8F6400;
+    --carbon: #2456A6;
+    /* chart series — validated vs #FAFBF7 light surface */
+    --s-cur: #2a78d6;    /* 현재 / testplay */
+    --s-pot: #1baf7a;    /* 풀 포텐셜 (sub-3:1 → 모든 막대에 수치 라벨 직접 표기) */
+    --s-ref: #6A7268;    /* 비교군 점 */
+    --disp-latin: "IBM Plex Sans Condensed", "Arial Narrow", Arial, sans-serif;
+    --disp: "IBM Plex Sans Condensed", "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    --body: "IBM Plex Sans KR", -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--desk); color: var(--ink);
+    font-family: var(--body); line-height: 1.7;
+    -webkit-font-smoothing: antialiased; word-break: keep-all;
+  }
+  a { color: var(--ledger); }
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  code, .mono { font-family: var(--mono); }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 0 24px; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* ---------- memo header ---------- */
+  .memo-top { border-top: 3px solid var(--ink); background: var(--paper); border-bottom: 1px solid var(--hair); }
+  .memo-head { padding: 40px 0 30px; position: relative; }
+  .memo-meta {
+    display: grid; grid-template-columns: auto 1fr; gap: 4px 18px;
+    font-family: var(--mono); font-size: 0.74rem; color: var(--fade);
+    border-bottom: 1.5px solid var(--ink); padding-bottom: 16px; margin-bottom: 22px;
+    max-width: 560px;
+  }
+  .memo-meta dt { font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
+  .memo-meta dd { color: var(--ink); }
+  h1 {
+    font-family: var(--disp); font-weight: 700;
+    font-size: clamp(1.6rem, 4.4vw, 2.6rem); line-height: 1.2; letter-spacing: -0.015em;
+    max-width: 760px;
+  }
+  .subtitle { color: var(--fade); margin-top: 12px; max-width: 680px; font-size: 0.94rem; }
+  .memo-stamp {
+    position: absolute; top: 44px; right: 24px; transform: rotate(6deg);
+    border: 3px double var(--stamp); border-radius: 4px; color: var(--stamp);
+    font-family: var(--disp-latin); font-weight: 700; font-size: 1.05rem;
+    letter-spacing: 0.16em; text-transform: uppercase; text-align: center;
+    padding: 6px 16px; background: rgba(198,59,47,0.05); mix-blend-mode: multiply;
+    line-height: 1.2;
+  }
+  .memo-stamp small { display: block; font-family: var(--mono); font-size: 0.52rem; font-weight: 600; letter-spacing: 0.22em; }
+  @media (max-width: 760px) { .memo-stamp { position: static; display: inline-block; margin-bottom: 18px; transform: rotate(-2deg); } }
+
+  /* ---------- stat tiles ---------- */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; padding: 28px 0 40px; }
+  .tile {
+    background: var(--paper); border: 1px solid var(--hair); border-top: 3px solid var(--ink);
+    padding: 16px 18px 14px; box-shadow: 0 6px 14px rgba(32,36,31,0.07);
+  }
+  .tile .label { font-family: var(--mono); font-size: 0.64rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--fade); }
+  .tile .value { font-family: var(--disp-latin); font-size: 2.1rem; font-weight: 700; letter-spacing: -0.01em; margin: 4px 0 2px; }
+  .tile .value small { font-size: 1rem; font-weight: 600; color: var(--fade); }
+  .tile .note { font-size: 0.76rem; color: var(--fade); line-height: 1.55; }
+  .tile.hl { border-top-color: var(--ledger); }
+  .tile.hl .value { color: var(--ledger); }
+
+  /* ---------- sections ---------- */
+  section { padding: 48px 0 10px; }
+  .clause {
+    font-family: var(--mono); font-size: 0.68rem; font-weight: 600; letter-spacing: 0.18em;
+    text-transform: uppercase; color: var(--stamp); margin-bottom: 8px;
+  }
+  .clause.green { color: var(--ledger); }
+  h2 {
+    font-family: var(--disp); font-weight: 700;
+    font-size: clamp(1.25rem, 3vw, 1.7rem); line-height: 1.3; letter-spacing: -0.015em; margin-bottom: 8px;
+  }
+  .lede { color: var(--fade); max-width: 700px; margin-bottom: 24px; font-size: 0.92rem; }
+  .lede strong { color: var(--ink); }
+
+  /* ---------- chart sheet ---------- */
+  .chart {
+    background: var(--paper); border: 1px solid var(--hair);
+    box-shadow: 0 8px 18px rgba(32,36,31,0.08);
+    padding: 20px 22px 16px; margin-bottom: 16px;
+  }
+  .chart .c-title { font-weight: 700; font-size: 0.95rem; }
+  .chart .c-sub { font-family: var(--mono); font-size: 0.68rem; color: var(--fade); margin-bottom: 18px; letter-spacing: 0.02em; }
+  .legend { display: flex; gap: 18px; margin-bottom: 16px; flex-wrap: wrap; }
+  .legend .chip { display: inline-flex; align-items: center; gap: 7px; font-size: 0.76rem; color: var(--fade); }
+  .legend .sw { width: 12px; height: 12px; border-radius: 3px; }
+
+  /* ---------- landscape (log dot/range) ---------- */
+  .lands { position: relative; }
+  .lands .gridlayer { position: absolute; left: 200px; right: 8px; top: 0; bottom: 26px; pointer-events: none; }
+  .lands .gl { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--grid); }
+  .l-row { display: grid; grid-template-columns: 200px 1fr; align-items: center; min-height: 30px; }
+  .l-row .lbl { font-size: 0.76rem; color: var(--fade); padding-right: 14px; text-align: right; line-height: 1.35; }
+  .l-row .lbl strong { color: var(--ink); font-weight: 700; }
+  .l-row .track { position: relative; height: 30px; margin-right: 8px; }
+  .dot {
+    position: absolute; top: 50%; width: 10px; height: 10px; border-radius: 50%;
+    transform: translate(-50%, -50%); background: var(--s-ref);
+    box-shadow: 0 0 0 2px var(--paper);
+  }
+  .dot.me { background: var(--s-cur); }
+  .dot-val {
+    position: absolute; top: 50%; transform: translateY(-50%);
+    font-family: var(--mono); font-size: 0.7rem; color: var(--fade); white-space: nowrap;
+  }
+  .range { position: absolute; top: 50%; height: 4px; transform: translateY(-50%); background: rgba(42,120,214,0.35); border-radius: 2px; }
+  .range::before, .range::after { content: ""; position: absolute; top: 50%; transform: translateY(-50%); width: 2px; height: 12px; background: var(--s-cur); border-radius: 1px; }
+  .range::before { left: 0; } .range::after { right: 0; }
+  .l-div { border-top: 1px dashed var(--hair); margin: 10px 0 10px 200px; position: relative; }
+  .l-div span {
+    position: absolute; top: -9px; left: 0; background: var(--paper); padding-right: 10px;
+    font-family: var(--mono); font-size: 0.62rem; font-weight: 600; color: var(--fade); letter-spacing: 0.14em;
+  }
+  .l-axis { display: grid; grid-template-columns: 200px 1fr; margin-top: 4px; }
+  .l-axis .ticks { position: relative; height: 22px; margin-right: 8px; border-top: 1px solid #B9C2B4; }
+  .l-axis .tick { position: absolute; top: 4px; transform: translateX(-50%); font-family: var(--mono); font-size: 0.68rem; color: var(--fade); }
+  @media (max-width: 680px) {
+    .l-row, .l-axis { grid-template-columns: 120px 1fr; }
+    .lands .gridlayer { left: 120px; }
+    .l-div { margin-left: 120px; }
+    .l-row .lbl { font-size: 0.68rem; }
+    .dot-val { font-size: 0.63rem; }
+  }
+
+  /* ---------- rubric ---------- */
+  .r-grid { position: relative; }
+  .r-gridlayer { position: absolute; left: 212px; right: 100px; top: 0; bottom: 0; pointer-events: none; }
+  .r-gridlayer .gl { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--grid); }
+  .r-row { display: grid; grid-template-columns: 200px 1fr 88px; align-items: center; gap: 0 12px; padding: 7px 0; border-bottom: 1px solid var(--paper-2); }
+  .r-row:last-of-type { border-bottom: none; }
+  .r-row .lbl { font-size: 0.78rem; color: var(--fade); text-align: right; line-height: 1.35; }
+  .r-bar { height: 11px; border-radius: 0 3px 3px 0; }
+  .r-bar.cur { background: var(--s-cur); margin-bottom: 2px; }
+  .r-bar.pot { background: var(--s-pot); }
+  .r-vals { font-family: var(--mono); font-size: 0.74rem; color: var(--fade); white-space: nowrap; }
+  .r-vals b { color: var(--ink); font-weight: 700; }
+  @media (max-width: 680px) {
+    .r-row { grid-template-columns: 118px 1fr 84px; }
+    .r-gridlayer { left: 130px; right: 96px; }
+    .r-row .lbl { font-size: 0.68rem; }
+  }
+
+  /* ---------- verdict notes ---------- */
+  .verdict {
+    border-left: 3px solid var(--ledger); background: var(--paper);
+    box-shadow: 0 4px 10px rgba(32,36,31,0.06);
+    padding: 16px 20px; margin: 10px 0 16px;
+    font-size: 0.9rem; color: var(--fade);
+  }
+  .verdict strong { color: var(--ink); }
+  .verdict.amber { border-left-color: var(--mustard); }
+
+  /* ---------- comparison table ---------- */
+  .tbl-wrap { overflow-x: auto; border: 1.5px solid var(--ink); background: var(--paper); box-shadow: 0 8px 18px rgba(32,36,31,0.08); margin-bottom: 16px; }
+  .tbl-caption {
+    font-family: var(--mono); font-size: 0.66rem; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--paper); background: var(--ink); padding: 8px 16px;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px;
+  }
+  table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 0.83rem; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--hair); vertical-align: top; }
+  th { background: var(--paper-2); color: var(--fade); font-family: var(--mono); font-size: 0.64rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
+  tr:last-child td { border-bottom: none; }
+  td.stars { font-family: var(--mono); font-weight: 700; text-align: right; }
+  td .proj { font-weight: 700; }
+  td .desc { color: var(--fade); font-size: 0.74rem; }
+  td .lesson { color: var(--fade); font-size: 0.8rem; }
+  td .lesson strong { color: var(--ink); }
+  tr.hl-row td { background: #F6EEC5; }
+  tr.me-row td { background: rgba(42,120,214,0.07); }
+
+  /* ---------- scenario copies ---------- */
+  .scen-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+  .scen {
+    background: var(--paper); border: 1px solid var(--hair);
+    box-shadow: 0 6px 14px rgba(32,36,31,0.07); padding: 0 0 16px;
+  }
+  .scen .s-head {
+    font-family: var(--mono); font-size: 0.62rem; font-weight: 600; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--fade);
+    padding: 8px 16px; border-bottom: 1px dashed var(--hair);
+  }
+  .scen .s-name { font-weight: 700; font-size: 0.94rem; padding: 12px 16px 0; }
+  .scen .s-range { font-family: var(--disp-latin); font-size: 1.5rem; font-weight: 700; padding: 2px 16px 0; }
+  .scen .s-range small { font-size: 0.8rem; color: var(--fade); font-weight: 500; }
+  .scen p { font-size: 0.78rem; color: var(--fade); padding: 6px 16px 0; line-height: 1.6; }
+  .scen.base { border: 1.5px solid var(--ledger); }
+  .scen.base .s-head { color: var(--ledger); border-bottom-color: rgba(29,107,76,0.35); }
+  .scen.base .s-range { color: var(--ledger); }
+
+  /* ---------- levers & risks ---------- */
+  .lever-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 760px) { .lever-grid { grid-template-columns: 1fr; } }
+  .lever-grid h3 { font-family: var(--disp); font-weight: 700; font-size: 0.98rem; margin-bottom: 8px; }
+  ul.plain { list-style: none; }
+  ul.plain li { padding: 10px 0 10px 26px; position: relative; font-size: 0.86rem; color: var(--fade); border-bottom: 1px solid var(--hair); }
+  ul.plain li:last-child { border-bottom: none; }
+  ul.plain li::before { content: "→"; position: absolute; left: 0; color: var(--ledger); font-family: var(--mono); }
+  ul.plain li.risk::before { content: "!"; color: var(--stamp); font-weight: 800; }
+  ul.plain strong { color: var(--ink); }
+
+  footer { padding: 40px 0 60px; color: var(--fade); font-size: 0.76rem; }
+  footer p { margin-bottom: 6px; }
+  footer .sig-rule { border-bottom: 1.5px solid var(--ink); max-width: 260px; margin: 26px 0 4px; }
+  footer .sig-cap { font-family: var(--mono); font-size: 0.6rem; letter-spacing: 0.16em; text-transform: uppercase; }
+</style>
+</head>
+<body>
+
+<div class="memo-top">
+  <div class="wrap memo-head">
+    <div class="memo-stamp">Internal<small>배포 금지 · docs/ 밖 보관</small></div>
+    <dl class="memo-meta">
+      <dt>Memo</dt><dd>TR-ASSESS-2026-07</dd>
+      <dt>Date</dt><dd>2026-07-08</dd>
+      <dt>Re</dt><dd>testplay-runner 시장성 평가</dd>
+      <dt>Data</dt><dd>GitHub REST API 실측 (2026-07-08)</dd>
+    </dl>
+    <h1>testplay-runner, 어디까지 갈 수 있나</h1>
+    <p class="subtitle">유사 프로젝트 실측 데이터 기반 시장성 평가 — 평가 기준 10개, 비교군 9개,
+    시나리오 4개.</p>
+  </div>
+</div>
+
+<div class="wrap tiles">
+  <div class="tile">
+    <div class="label">현재 종합 레이팅</div>
+    <div class="value num">5.1<small> / 10</small></div>
+    <div class="note">제품 축은 8점대, 유통 축은 1점대 — 평균이 5인 이유</div>
+  </div>
+  <div class="tile hl">
+    <div class="label">풀 포텐셜 레이팅</div>
+    <div class="value num">8.3<small> / 10</small></div>
+    <div class="note">v1.0 완결 + 런치 + AI 생태계 접속 시</div>
+  </div>
+  <div class="tile">
+    <div class="label">12개월 스타 중앙값 (전략 실행 시)</div>
+    <div class="value num">~300<small> ★</small></div>
+    <div class="note">6년 현직 1위 unity-test-runner(257★)를 넘는 선</div>
+  </div>
+  <div class="tile">
+    <div class="label">상방 시나리오 (확률 ~30%)</div>
+    <div class="value num">800–2,500<small> ★</small></div>
+    <div class="note">GitHub Action/CI 생태계 편입 + 런치 1회 성공 시</div>
+  </div>
+</div>
+
+<section>
+  <div class="wrap">
+    <p class="clause green">§0 · 한 줄 결론</p>
+    <div class="verdict">
+      <strong>현재의 testplay는 "잘 만들어졌지만 아직 발견되지 않은 도구"다.</strong>
+      비교 데이터가 말하는 것은 명확하다 — "Unity 테스트 자동화" 시장만으로는 6년 현직 1위도
+      257★가 천장이지만, "Unity × AI 에이전트" 물결은 16개월 만에 12,198★를 만들었다.
+      <strong>testplay의 상방은 테스트 도구가 아니라 AI 에이전트 인프라로 포지셔닝될 때 열린다.</strong>
+      제품의 기술적 차별성(warm bridge, honest contract)은 이미 그 포지셔닝을 뒷받침할 수준이다.
+      부족한 것은 유통(발견 가능성·온보딩·생태계 연결)뿐이며, 그것이 현재 5.1과 포텐셜 8.3의 격차 전부다.
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="clause">§1 · 비교군 지형도</p>
+    <h2>스타 지형도 — testplay는 지금 어디에 있고, 어디로 갈 수 있나</h2>
+    <p class="lede">유사 프로젝트 9개의 실측 스타 수(회색)와 testplay의 12개월 시나리오 범위(파란색)를
+    같은 축 위에 놓았다. 축은 로그 스케일 — 스타는 멱법칙을 따르므로 10배 단위로 읽는 것이 옳다.</p>
+
+    <div class="chart">
+      <div class="c-title">GitHub 스타 지형도 (2026-07-08 실측)</div>
+      <div class="c-sub">가로축: 스타 수, 로그 스케일 · 회색 점 = 비교 프로젝트 · 파란 구간 = testplay 시나리오 범위(양끝 = 하한/상한)</div>
+      <div class="legend">
+        <span class="chip"><span class="sw" style="background:var(--s-ref)"></span>비교 프로젝트 (실측)</span>
+        <span class="chip"><span class="sw" style="background:var(--s-cur)"></span>testplay (현재 및 시나리오)</span>
+      </div>
+
+      <div class="lands">
+        <div class="gridlayer">
+          <div class="gl" style="left:0%"></div>
+          <div class="gl" style="left:23.3%"></div>
+          <div class="gl" style="left:46.5%"></div>
+          <div class="gl" style="left:69.8%"></div>
+          <div class="gl" style="left:93.0%"></div>
+        </div>
+
+        <div class="l-row"><div class="lbl"><strong>unity-mcp</strong> · Unity용 MCP 서버 1위</div><div class="track" title="CoplayDev/unity-mcp — 12,198★, 2025-03 시작"><span class="dot" style="left:95.0%"></span><span class="dot-val" style="right:calc(100% - 95.0% + 12px)">12,198</span></div></div>
+        <div class="l-row"><div class="lbl">xcpretty · Xcode 출력 랩퍼</div><div class="track" title="xcpretty/xcpretty — 4,038★, 2013 시작"><span class="dot" style="left:83.9%"></span><span class="dot-val" style="left:calc(83.9% + 12px)">4,038</span></div></div>
+        <div class="l-row"><div class="lbl">gotestsum · go test 랩퍼</div><div class="track" title="gotestyourself/gotestsum — 2,695★, 2018 시작"><span class="dot" style="left:79.8%"></span><span class="dot-val" style="left:calc(79.8% + 12px)">2,695</span></div></div>
+        <div class="l-row"><div class="lbl">mcp-unity · Unity MCP 2위</div><div class="track" title="CoderGamester/mcp-unity — 1,814★, 2025-03 시작"><span class="dot" style="left:75.8%"></span><span class="dot-val" style="left:calc(75.8% + 12px)">1,814</span></div></div>
+        <div class="l-row"><div class="lbl">xcbeautify · xcpretty 후계</div><div class="track" title="cpisciotta/xcbeautify — 1,519★, 2018 시작"><span class="dot" style="left:74.0%"></span><span class="dot-val" style="left:calc(74.0% + 12px)">1,519</span></div></div>
+        <div class="l-row"><div class="lbl">unity-builder · Unity CI 빌드</div><div class="track" title="game-ci/unity-builder — 1,077★, 2019 시작"><span class="dot" style="left:70.5%"></span><span class="dot-val" style="left:calc(70.5% + 12px)">1,077</span></div></div>
+        <div class="l-row"><div class="lbl"><strong>unity-test-runner</strong> · Unity 테스트 CI 1위</div><div class="track" title="game-ci/unity-test-runner — 257★, 2019 시작 · 핵심 비교 대상"><span class="dot" style="left:56.0%"></span><span class="dot-val" style="left:calc(56.0% + 12px)">257 ← 핵심 비교 대상</span></div></div>
+        <div class="l-row"><div class="lbl">unium · Unity 자동화</div><div class="track" title="gwaredd/unium — 238★, 2016 시작, 2022 이후 휴면"><span class="dot" style="left:55.3%"></span><span class="dot-val" style="left:calc(55.3% + 12px)">238</span></div></div>
+        <div class="l-row"><div class="lbl">AltTester SDK · UI 테스트</div><div class="track" title="alttester/AltTester-Unity-SDK — 119★, 2022 시작, 상업 배후"><span class="dot" style="left:48.3%"></span><span class="dot-val" style="left:calc(48.3% + 12px)">119</span></div></div>
+
+        <div class="l-div"><span>TESTPLAY 시나리오 (12개월)</span></div>
+
+        <div class="l-row"><div class="lbl"><strong>testplay 현재</strong></div><div class="track" title="Kubonsang/testplay-runner — 1★, 2026-03 시작 (3.5개월)"><span class="dot me" style="left:0%"></span><span class="dot-val" style="left:14px">1 (홍보 전, 생후 3.5개월)</span></div></div>
+        <div class="l-row"><div class="lbl">S0 · 현상 유지</div><div class="track" title="시나리오 S0: 5–30★ — 런치도 생태계 연결도 없이 방치"><span class="range" style="left:16.3%; width:18.1%"></span><span class="dot-val" style="left:calc(34.4% + 12px)">5–30</span></div></div>
+        <div class="l-row"><div class="lbl">S1 · v1.0 + 런치 실행</div><div class="track" title="시나리오 S1: 150–600★, 중앙값 ~300 — 문서 26 전략의 기본 실행"><span class="range" style="left:50.6%; width:14.0%"></span><span class="dot me" style="left:57.6%"></span><span class="dot-val" style="left:calc(64.6% + 12px)">150–600</span></div></div>
+        <div class="l-row"><div class="lbl">S2 · + CI 생태계 편입</div><div class="track" title="시나리오 S2: 800–2,500★, 중앙값 ~1,200 — GitHub Action 마켓플레이스 + JUnit + 런치 1회 성공"><span class="range" style="left:67.5%; width:11.5%"></span><span class="dot me" style="left:71.6%"></span><span class="dot-val" style="left:calc(79.0% + 12px)">800–2,500</span></div></div>
+        <div class="l-row"><div class="lbl">S3 · 브레이크아웃</div><div class="track" title="시나리오 S3: 3,000★ 이상 — HN 프론트페이지급 바이럴 + 네트워크 테스트 카테고리 정의"><span class="range" style="left:80.8%; width:14.0%"></span><span class="dot-val" style="right:calc(100% - 80.8% + 8px)">3,000+</span></div></div>
+
+        <div class="l-axis"><div></div><div class="ticks">
+          <span class="tick" style="left:0%">1</span>
+          <span class="tick" style="left:23.3%">10</span>
+          <span class="tick" style="left:46.5%">100</span>
+          <span class="tick" style="left:69.8%">1,000</span>
+          <span class="tick" style="left:93.0%">10,000</span>
+        </div></div>
+      </div>
+    </div>
+
+    <div class="verdict amber">
+      <strong>이 차트에서 읽어야 할 단 하나:</strong> 같은 "Unity" 접두사를 달고도
+      unity-test-runner(테스트 도구)와 unity-mcp(AI 에이전트 도구)는 <strong>47배</strong> 차이가 난다.
+      장르가 천장을 정한다. testplay는 두 장르 모두에 정당하게 걸칠 수 있는 드문 위치에 있고
+      — README 첫 줄에 이미 "for AI agents"라고 쓰여 있다 — 어느 쪽 선반에 진열되느냐가 결과를 가른다.
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="clause">§2 · 평가 기준</p>
+    <h2>10개 차원 스코어카드 — 현재 vs 풀 포텐셜</h2>
+    <p class="lede">각 차원 0–10점. 종합 레이팅은 단순 평균(현재 5.1 / 포텐셜 8.3).
+    위쪽은 이미 강하고 아래쪽이 비어 있다 — 그리고 <strong>하위 4개가 전부 "만들기"가 아니라
+    "알리기" 축</strong>이라는 것이 이 스코어카드의 핵심이다.</p>
+
+    <div class="chart">
+      <div class="c-title">차원별 레이팅</div>
+      <div class="c-sub">0–10 스케일 · 현재 점수 내림차순 정렬 · 막대에 마우스를 올리면 산정 근거 표시</div>
+      <div class="legend">
+        <span class="chip"><span class="sw" style="background:var(--s-cur)"></span>현재 (2026-07)</span>
+        <span class="chip"><span class="sw" style="background:var(--s-pot)"></span>풀 포텐셜</span>
+      </div>
+
+      <div class="r-grid">
+        <div class="r-gridlayer">
+          <div class="gl" style="left:25%"></div><div class="gl" style="left:50%"></div><div class="gl" style="left:75%"></div>
+        </div>
+
+        <div class="r-row" title="Unity CLI의 exit code 거짓말·XML 지옥은 실재하고 문서화된 통증. 불변의 강점.">
+          <div class="lbl">문제 실재성 (통증 강도)</div>
+          <div><div class="r-bar cur" style="width:90%"></div><div class="r-bar pot" style="width:90%"></div></div>
+          <div class="r-vals num"><b>9</b> → 9</div>
+        </div>
+        <div class="r-row" title="warm bridge는 유일무이. honest contract 철학은 카피하기 어려운 해자.">
+          <div class="lbl">차별성 / 해자</div>
+          <div><div class="r-bar cur" style="width:80%"></div><div class="r-bar pot" style="width:90%"></div></div>
+          <div class="r-vals num"><b>8</b> → 9</div>
+        </div>
+        <div class="r-row" title="README·케이스 스터디·실기 검증 문서·2개 국어. 이미 상위권.">
+          <div class="lbl">문서 / 스토리</div>
+          <div><div class="r-bar cur" style="width:80%"></div><div class="r-bar pot" style="width:90%"></div></div>
+          <div class="r-vals num"><b>8</b> → 9</div>
+        </div>
+        <div class="r-row" title="132건 감사 후 v0.11 hardening 진행 중. scenario 모드 완결과 E2E가 남은 갭.">
+          <div class="lbl">엔지니어링 신뢰성</div>
+          <div><div class="r-bar cur" style="width:70%"></div><div class="r-bar pot" style="width:90%"></div></div>
+          <div class="r-vals num"><b>7</b> → 9</div>
+        </div>
+        <div class="r-row" title="AI 에이전트 × 게임 개발 교차점이 커지는 지금이 적기. unity-mcp 12k★가 증거.">
+          <div class="lbl">시장 타이밍</div>
+          <div><div class="r-bar cur" style="width:70%"></div><div class="r-bar pot" style="width:80%"></div></div>
+          <div class="r-vals num"><b>7</b> → 8</div>
+        </div>
+        <div class="r-row" title="솔로 + 군복무 시간 제약. v1.0 계약 동결 전략으로 유지비를 낮추는 것이 보완책.">
+          <div class="lbl">지속가능성 (버스 팩터)</div>
+          <div><div class="r-bar cur" style="width:50%"></div><div class="r-bar pot" style="width:70%"></div></div>
+          <div class="r-vals num"><b>5</b> → 7</div>
+        </div>
+        <div class="r-row" title="brew 없음, Unity 자동탐지 없음, 데모 GIF 없음, examples 없음. 전부 계획된 항목.">
+          <div class="lbl">온보딩 (5분 성공 경로)</div>
+          <div><div class="r-bar cur" style="width:30%"></div><div class="r-bar pot" style="width:90%"></div></div>
+          <div class="r-vals num"><b>3</b> → 9</div>
+        </div>
+        <div class="r-row" title="GitHub Action·JUnit 내보내기 전무. CI-side 상방이 가장 큰 축(MCP는 강등).">
+          <div class="lbl">생태계 통합</div>
+          <div><div class="r-bar cur" style="width:20%"></div><div class="r-bar pot" style="width:90%"></div></div>
+          <div class="r-vals num"><b>2</b> → 9</div>
+        </div>
+        <div class="r-row" title="검색 유입 콘텐츠·마켓플레이스·awesome 리스트 전무 (Pages는 이번에 준비됨).">
+          <div class="lbl">발견 가능성</div>
+          <div><div class="r-bar cur" style="width:10%"></div><div class="r-bar pot" style="width:80%"></div></div>
+          <div class="r-vals num"><b>1</b> → 8</div>
+        </div>
+        <div class="r-row" title="스타 1개, 솔로. 니치 특성상 포텐셜도 6 수준이 현실적 상한.">
+          <div class="lbl">소셜 증명</div>
+          <div><div class="r-bar cur" style="width:10%"></div><div class="r-bar pot" style="width:60%"></div></div>
+          <div class="r-vals num"><b>1</b> → 6</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="clause">§3 · 비교군 상세</p>
+    <h2>9개 프로젝트에서 각각 배울 것</h2>
+    <p class="lede">비교군 선정 기준: (a) "깨진 공식 툴체인 출력의 랩퍼" 장르, (b) Unity 테스트/자동화
+    장르, (c) Unity × AI 에이전트 장르. 스타 수는 2026-07-08 GitHub API 실측.</p>
+
+    <div class="tbl-wrap">
+      <div class="tbl-caption"><span>Exhibit B — 비교군 실측 기록</span><span>source: GitHub REST API</span></div>
+      <table>
+        <thead><tr><th>프로젝트</th><th style="text-align:right">스타</th><th>나이</th><th>testplay에게 주는 교훈</th></tr></thead>
+        <tbody>
+          <tr class="hl-row">
+            <td><span class="proj">CoplayDev/unity-mcp</span><br><span class="desc">Unity 에디터를 AI 에이전트에 연결하는 MCP 서버</span></td>
+            <td class="stars num">12,198</td><td class="num">1.3년</td>
+            <td class="lesson">"Unity × AI 에이전트" 물결은 실재하고 거대하다. 16개월에 12k★. <strong>단 이 숫자는 "에디터 전체 제어" MCP라서 나온 것</strong> — "테스트 결과" 같은 좁은 목적 MCP는 그 궤적을 못 물려받는다(그래서 testplay MCP는 강등). 물결에 접속하는 실질 레버는 MCP가 아니라 CI-side GitHub Action이다.</td>
+          </tr>
+          <tr>
+            <td><span class="proj">xcpretty/xcpretty</span><br><span class="desc">Xcode 빌드/테스트 출력 정리기</span></td>
+            <td class="stars num">4,038</td><td class="num">12.6년</td>
+            <td class="lesson">"깨진 공식 툴체인 출력의 랩퍼"는 검증된 장르. 단 iOS 개발자 모수가 Unity 자동화 모수보다 훨씬 크다는 점은 할인해서 읽을 것.</td>
+          </tr>
+          <tr>
+            <td><span class="proj">gotestyourself/gotestsum</span><br><span class="desc">go test 랩퍼 — 구조화 출력, JUnit 변환</span></td>
+            <td class="stars num">2,695</td><td class="num">8.3년</td>
+            <td class="lesson">콘셉트가 testplay와 가장 유사한 성공 사례 (러너 출력 → 구조화 계약). 이 장르 카테고리 리더의 장기 천장이 대략 2–3천★임을 시사.</td>
+          </tr>
+          <tr>
+            <td><span class="proj">CoderGamester/mcp-unity</span><br><span class="desc">Unity MCP 서버 2위 주자</span></td>
+            <td class="stars num">1,814</td><td class="num">1.3년</td>
+            <td class="lesson">같은 물결의 2등도 1.8천★. 물결 자체의 부력이 개별 실행력보다 크게 작용한다는 증거.</td>
+          </tr>
+          <tr>
+            <td><span class="proj">cpisciotta/xcbeautify</span><br><span class="desc">xcpretty의 현대적 후계</span></td>
+            <td class="stars num">1,519</td><td class="num">7.8년</td>
+            <td class="lesson">후발 주자도 실행이 좋으면 1.5천★. 선점이 전부는 아니다.</td>
+          </tr>
+          <tr>
+            <td><span class="proj">game-ci/unity-builder</span><br><span class="desc">Unity CI 빌드 GitHub Action</span></td>
+            <td class="stars num">1,077</td><td class="num">6.6년</td>
+            <td class="lesson">Unity CI 인프라 전반의 수요 상한 참고치. Action 마켓플레이스 등재가 이 숫자의 유통 기반이었다.</td>
+          </tr>
+          <tr class="hl-row">
+            <td><span class="proj">game-ci/unity-test-runner</span><br><span class="desc">Unity 테스트 실행 GitHub Action — 사실상 현직 1위</span></td>
+            <td class="stars num">257</td><td class="num">6.6년</td>
+            <td class="lesson"><strong>핵심 비교 대상.</strong> "Unity 테스트 자동화"만으로는 6년 현직 1위도 257★. 테스트 도구로만 포지셔닝하면 이것이 천장이다. 동시에 — 1년 안에 추월 가능한 현실적 1차 목표선이기도 하다.</td>
+          </tr>
+          <tr>
+            <td><span class="proj">gwaredd/unium</span><br><span class="desc">Unity 자동화/원격 제어 라이브러리</span></td>
+            <td class="stars num">238</td><td class="num">9.8년</td>
+            <td class="lesson">2022년 이후 휴면인데도 238★ — 니치의 기본 수요는 존재한다. 방치된 니치는 곧 비어 있는 왕좌라는 뜻이기도.</td>
+          </tr>
+          <tr>
+            <td><span class="proj">alttester/AltTester-Unity-SDK</span><br><span class="desc">Unity UI 테스트 자동화 SDK (상업 배후)</span></td>
+            <td class="stars num">119</td><td class="num">3.8년</td>
+            <td class="lesson">상업 회사가 밀어도 니치는 니치. 마케팅 물량이 장르 천장을 뚫지는 못한다.</td>
+          </tr>
+          <tr class="me-row">
+            <td><span class="proj">Kubonsang/testplay-runner</span><br><span class="desc">Unity 테스트 러너의 honest contract 계층</span></td>
+            <td class="stars num">1</td><td class="num">0.3년</td>
+            <td class="lesson">홍보 활동 0회 상태의 기준점. 생후 3.5개월에 릴리스 10개 — 실행 속도 자체는 비교군 상위권.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="clause">§4 · 예측</p>
+    <h2>12개월 시나리오 — 무엇을 하느냐가 자릿수를 정한다</h2>
+    <p class="lede">기준 시점: v1.0 GA 런치로부터 12개월. 확률은 "문서 26의 전략을 실행한다"는
+    조건부. 스타는 멱법칙 분포이므로 점 추정이 아니라 범위로 읽어야 한다.</p>
+
+    <div class="scen-grid">
+      <div class="scen">
+        <div class="s-head">S0 · 전략 미실행 시의 기본값</div>
+        <div class="s-name">현상 유지</div>
+        <div class="s-range num">5–30 <small>★</small></div>
+        <p>런치도 생태계 연결도 없이 코드만 좋은 상태. 발견되지 않은 니치 도구의 압도적 다수가
+        머무는 구간. 지금까지의 궤적(3.5개월, 1★)이 그대로 연장된 값.</p>
+      </div>
+      <div class="scen base">
+        <div class="s-head">S1 · 확률 ~60% · 중앙값 ~300★</div>
+        <div class="s-name">v1.0 + 런치 실행</div>
+        <div class="s-range num">150–600 <small>★</small></div>
+        <p>완성도 마무리 + 데모 GIF + brew + 런치 글(HN/GeekNews/r/Unity3D) 1회 사이클.
+        6년 현직 unity-test-runner(257★)를 넘어서는 구간 — "1년 만에 현직 추월"이라는
+        내러티브가 성립한다.</p>
+      </div>
+      <div class="scen">
+        <div class="s-head">S2 · 확률 ~30% · 중앙값 ~1,200★</div>
+        <div class="s-name">+ CI 생태계 편입</div>
+        <div class="s-range num">800–2,500 <small>★</small></div>
+        <p>S1에 더해 GitHub Action 마켓플레이스 등재 + JUnit 내보내기로 CI 청중 개방 +
+        autofix 봇이 CI를 지켜보는 워크플로우 흡수. 도구가 "테스트 러너"에서 "AI/CI 파이프라인
+        인프라"로 재분류되는 구간. gotestsum의 장기 천장(2.7k)에 닿는다.</p>
+      </div>
+      <div class="scen">
+        <div class="s-head">S3 · 확률 ~10% 미만</div>
+        <div class="s-name">브레이크아웃</div>
+        <div class="s-range num">3,000+ <small>★</small></div>
+        <p>HN 프론트페이지급 바이럴 1회 + PlayMode/네트워크 테스트로 카테고리 자체를 정의.
+        unity-mcp의 궤적. 계획할 수는 없지만, S2까지 실행해야 복권을 살 자격이 생기는 구간.</p>
+      </div>
+    </div>
+
+    <div class="verdict" style="margin-top:16px">
+      <strong>정직한 기대값 정리:</strong> 전략을 실행하면 중앙값 기준 <strong>~300★</strong>이
+      현실적인 12개월 목표선이고, 확률가중 기대값은 상방 꼬리(S2·S3) 덕분에 500–900★까지
+      끌려 올라간다. 전략을 실행하지 않으면 두 자릿수에서 멈춘다.
+      <strong>즉 이 프로젝트의 스타 수는 코드가 아니라 남은 유통 실행에 달려 있다</strong> —
+      코드 쪽 숙제는 이미 대부분 끝났기 때문이다.
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <p class="clause">§5 · 레버 &amp; 리스크</p>
+    <h2>자릿수를 바꾸는 것 셋, 발목을 잡는 것 넷</h2>
+    <div class="lever-grid" style="margin-top:18px">
+      <div>
+        <h3 style="color:var(--ledger)">자릿수를 바꾸는 레버</h3>
+        <ul class="plain">
+          <li><strong>GitHub Action + JUnit (A-2·A-5)</strong> — CI-side 최대 레버. MCP가 인터랙티브
+          전용이라 CI 절반에 무효인 것과 정반대로, Action은 CI 네이티브라 그 절반을 커버하고
+          <strong>두 번째 계약을 만들지 않는다</strong>(바이너리를 실행하고 exit code+JSON을 PR
+          인라인 어노테이션으로 번역만). autofix 봇에게 exit code=트리거, JSON=수리 페이로드.</li>
+          <li><strong>런치 모먼트 (C-4)</strong> — 스타는 순간에 온다. GA + 글 + GIF + 등재를
+          한 주에 겹칠 것. 첫 48시간 댓글 대응이 가능한 시기(휴가)에 배치.</li>
+          <li><strong>5분 성공 경로 (B-1·B-2·B-3)</strong> — brew, Unity 자동탐지, examples.
+          유입을 스타로 전환하는 깔때기의 바닥.</li>
+        </ul>
+      </div>
+      <div>
+        <h3 style="color:var(--stamp)">리스크</h3>
+        <ul class="plain">
+          <li class="risk"><strong>시간 제약</strong> — 군복무 중 조각난 시간. 런치 타이밍을
+          놓치면 S1 확률이 깎인다. 보완: v1.0 범위를 좁게 유지, 확장은 v1.x로.</li>
+          <li class="risk"><strong>game-ci와의 경계</strong> — Unity 라이선스·설치는 Action 범위 밖.
+          "경쟁"이 아니라 "game-ci로 Unity 세팅 + testplay-action으로 테스트 결과 계약"이라는
+          보완 포지션을 문서로 못박지 못하면 혼란·중복으로 읽힌다.</li>
+          <li class="risk"><strong>니치의 절대 크기</strong> — Unity 자동화 모수 자체가 작다.
+          소셜 증명 포텐셜을 6/10으로 잡은 이유. 스타 그래프에 일희일비하지 말 것.</li>
+          <li class="risk"><strong>검증 부채</strong> — scenario 모드 완결(--filter 전파) 전에
+          런치하면 Case Study 0002류 이탈이 재현된다. 완성도 → 유통 순서는 바꿀 수 없다.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p><strong>방법론:</strong> 참조군 예측(reference-class forecasting). 비교군 스타 수는 2026-07-08 GitHub REST API 실측값.
+    시나리오 확률은 비교군 궤적과 전략 실행 가정에 기반한 주관적 추정이며, 스타 수는 멱법칙 분포라 분산이 크다.
+    이 문서는 의사결정 보조용이지 보장이 아니다.</p>
+    <p><strong>레이팅 산정:</strong> 10개 차원 × 0–10점 단순 평균. 차원 정의와 점수 근거는 각 막대에 마우스를 올리면 표시된다.</p>
+    <p><strong>관련 문서:</strong> docs/26 (성장 브레인스토밍) · Case Study 0002 (scenario 한계) · pre-v1.0 감사 (2026-07-07)</p>
+    <div class="sig-rule"></div>
+    <p class="sig-cap">Internal memo — 리포에 커밋하지 않기를 권장</p>
+  </div>
+</footer>
+
+</body>
+</html>
