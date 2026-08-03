@@ -1,10 +1,36 @@
 # 📈 testplay Release Plan & Version History
 
-**현재 버전:** `v0.11.0`
+**현재 릴리스 버전:** `v0.11.0`
 **목표:** 단순한 로컬 테스트 래퍼를 넘어, AI 에이전트에 최적화된 시나리오 기반 멀티 인스턴스 러너로 단계적으로 확장
 
 > 이 문서는 확정 약속이 아니라, 베타 진행 상황에 따라 조정될 수 있는 릴리즈 계획을 정리한 것입니다.  
 > 각 마일스톤의 릴리즈 게이트는 기능 존재 여부보다 재현성과 계약 일관성을 기준으로 판단합니다.
+
+---
+
+## 🧪 미릴리스 개발 — 플랫폼 네이티브 CoW Storage Helper
+
+- 동일 schema 1 NDJSON `hello`/`acquire`/`release`/`shutdown` 계약
+- Windows: 관리자 권한이 필요한 Differencing VHDX
+- macOS: APFS `clonefileat(2)` 기반 디렉터리 Child, 관리자 권한 불필요
+- Linux: GNU `cp --reflink=always` 기반 디렉터리 Child, 관리자 권한 불필요
+- macOS/Linux는 CoW 미지원 파일시스템에서 물리 복사로 폴백하지 않고
+  `cow-unavailable`로 실패
+- Unix Child는 Lease token, `.testplay-storage-owner` marker, device/inode를
+  검증하고 동일 filesystem의 덮어쓰기 없는 quarantine 경로로 옮긴 뒤
+  재검증해야만 삭제한다. 이 절차가 모든 적대적 TOCTOU 경쟁을 완전히
+  제거한다고 주장하지 않는다.
+- 기존의 빈 Mount 디렉터리는 기록한 permission bit로 빈 디렉터리를 새로
+  생성한다. 원래 inode, owner/group, ACL, extended attribute, filesystem
+  flag, 생성 시각 또는 정확한 timestamp 복원을 보장하지 않는다.
+- **현재 경계:** storage helper와 자동 테스트까지만 구현. 공개 `testplay`
+  CLI, Image backend, 기본 backend에는 아직 연결하지 않았으므로 v0.11.0
+  릴리스 계약이나 버전 번호를 바꾸지 않는다.
+- **검증 상태:** macOS arm64 APFS 한 로컬 환경에서 실제
+  Acquire/격리/Release PASS. Linux reflink 구현은 완료했지만 실제
+  reflink filesystem 검증은 아직 실행하지 않았다. Linux/Windows helper
+  교차 컴파일 PASS. macOS/Linux Unity Library 호환성과 강제 종료 복구는
+  아직 검증하지 않았으며 Production readiness도 아직 아니다.
 
 ---
 

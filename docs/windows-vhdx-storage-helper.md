@@ -1,5 +1,14 @@
 # On-demand Differencing VHDX storage helper
 
+This document covers the Windows provider. The same
+`testplay-storage-helper` executable and schema-1 NDJSON operations now route
+to APFS clonefile on macOS and reflink on Linux; see
+[`unix-cow-storage-helper.md`](unix-cow-storage-helper.md). The providers share
+the process protocol and journal but not the storage implementation.
+Unix directory Children additionally use a lease marker, random token,
+device/inode identity, and a no-replace quarantine rename before recursive
+deletion. Those Unix safeguards do not change Windows VHDX behavior.
+
 ## Status
 
 ```text
@@ -13,9 +22,9 @@ Unity and public CLI integration: NOT PRESENT
 ```
 
 The helper is an on-demand child process. It is not a permanent daemon, a
-Windows service, or a public `testplay` command. A caller starts it for one
-workspace lease, communicates over NDJSON, and keeps the process alive until
-Release or stdin EOF completes cleanup.
+Windows service, or a public `testplay` command. On Windows, a caller starts it
+for one workspace lease, communicates over NDJSON, and keeps the process alive
+until Release or stdin EOF completes cleanup.
 
 ## Process model
 
@@ -37,7 +46,7 @@ Caller starts testplay-storage-helper
 → exit
 ```
 
-Version 1 permits one active lease per helper process. It neither installs nor
+Schema version 1 permits one active lease per helper process. It neither installs nor
 contacts the Windows Service Manager and never requests UAC elevation.
 
 ## Protocol
@@ -54,6 +63,10 @@ Every request contains:
 Supported operations are `hello`, `acquire`, `release`, and `shutdown`.
 Unknown fields, schema versions, operations, or invalid request IDs return a
 structured error.
+
+Helper v2 `hello` reports `platform`, `provider`, `elevated`, and
+`requiresElevation`. Windows reports provider `vhdx-differencing` and requires
+elevation; macOS/Linux use the same response fields for their native providers.
 
 Acquire returns a lease only after the mount is visible:
 

@@ -8,7 +8,7 @@ import (
 
 const (
 	SchemaVersion     = 1
-	HelperVersion     = "v1"
+	HelperVersion     = "v2"
 	OperationHello    = "hello"
 	OperationAcquire  = "acquire"
 	OperationRelease  = "release"
@@ -47,17 +47,19 @@ type WorkspaceLease struct {
 }
 
 type Response struct {
-	SchemaVersion int                  `json:"schemaVersion"`
-	RequestID     string               `json:"requestId"`
-	OK            bool                 `json:"ok"`
-	HelperVersion string               `json:"helperVersion,omitempty"`
-	Platform      string               `json:"platform,omitempty"`
-	Elevated      *bool                `json:"elevated,omitempty"`
-	Lease         *WorkspaceLease      `json:"lease,omitempty"`
-	Metrics       *vhdxstorage.Metrics `json:"metrics,omitempty"`
-	Released      bool                 `json:"released,omitempty"`
-	Completed     bool                 `json:"completed,omitempty"`
-	Error         *Error               `json:"error,omitempty"`
+	SchemaVersion     int                  `json:"schemaVersion"`
+	RequestID         string               `json:"requestId"`
+	OK                bool                 `json:"ok"`
+	HelperVersion     string               `json:"helperVersion,omitempty"`
+	Platform          string               `json:"platform,omitempty"`
+	Provider          string               `json:"provider,omitempty"`
+	Elevated          *bool                `json:"elevated,omitempty"`
+	RequiresElevation *bool                `json:"requiresElevation,omitempty"`
+	Lease             *WorkspaceLease      `json:"lease,omitempty"`
+	Metrics           *vhdxstorage.Metrics `json:"metrics,omitempty"`
+	Released          bool                 `json:"released,omitempty"`
+	Completed         bool                 `json:"completed,omitempty"`
+	Error             *Error               `json:"error,omitempty"`
 }
 
 func responseError(requestID string, err error) Response {

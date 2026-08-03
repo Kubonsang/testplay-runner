@@ -503,6 +503,21 @@ The Image backend is experimental and never selected by default. An explicit
 [benchmark](docs/benchmarks/library-image-baseline.md). Current benchmark
 verdict: `PROMISING`.
 
+The separate `testplay-storage-helper` remains an unreleased integration
+primitive, not a public `testplay run` backend. Its schema-1 NDJSON
+`hello`/`acquire`/`release`/`shutdown` contract now selects a native provider:
+Differencing VHDX on Windows, APFS `clonefileat(2)` on macOS, and mandatory
+reflink on Linux. macOS/Linux never silently fall back to a physical copy.
+Unix Child deletion verifies the lease token, exclusive marker, and filesystem
+device/inode identity, then revalidates them after a no-replace quarantine
+rename. The marker lives at `.testplay-storage-owner` inside the cloned Unity
+Library. An existing empty Mount directory is recreated with its recorded
+permission bits; restoration of the original directory object or all metadata
+is not claimed.
+See the [Windows provider](docs/windows-vhdx-storage-helper.md) and
+[macOS/Linux providers](docs/unix-cow-storage-helper.md). This does not change
+the released v0.11.0 CLI version or its public six-command surface.
+
 **`.gitignore` is patched automatically** to exclude `.testplay-shadow-*/` on first use.
 
 ## Scenario IPC Bus

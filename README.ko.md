@@ -504,6 +504,20 @@ Image backend는 실험 기능이며 기본으로 선택되지 않습니다. 명
 [벤치마크](docs/benchmarks/library-image-baseline.md)를 참고하십시오. 현재
 판정은 `PROMISING`입니다.
 
+별도 `testplay-storage-helper`는 아직 공개 `testplay run` 백엔드가 아닌,
+릴리스 전 통합 primitive입니다. schema 1 NDJSON
+`hello`/`acquire`/`release`/`shutdown` 계약은 그대로 유지하면서 Windows는
+Differencing VHDX, macOS는 APFS `clonefileat(2)`, Linux는 필수 reflink
+provider를 선택합니다. macOS/Linux는 물리 복사로 조용히 폴백하지
+않습니다. Unix Child 삭제 전에는 Lease token, 전용 marker, filesystem
+device/inode를 검증하고 덮어쓰기 없는 quarantine rename 뒤 다시
+검증합니다. `.testplay-storage-owner` marker는 복제된 Unity Library 내부에
+존재합니다. 기존의 빈 Mount 디렉터리는 기록한 permission bit로 새로
+생성할 뿐이며, 원래 디렉터리 객체나 모든 metadata를 복원한다고
+주장하지 않습니다. [Windows provider](docs/windows-vhdx-storage-helper.md)와
+[macOS/Linux provider](docs/unix-cow-storage-helper.md)를 참고하십시오. 이
+변경은 릴리스된 v0.11.0 CLI 버전이나 공개 6개 명령 표면을 바꾸지 않습니다.
+
 **`.gitignore`는 최초 사용 시 자동으로 패치**되어 `.testplay-shadow-*/`가 제외됩니다.
 
 ## 시나리오 IPC 버스

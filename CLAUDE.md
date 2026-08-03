@@ -12,7 +12,12 @@ Agents interact via six commands: `version`, `check`, `list`, `run`, `result`, `
 
 **Identity anchor:** testplay is a *contract layer* (call it "the honest contract" internally — see commit history). It is NOT a speed layer for human TDD. Speed-vs-correctness trade-offs always resolve in favor of correctness/clarity for automated callers. When evaluating feature requests like "make it faster in the editor", the answer is: that's the Test Runner window's job, not testplay's. Cite this paragraph. **Bridge corollary (v0.10.0):** the warm-editor bridge does not violate this — the Test Runner window is a human GUI that automated callers *cannot* use, so the bridge gives agents/CI the warm path humans already have, *only* as a transparent backend behind the unchanged JSON/exit-code contract. It is enforced by a resolution rule, not intent: the warm path is forbidden whenever warm-vs-cold could change *results*, and the Pristine Gate self-demotes to the cold path. Speed/disk savings are a side effect of reusing a warm domain, never a promised capability.
 
-**Current version:** `v0.11.0` (main; released 2026-07-14). Honest-Contract Hardening — the v0.10 warm bridge now uses protocol 2 session binding and owned Test Framework run GUIDs; ambiguous or possibly-started executions terminate as exit 9 and are never replayed through the cold path. The protocol-2 warm bridge requires Unity 6 (6000.3+). CLI/config/list/scenario contracts fail closed: strict single-value config decode, exit 10 for a filtered zero-test run, schema-2 inventory cache, filesystem-aware project identity, and per-instance scenario baselines. The 3-tier backend remains `bridge → shadow → process`; two-phase configs and scenario mode always run cold. **Identity locked at v0.8.0:** contract layer for agents+CI, not a TDD speed tool — see Identity anchor above.
+**Current released version:** `v0.11.0` (released 2026-07-14). Honest-Contract Hardening — the v0.10 warm bridge now uses protocol 2 session binding and owned Test Framework run GUIDs; ambiguous or possibly-started executions terminate as exit 9 and are never replayed through the cold path. The protocol-2 warm bridge requires Unity 6 (6000.3+). CLI/config/list/scenario contracts fail closed: strict single-value config decode, exit 10 for a filtered zero-test run, schema-2 inventory cache, filesystem-aware project identity, and per-instance scenario baselines. The 3-tier backend remains `bridge → shadow → process`; two-phase configs and scenario mode always run cold. **Identity locked at v0.8.0:** contract layer for agents+CI, not a TDD speed tool — see Identity anchor above.
+
+**Unreleased main work:** the standalone `testplay-storage-helper` v2 implementation has
+native CoW providers for Windows Differencing VHDX, macOS APFS clonefile, and
+Linux reflink while retaining protocol schema 1. It is not wired to the public `testplay` CLI or Image backend,
+so it does not justify a CLI version bump or a production-readiness claim.
 
 **Ultimate goal:** PlayMode + network environment testing.
 
@@ -63,6 +68,8 @@ internal/
   config/            # testplay.json loading and validation
   runid/             # Shared run-ID format validation (regex pattern)
   bridge/            # Warm-editor bridge client — Probe handshake gate + file-based protocol
+  storagehelper/     # Standalone schema-1 NDJSON workspace lease protocol
+  vhdxstorage/       # Platform storage providers (legacy name): VHDX/APFS/reflink
 unity/
   com.testplay.bridge/  # Greenfield C# UPM Editor package (warm-editor bridge; opt-in)
 ```

@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !darwin && !linux
 
 package vhdxstorage
 
@@ -11,7 +11,10 @@ type unsupportedBackend struct{}
 
 func NewBackend() Backend { return unsupportedBackend{} }
 
-func (unsupportedBackend) Platform() string { return runtime.GOOS }
+func (unsupportedBackend) Platform() string        { return runtime.GOOS }
+func (unsupportedBackend) Provider() string        { return "unsupported" }
+func (unsupportedBackend) Supported() bool         { return false }
+func (unsupportedBackend) RequiresElevation() bool { return false }
 
 func (unsupportedBackend) IsElevated(context.Context) (bool, error) { return false, nil }
 
