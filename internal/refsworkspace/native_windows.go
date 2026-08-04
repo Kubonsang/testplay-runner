@@ -70,16 +70,18 @@ func (windowsPoolNative) Mount(ctx context.Context, vhdxPath, mountPath string, 
 	attachStarted := time.Now()
 	attachment, err := vhdxstorage.OpenAndAttach(vhdxPath, false)
 	if err != nil {
-		return nil, err
+		mapped := mapNativeError("open-and-attach-vhdx", vhdxPath, err)
+		return nil, errorWithCleanupEvidence(mapped, "released", vhdxPath, false)
 	}
 	attachMs := time.Since(attachStarted).Milliseconds()
 	fail := func(primary error) (MountedPool, error) {
 		cleanupPool := &windowsMountedPool{attachment: attachment}
-		cleanupErr := cleanupPool.Close(context.Background())
+		cleanupErr := closeMountedBounded(cleanupPool)
 		if cleanupErr != nil {
-			cleanupErr = newError(CodeCleanupFailed, "cleanup-failed-mount", vhdxPath, cleanupErr)
+			return nil, cleanupFailure("cleanup-failed-mount", vhdxPath, errors.Join(primary, cleanupErr), false)
 		}
-		return nil, errors.Join(primary, cleanupErr)
+		mapped := mapNativeError("mount-or-initialize-volume", vhdxPath, primary)
+		return nil, errorWithCleanupEvidence(mapped, "released", vhdxPath, false)
 	}
 	var refsInfo vhdxstorage.ReFSVolumeInfo
 	mountStarted := time.Now()

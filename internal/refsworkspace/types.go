@@ -3,21 +3,26 @@ package refsworkspace
 import "time"
 
 const (
-	PoolSchemaVersion     = 1
-	BaselineSchemaVersion = 1
-	LeaseSchemaVersion    = 1
-	DefaultMaximumBytes   = int64(16 << 30)
-	DefaultSoftBudget     = int64(14 << 30)
-	DefaultReserveBytes   = int64(2 << 30)
+	PoolSchemaVersion                 = 2
+	BaselineSchemaVersion             = 2
+	LeaseSchemaVersion                = 2
+	DefaultMaximumBytes               = int64(16 << 30)
+	DefaultSoftBudget                 = int64(14 << 30)
+	DefaultReserveBytes               = int64(2 << 30)
+	DefaultMinimumHostFreeBytes       = int64(30 << 30)
+	DefaultVHDXOverheadReserveBytes   = int64(2 << 30)
+	DefaultInitialPoolAllocationBytes = int64(512 << 20)
 )
 
 type Config struct {
-	Root               string `json:"root"`
-	VHDXPath           string `json:"vhdxPath,omitempty"`
-	MountRoot          string `json:"mountRoot,omitempty"`
-	MaximumBytes       int64  `json:"maximumBytes"`
-	SoftBudgetBytes    int64  `json:"softBudgetBytes"`
-	WorkerReserveBytes int64  `json:"workerReserveBytes"`
+	Root                     string `json:"root"`
+	VHDXPath                 string `json:"vhdxPath,omitempty"`
+	MountRoot                string `json:"mountRoot,omitempty"`
+	MaximumBytes             int64  `json:"maximumBytes"`
+	SoftBudgetBytes          int64  `json:"softBudgetBytes"`
+	WorkerReserveBytes       int64  `json:"workerReserveBytes"`
+	MinimumHostFreeBytes     int64  `json:"minimumHostFreeBytes"`
+	VHDXOverheadReserveBytes int64  `json:"vhdxOverheadReserveBytes"`
 }
 
 type Paths struct {
@@ -49,18 +54,20 @@ type FileUsage struct {
 }
 
 type PoolMetadata struct {
-	SchemaVersion      int       `json:"schemaVersion"`
-	Architecture       string    `json:"architecture"`
-	CreatedAt          time.Time `json:"createdAt"`
-	OwnershipToken     string    `json:"ownershipToken"`
-	VHDXPath           string    `json:"vhdxPath"`
-	VHDXIdentity       string    `json:"vhdxIdentity"`
-	VolumeGUIDPath     string    `json:"volumeGuidPath"`
-	Filesystem         string    `json:"filesystem"`
-	ClusterSize        int64     `json:"clusterSize"`
-	MaximumBytes       int64     `json:"maximumBytes"`
-	SoftBudgetBytes    int64     `json:"softBudgetBytes"`
-	WorkerReserveBytes int64     `json:"workerReserveBytes"`
+	SchemaVersion            int       `json:"schemaVersion"`
+	Architecture             string    `json:"architecture"`
+	CreatedAt                time.Time `json:"createdAt"`
+	OwnershipToken           string    `json:"ownershipToken"`
+	VHDXPath                 string    `json:"vhdxPath"`
+	VHDXIdentity             string    `json:"vhdxIdentity"`
+	VolumeGUIDPath           string    `json:"volumeGuidPath"`
+	Filesystem               string    `json:"filesystem"`
+	ClusterSize              int64     `json:"clusterSize"`
+	MaximumBytes             int64     `json:"maximumBytes"`
+	SoftBudgetBytes          int64     `json:"softBudgetBytes"`
+	WorkerReserveBytes       int64     `json:"workerReserveBytes"`
+	MinimumHostFreeBytes     int64     `json:"minimumHostFreeBytes"`
+	VHDXOverheadReserveBytes int64     `json:"vhdxOverheadReserveBytes"`
 }
 
 type PoolMetrics struct {
@@ -84,6 +91,11 @@ type PoolMetrics struct {
 	HostVHDXAllocatedBytes      int64 `json:"hostVhdxAllocatedBytes,omitempty"`
 	HostFreeBytes               int64 `json:"hostFreeBytes,omitempty"`
 	CleanupMs                   int64 `json:"cleanupMs,omitempty"`
+	SparseFileCount             int64 `json:"sparseFileCount,omitempty"`
+	SparseLogicalBytes          int64 `json:"sparseLogicalBytes,omitempty"`
+	SparseAllocatedSourceBytes  int64 `json:"sparseAllocatedSourceBytes,omitempty"`
+	SparseClonedBytes           int64 `json:"sparseClonedBytes,omitempty"`
+	SparseHoleBytes             int64 `json:"sparseHoleBytes,omitempty"`
 }
 
 type Result struct {
@@ -106,24 +118,42 @@ type Result struct {
 	Residual                 Residual      `json:"residual"`
 }
 
+type ResidualMetric struct {
+	Measured bool `json:"measured"`
+	Count    int  `json:"count"`
+}
+
 type Residual struct {
-	ActiveLeases    int `json:"activeLeases"`
-	WorkerLibraries int `json:"workerLibraries"`
-	Junctions       int `json:"junctions"`
-	AttachedDisks   int `json:"attachedDisks"`
-	ProbeProcesses  int `json:"probeProcesses"`
+	Status                    string         `json:"status"`
+	ActiveBaselineUses        ResidualMetric `json:"activeBaselineUses"`
+	WorkerLeaseJournals       ResidualMetric `json:"workerLeaseJournals"`
+	WorkerDirectories         ResidualMetric `json:"workerDirectories"`
+	QuarantineEntries         ResidualMetric `json:"quarantineEntries"`
+	CoordinationArtifacts     ResidualMetric `json:"coordinationArtifacts"`
+	SyntheticProbeDirectories ResidualMetric `json:"syntheticProbeDirectories"`
+	MountReparsePoints        ResidualMetric `json:"mountReparsePoints"`
+	MountDirectoryEntries     ResidualMetric `json:"mountDirectoryEntries"`
+	Junctions                 ResidualMetric `json:"junctions"`
+	AttachedDisks             ResidualMetric `json:"attachedDisks"`
+	ProbeProcesses            ResidualMetric `json:"probeProcesses"`
+	OwnedVHDXFiles            ResidualMetric `json:"ownedVhdxFiles"`
 }
 
 type CloneMetrics struct {
-	CloneTreeMs             int64 `json:"cloneTreeMs"`
-	ClonedFileCount         int64 `json:"clonedFileCount"`
-	ClonedBytes             int64 `json:"clonedBytes"`
-	PhysicalCopiedFileCount int64 `json:"physicalCopiedFileCount"`
-	PhysicalCopiedBytes     int64 `json:"physicalCopiedBytes"`
-	TailCopiedBytes         int64 `json:"tailCopiedBytes"`
-	MetadataOnlyFileCount   int64 `json:"metadataOnlyFileCount"`
-	FailedFileCount         int64 `json:"failedFileCount"`
-	FallbackUsed            bool  `json:"fallbackUsed"`
+	CloneTreeMs                int64 `json:"cloneTreeMs"`
+	ClonedFileCount            int64 `json:"clonedFileCount"`
+	ClonedBytes                int64 `json:"clonedBytes"`
+	PhysicalCopiedFileCount    int64 `json:"physicalCopiedFileCount"`
+	PhysicalCopiedBytes        int64 `json:"physicalCopiedBytes"`
+	TailCopiedBytes            int64 `json:"tailCopiedBytes"`
+	MetadataOnlyFileCount      int64 `json:"metadataOnlyFileCount"`
+	FailedFileCount            int64 `json:"failedFileCount"`
+	FallbackUsed               bool  `json:"fallbackUsed"`
+	SparseFileCount            int64 `json:"sparseFileCount"`
+	SparseLogicalBytes         int64 `json:"sparseLogicalBytes"`
+	SparseAllocatedSourceBytes int64 `json:"sparseAllocatedSourceBytes"`
+	SparseClonedBytes          int64 `json:"sparseClonedBytes"`
+	SparseHoleBytes            int64 `json:"sparseHoleBytes"`
 }
 
 type LeaseState string

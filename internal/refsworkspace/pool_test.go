@@ -2,23 +2,27 @@ package refsworkspace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
 type fakePoolNative struct {
-	platform   string
-	elevated   bool
-	ensureErr  error
-	createErr  error
-	mountErr   error
-	removeErr  error
-	closeErr   error
-	volume     VolumeInfo
-	closeCount int
+	platform    string
+	elevated    bool
+	ensureErr   error
+	createErr   error
+	mountErr    error
+	removeErr   error
+	closeErr    error
+	volume      VolumeInfo
+	closeCount  int
+	hostFree    int64
+	hostFreeErr error
 }
 
 type fakeMountedPool struct {
@@ -69,7 +73,12 @@ func (native *fakePoolNative) FileUsage(path string) (FileUsage, error) {
 	}
 	return FileUsage{LogicalBytes: info.Size(), AllocatedBytes: info.Size()}, nil
 }
-func (native *fakePoolNative) HostFreeBytes(string) (int64, error) { return 100 << 30, nil }
+func (native *fakePoolNative) HostFreeBytes(string) (int64, error) {
+	if native.hostFreeErr != nil {
+		return 0, native.hostFreeErr
+	}
+	return native.hostFree, nil
+}
 func (native *fakePoolNative) RemoveVHDX(path string) error {
 	if native.removeErr != nil {
 		return native.removeErr
@@ -81,6 +90,7 @@ func newFakePoolNative() *fakePoolNative {
 	return &fakePoolNative{
 		platform: "windows",
 		elevated: true,
+		hostFree: 100 << 30,
 		volume: VolumeInfo{
 			VolumeGUIDPath:       `\\?\Volume{test}\`,
 			Filesystem:           "ReFS",
@@ -90,6 +100,31 @@ func newFakePoolNative() *fakePoolNative {
 			UsedBytes:            1 << 30,
 			SupportsBlockCloning: true,
 		},
+	}
+}
+
+func TestPoolSetupEnforcesHostFreeFloorBeforeWrites(t *testing.T) {
+	native := newFakePoolNative()
+	native.hostFree = DefaultMinimumHostFreeBytes + DefaultVHDXOverheadReserveBytes + DefaultInitialPoolAllocationBytes - 1
+	root := filepath.Join(t.TempDir(), "storage")
+	if _, err := NewService(native, copyClaimingCloner{}).Setup(context.Background(), Config{Root: root}); ErrorCode(err) != CodeHostFreeSpaceFloor {
+		t.Fatalf("err=%v", err)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("insufficient setup wrote root: %v", err)
+	}
+	native.hostFree = DefaultMinimumHostFreeBytes + DefaultVHDXOverheadReserveBytes + DefaultInitialPoolAllocationBytes
+	if _, err := NewService(native, copyClaimingCloner{}).Setup(context.Background(), Config{Root: root}); err != nil {
+		t.Fatalf("exact floor failed: %v", err)
+	}
+}
+
+func TestPoolSetupHostFreeMeasurementFailure(t *testing.T) {
+	native := newFakePoolNative()
+	native.hostFreeErr = errors.New("measurement failed")
+	root := filepath.Join(t.TempDir(), "storage")
+	if _, err := NewService(native, copyClaimingCloner{}).Setup(context.Background(), Config{Root: root}); ErrorCode(err) != CodeHostFreeSpaceFloor {
+		t.Fatalf("err=%v", err)
 	}
 }
 
@@ -105,7 +140,7 @@ func TestPoolSetupAndStatusStructuredEvidence(t *testing.T) {
 	if result.Status != "PASS" || result.Architecture != "Managed ReFS Library Pool" || result.ReleasedVersionModified || result.PhysicalImageCreated || result.DifferencingChildCreated || result.FallbackUsed || !result.BlockCloneSupported || !result.SourceUnchanged {
 		t.Fatalf("result=%+v", result)
 	}
-	if result.Metrics.ClonedBytes != 8192 || result.Metrics.TailCopiedBytes != 137 {
+	if result.Metrics.ClonedBytes <= 8192 || result.Metrics.TailCopiedBytes < 137 {
 		t.Fatalf("metrics=%+v", result.Metrics)
 	}
 	status, err := service.Status(context.Background(), config)
@@ -119,7 +154,7 @@ func TestPoolSetupAndStatusStructuredEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if probe.Metrics.PoolAttachMs != 2 || probe.Metrics.PoolMountMs != 3 || probe.Metrics.ClonedBytes != 8192 {
+	if probe.Metrics.PoolAttachMs != 2 || probe.Metrics.PoolMountMs != 3 || probe.Metrics.ClonedBytes <= 8192 {
 		t.Fatalf("probe metrics=%+v", probe.Metrics)
 	}
 }
@@ -151,6 +186,17 @@ func TestPoolSetupNativeSeamsReturnStableCodes(t *testing.T) {
 	}
 }
 
+func TestPoolSetupReportsSafePartialCleanupEvidence(t *testing.T) {
+	native := newFakePoolNative()
+	native.createErr = errors.New("create failed")
+	root := filepath.Join(t.TempDir(), "storage")
+	_, err := NewService(native, copyClaimingCloner{}).Setup(context.Background(), Config{Root: root})
+	var probeErr *Error
+	if !errors.As(err, &probeErr) || probeErr.CleanupState != "released" || probeErr.OwnerMetadataCommitted || probeErr.ManualRecoveryRequired || probeErr.OwnedVHDXPath == "" {
+		t.Fatalf("err=%v evidence=%+v", err, probeErr)
+	}
+}
+
 func TestPoolSetupPreservesOwnedVHDXWhenDetachIsUncertain(t *testing.T) {
 	native := newFakePoolNative()
 	native.closeErr = errors.New("detach visibility timeout")
@@ -158,6 +204,10 @@ func TestPoolSetupPreservesOwnedVHDXWhenDetachIsUncertain(t *testing.T) {
 	_, err := NewService(native, copyClaimingCloner{}).Setup(context.Background(), Config{Root: root})
 	if ErrorCode(err) != CodeCleanupFailed {
 		t.Fatalf("err=%v", err)
+	}
+	var probeErr *Error
+	if !errors.As(err, &probeErr) || probeErr.CleanupState != "uncertain" || !probeErr.OwnerMetadataCommitted || !probeErr.ManualRecoveryRequired || probeErr.OwnedVHDXPath == "" {
+		t.Fatalf("cleanup evidence=%+v", probeErr)
 	}
 	_, paths, pathsErr := NewPaths(Config{Root: root})
 	if pathsErr != nil {
@@ -168,6 +218,64 @@ func TestPoolSetupPreservesOwnedVHDXWhenDetachIsUncertain(t *testing.T) {
 	}
 	if _, statErr := os.Stat(paths.Owner); statErr != nil {
 		t.Fatalf("uncertain cleanup deleted ownership evidence: %v", statErr)
+	}
+}
+
+func TestPoolInspectionJoinsPrimaryAndCleanupErrors(t *testing.T) {
+	native := newFakePoolNative()
+	service := NewService(native, copyClaimingCloner{})
+	root := filepath.Join(t.TempDir(), "storage")
+	config := Config{Root: root}
+	if _, err := service.Setup(context.Background(), config); err != nil {
+		t.Fatal(err)
+	}
+	_, paths, err := NewPaths(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.PoolFile, []byte("not-json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	native.closeErr = errors.New("detach visibility timeout")
+	_, err = service.Status(context.Background(), config)
+	var probeErr *Error
+	if ErrorCode(err) != CodeCleanupFailed || !errors.As(err, &probeErr) || probeErr.CleanupState != "uncertain" || !probeErr.ManualRecoveryRequired {
+		t.Fatalf("err=%v evidence=%+v", err, probeErr)
+	}
+	if !strings.Contains(err.Error(), "invalid character") || !strings.Contains(err.Error(), "detach visibility timeout") {
+		t.Fatalf("joined error lost evidence: %v", err)
+	}
+}
+
+func TestPoolSyntheticCleanupFailureIsReportedAndEvidencePreserved(t *testing.T) {
+	native := newFakePoolNative()
+	service := NewService(native, copyClaimingCloner{})
+	service.removeAll = func(string) error { return errors.New("injected cleanup failure") }
+	root := filepath.Join(t.TempDir(), "storage")
+	_, err := service.Setup(context.Background(), Config{Root: root})
+	if ErrorCode(err) != CodeCleanupFailed {
+		t.Fatalf("err=%v", err)
+	}
+	_, paths, pathsErr := NewPaths(Config{Root: root})
+	if pathsErr != nil {
+		t.Fatal(pathsErr)
+	}
+	if count, countErr := countEntries(paths.PoolRoot, ".block-clone-probe-", ""); countErr != nil || count != 1 {
+		t.Fatalf("probe evidence count=%d err=%v", count, countErr)
+	}
+}
+
+func TestResidualJSONDistinguishesUnmeasuredFromZero(t *testing.T) {
+	data, err := json.Marshal(Residual{ActiveBaselineUses: ResidualMetric{Measured: true, Count: 0}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded Residual
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !decoded.ActiveBaselineUses.Measured || decoded.WorkerDirectories.Measured {
+		t.Fatalf("residual=%s", data)
 	}
 }
 

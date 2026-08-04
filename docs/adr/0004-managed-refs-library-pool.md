@@ -75,6 +75,41 @@ Read-only attributes alone are not considered immutability. Verification and
 active-use ownership remain authoritative even when an administrator can
 override an ACL.
 
+Protection is independently verified evidence. Metadata records a protection
+schema, canonical root ACL/mode digest, file read-only policy, directory
+policy, and protected entry counts. A byte-identical baseline with changed ACL
+or writability is corrupt.
+
+## Concurrency and cleanup decision
+
+Reserve worker capacity under one process-safe pool lock. Inside that lock,
+remeasure ReFS used bytes and host free bytes, validate journals and orphans,
+sum reservations, and create the worker journal with `O_EXCL`. Release the lock
+before baseline verification and cloning. Never accept a caller's used-byte
+estimate and never silently break an abandoned lock.
+
+Serialize baseline active-use creation and baseline mutation with a per-key
+coordination lock and explicit mutation marker. Clear/quarantine checks active
+uses before rename; acquire checks mutation and validity before marker
+creation. Baseline rename and a new active marker cannot both win.
+
+Worker release is a persisted state machine: junction removed, worker
+quarantined, ownership verified, worker deleted, active-use released, released,
+and lease deleted. Repetition resumes safely; unexplained absence is an
+ownership error.
+
+Mounted cleanup uses a bounded context and joins primary and cleanup errors.
+Uncertain detach, visibility, or ownership preserves the VHDX and emits manual
+recovery evidence. Residual counts carry an explicit measured bit so unknown
+cannot masquerade as zero.
+
+## Sparse-file decision
+
+Sparse Library files stay sparse. Query `FSCTL_QUERY_ALLOCATED_RANGES`, mark the
+destination sparse before sizing, clone only aligned allocated extents, leave
+holes unallocated, and copy only unaligned allocated fragments. Query or clone
+failure is explicit and never selects whole-file or whole-tree copying.
+
 ## Why allocation deltas are not zero
 
 Block Clone shares existing extents, but worker directory entries, file

@@ -20,6 +20,7 @@ const (
 	CodeLeaseConflict         = "lease-conflict"
 	CodeOrphanFound           = "orphan-found"
 	CodeStorageBudgetExceeded = "storage-budget-exceeded"
+	CodeHostFreeSpaceFloor    = "host-free-space-floor"
 	CodeDiskFull              = "disk-full"
 	CodeCloneFailed           = "clone-failed"
 	CodeJunctionFailed        = "junction-failed"
@@ -31,10 +32,14 @@ const (
 
 // Error is the stable machine-readable error boundary for the probe.
 type Error struct {
-	Code      string `json:"code"`
-	Operation string `json:"operation,omitempty"`
-	Path      string `json:"path,omitempty"`
-	Cause     error  `json:"-"`
+	Code                   string `json:"code"`
+	Operation              string `json:"operation,omitempty"`
+	Path                   string `json:"path,omitempty"`
+	Cause                  error  `json:"-"`
+	CleanupState           string `json:"cleanupState,omitempty"`
+	OwnerMetadataCommitted bool   `json:"ownerMetadataCommitted"`
+	OwnedVHDXPath          string `json:"ownedVhdxPath,omitempty"`
+	ManualRecoveryRequired bool   `json:"manualRecoveryRequired"`
 }
 
 func (e *Error) Error() string {
@@ -63,6 +68,18 @@ func (e *Error) Unwrap() error {
 
 func newError(code, operation, path string, cause error) error {
 	return &Error{Code: code, Operation: operation, Path: path, Cause: cause}
+}
+
+func errorWithCleanupEvidence(err error, state, ownedVHDX string, ownerCommitted bool) error {
+	if err == nil {
+		return nil
+	}
+	var existing *Error
+	code, operation, path := ErrorCode(err), "", ""
+	if errors.As(err, &existing) {
+		operation, path = existing.Operation, existing.Path
+	}
+	return &Error{Code: code, Operation: operation, Path: path, Cause: err, CleanupState: state, OwnerMetadataCommitted: ownerCommitted, OwnedVHDXPath: ownedVHDX, ManualRecoveryRequired: state != "released"}
 }
 
 func ErrorCode(err error) string {

@@ -36,20 +36,21 @@ type PoolNative interface {
 }
 
 type Service struct {
-	native PoolNative
-	cloner TreeCloner
-	now    func() time.Time
+	native    PoolNative
+	cloner    TreeCloner
+	now       func() time.Time
+	removeAll func(string) error
 }
 
 func NewService(native PoolNative, cloner TreeCloner) *Service {
-	return &Service{native: native, cloner: cloner, now: time.Now}
+	return &Service{native: native, cloner: cloner, now: time.Now, removeAll: os.RemoveAll}
 }
 
 func NewNativeService() *Service {
 	return NewService(newPoolNative(), NewNativeTreeCloner())
 }
 
-func (service *Service) Setup(ctx context.Context, config Config) (*Result, error) {
+func (service *Service) Setup(ctx context.Context, config Config) (returnResult *Result, returnErr error) {
 	started := time.Now()
 	config, paths, err := NewPaths(config)
 	if err != nil {
@@ -61,6 +62,14 @@ func (service *Service) Setup(ctx context.Context, config Config) (*Result, erro
 	if err := service.checkNative(ctx); err != nil {
 		return nil, err
 	}
+	hostFreeBefore, err := service.native.HostFreeBytes(filepath.Dir(paths.Root))
+	if err != nil {
+		return nil, newError(CodeHostFreeSpaceFloor, "measure-host-free-before-setup", filepath.Dir(paths.Root), err)
+	}
+	requiredHostFree := config.MinimumHostFreeBytes + config.VHDXOverheadReserveBytes + DefaultInitialPoolAllocationBytes
+	if hostFreeBefore < requiredHostFree {
+		return nil, newError(CodeHostFreeSpaceFloor, "validate-host-free-before-setup", filepath.Dir(paths.Root), fmt.Errorf("hostFree=%d required=%d", hostFreeBefore, requiredHostFree))
+	}
 	if err := prepareSetupRoot(paths); err != nil {
 		return nil, err
 	}
@@ -70,10 +79,22 @@ func (service *Service) Setup(ctx context.Context, config Config) (*Result, erro
 	defer func() {
 		if !committedOwner && cleanupSafe {
 			if createdVHDX {
-				_ = service.native.RemoveVHDX(paths.VHDX)
+				if cleanupErr := service.native.RemoveVHDX(paths.VHDX); cleanupErr != nil && !os.IsNotExist(cleanupErr) {
+					returnErr = errors.Join(returnErr, cleanupFailureState("remove-partial-vhdx", paths.VHDX, paths.VHDX, cleanupErr, false, "failed"))
+				}
 			}
-			_ = os.Remove(paths.Mount)
-			_ = os.Remove(paths.Root)
+			for _, cleanupPath := range []string{paths.Mount, paths.Root} {
+				if cleanupErr := os.Remove(cleanupPath); cleanupErr != nil && !os.IsNotExist(cleanupErr) {
+					returnErr = errors.Join(returnErr, cleanupFailureState("remove-partial-setup-path", cleanupPath, paths.VHDX, cleanupErr, false, "failed"))
+				}
+			}
+		}
+		if returnErr != nil && ErrorCode(returnErr) != CodeCleanupFailed {
+			state := "preserved"
+			if cleanupSafe {
+				state = "released"
+			}
+			returnErr = errorWithCleanupEvidence(returnErr, state, paths.VHDX, committedOwner)
 		}
 	}()
 	if err := service.native.CreateDynamic(paths.VHDX, config.MaximumBytes); err != nil {
@@ -83,14 +104,21 @@ func (service *Service) Setup(ctx context.Context, config Config) (*Result, erro
 	cleanupSafe = false
 	mounted, err := service.native.Mount(ctx, paths.VHDX, paths.Mount, true)
 	if err != nil {
-		return nil, mapNativeError("initialize-refs-volume", paths.VHDX, err)
+		mapped := mapNativeError("initialize-refs-volume", paths.VHDX, err)
+		var evidence *Error
+		if errors.As(mapped, &evidence) && evidence.CleanupState == "released" {
+			cleanupSafe = true
+		}
+		return nil, mapped
 	}
 	mountMetrics := mounted.Metrics()
 	closed := false
 	defer func() {
 		if !closed {
-			if closeErr := mounted.Close(context.Background()); closeErr == nil {
+			if closeErr := closeMountedBounded(mounted); closeErr == nil {
 				cleanupSafe = true
+			} else {
+				returnErr = cleanupFailure("cleanup-mounted-setup", paths.VHDX, errors.Join(returnErr, closeErr), committedOwner)
 			}
 		}
 	}()
@@ -116,18 +144,20 @@ func (service *Service) Setup(ctx context.Context, config Config) (*Result, erro
 		return nil, newError(CodePoolCorrupt, "pool-token", paths.Root, err)
 	}
 	metadata := PoolMetadata{
-		SchemaVersion:      PoolSchemaVersion,
-		Architecture:       "Managed ReFS Library Pool",
-		CreatedAt:          service.now().UTC(),
-		OwnershipToken:     token,
-		VHDXPath:           paths.VHDX,
-		VHDXIdentity:       identity,
-		VolumeGUIDPath:     volume.VolumeGUIDPath,
-		Filesystem:         volume.Filesystem,
-		ClusterSize:        volume.ClusterSize,
-		MaximumBytes:       config.MaximumBytes,
-		SoftBudgetBytes:    config.SoftBudgetBytes,
-		WorkerReserveBytes: config.WorkerReserveBytes,
+		SchemaVersion:            PoolSchemaVersion,
+		Architecture:             "Managed ReFS Library Pool",
+		CreatedAt:                service.now().UTC(),
+		OwnershipToken:           token,
+		VHDXPath:                 paths.VHDX,
+		VHDXIdentity:             identity,
+		VolumeGUIDPath:           volume.VolumeGUIDPath,
+		Filesystem:               volume.Filesystem,
+		ClusterSize:              volume.ClusterSize,
+		MaximumBytes:             config.MaximumBytes,
+		SoftBudgetBytes:          config.SoftBudgetBytes,
+		WorkerReserveBytes:       config.WorkerReserveBytes,
+		MinimumHostFreeBytes:     config.MinimumHostFreeBytes,
+		VHDXOverheadReserveBytes: config.VHDXOverheadReserveBytes,
 	}
 	if err := writeJSONAtomic(paths.PoolFile, metadata, 0600); err != nil {
 		return nil, newError(CodePoolCorrupt, "write-pool-metadata", paths.PoolFile, err)
@@ -136,11 +166,16 @@ func (service *Service) Setup(ctx context.Context, config Config) (*Result, erro
 		return nil, newError(CodePoolCorrupt, "write-owner-metadata", paths.Owner, err)
 	}
 	committedOwner = true
-	closeStarted := time.Now()
-	if err := mounted.Close(ctx); err != nil {
-		return nil, newError(CodeCleanupFailed, "detach-pool-after-setup", paths.VHDX, err)
+	residual, err := measureMountedResidual(paths)
+	if err != nil {
+		return nil, newError(CodeCleanupFailed, "measure-mounted-residual", paths.PoolRoot, err)
 	}
+	closeStarted := time.Now()
+	closeErr := closeMountedBounded(mounted)
 	closed = true
+	if closeErr != nil {
+		return nil, cleanupFailure("detach-pool-after-setup", paths.VHDX, closeErr, true)
+	}
 	cleanupSafe = true
 	usage, _ := service.native.FileUsage(paths.VHDX)
 	hostFree, _ := service.native.HostFreeBytes(paths.Root)
@@ -160,6 +195,10 @@ func (service *Service) Setup(ctx context.Context, config Config) (*Result, erro
 	result.Metrics.HostFreeBytes = hostFree
 	result.Metrics.CleanupMs = time.Since(closeStarted).Milliseconds()
 	result.NativeWindowsStatus = "MEASURED"
+	if err := completePostDetachResidual(paths, &residual, true); err != nil {
+		return nil, newError(CodeCleanupFailed, "measure-post-detach-residual", paths.Mount, err)
+	}
+	result.Residual = residual
 	return result, nil
 }
 
@@ -171,7 +210,7 @@ func (service *Service) Probe(ctx context.Context, config Config) (*Result, erro
 	return service.inspect(ctx, config, true)
 }
 
-func (service *Service) inspect(ctx context.Context, config Config, runProbe bool) (*Result, error) {
+func (service *Service) inspect(ctx context.Context, config Config, runProbe bool) (returnResult *Result, returnErr error) {
 	config, paths, err := NewPaths(config)
 	if err != nil {
 		return nil, err
@@ -193,7 +232,9 @@ func (service *Service) inspect(ctx context.Context, config Config, runProbe boo
 	closed := false
 	defer func() {
 		if !closed {
-			_ = mounted.Close(context.Background())
+			if closeErr := closeMountedBounded(mounted); closeErr != nil {
+				returnErr = cleanupFailure("cleanup-mounted-inspection", paths.VHDX, errors.Join(returnErr, closeErr), true)
+			}
 		}
 	}()
 	volume := mounted.Volume()
@@ -229,11 +270,16 @@ func (service *Service) inspect(ctx context.Context, config Config, runProbe boo
 		clonePoolMetrics.RefsVolumeUsedBefore = result.Metrics.RefsVolumeUsedBefore
 		result.Metrics = clonePoolMetrics
 	}
-	closeStarted := time.Now()
-	if err := mounted.Close(ctx); err != nil {
-		return nil, newError(CodeCleanupFailed, "detach-pool-after-inspection", paths.VHDX, err)
+	residual, err := measureMountedResidual(paths)
+	if err != nil {
+		return nil, newError(CodeCleanupFailed, "measure-mounted-residual", paths.PoolRoot, err)
 	}
+	closeStarted := time.Now()
+	closeErr := closeMountedBounded(mounted)
 	closed = true
+	if closeErr != nil {
+		return nil, cleanupFailure("detach-pool-after-inspection", paths.VHDX, closeErr, true)
+	}
 	usage, _ := service.native.FileUsage(paths.VHDX)
 	hostFree, _ := service.native.HostFreeBytes(paths.Root)
 	result.Metrics.HostVHDXLogicalBytes = usage.LogicalBytes
@@ -241,10 +287,14 @@ func (service *Service) inspect(ctx context.Context, config Config, runProbe boo
 	result.Metrics.HostFreeBytes = hostFree
 	result.Metrics.CleanupMs = time.Since(closeStarted).Milliseconds()
 	result.NativeWindowsStatus = "MEASURED"
+	if err := completePostDetachResidual(paths, &residual, true); err != nil {
+		return nil, newError(CodeCleanupFailed, "measure-post-detach-residual", paths.Mount, err)
+	}
+	result.Residual = residual
 	return result, nil
 }
 
-func (service *Service) Remove(ctx context.Context, config Config) (*Result, error) {
+func (service *Service) Remove(ctx context.Context, config Config) (returnResult *Result, returnErr error) {
 	config, paths, err := NewPaths(config)
 	if err != nil {
 		return nil, err
@@ -263,30 +313,59 @@ func (service *Service) Remove(ctx context.Context, config Config) (*Result, err
 	if err != nil {
 		return nil, mapNativeError("mount-pool-for-remove", paths.VHDX, err)
 	}
+	closed := false
+	defer func() {
+		if !closed {
+			if closeErr := closeMountedBounded(mounted); closeErr != nil {
+				returnErr = cleanupFailure("cleanup-mounted-remove", paths.VHDX, errors.Join(returnErr, closeErr), true)
+			}
+		}
+	}()
 	volume := mounted.Volume()
 	poolMetadata, readErr := readPoolMetadata(paths.PoolFile)
 	identityErr := comparePoolIdentity(paths, hostMetadata, poolMetadata, volume)
 	if readErr != nil || identityErr != nil {
-		_ = mounted.Close(context.Background())
 		return nil, errors.Join(readErr, identityErr)
 	}
 	if active, err := countEntries(paths.Leases, "active-", ".json"); err != nil || active != 0 {
-		_ = mounted.Close(context.Background())
 		if err == nil {
 			err = fmt.Errorf("%d active baseline references", active)
 		}
 		return nil, newError(CodeBaselineInUse, "remove-pool", paths.Leases, err)
 	}
+	if journals, err := countEntries(paths.Leases, "worker-", ".json"); err != nil || journals != 0 {
+		if err == nil {
+			err = fmt.Errorf("%d worker lease journals remain", journals)
+		}
+		return nil, newError(CodeLeaseConflict, "remove-pool", paths.Leases, err)
+	}
+	if artifacts, err := countCoordinationArtifacts(paths.Leases); err != nil || artifacts != 0 {
+		if err == nil {
+			err = fmt.Errorf("%d coordination artifacts remain", artifacts)
+		}
+		return nil, newError(CodeOrphanFound, "remove-pool", paths.Leases, err)
+	}
 	if workers, err := countDirectories(paths.Workers); err != nil || workers != 0 {
-		_ = mounted.Close(context.Background())
 		if err == nil {
 			err = fmt.Errorf("%d worker directories remain", workers)
 		}
 		return nil, newError(CodeLeaseConflict, "remove-pool", paths.Workers, err)
 	}
+	if probes, err := countEntries(paths.PoolRoot, ".block-clone-probe-", ""); err != nil || probes != 0 {
+		if err == nil {
+			err = fmt.Errorf("%d synthetic probe directories remain", probes)
+		}
+		return nil, newError(CodeCleanupFailed, "remove-pool", paths.PoolRoot, err)
+	}
+	residual, err := measureMountedResidual(paths)
+	if err != nil {
+		return nil, newError(CodeCleanupFailed, "measure-mounted-residual", paths.PoolRoot, err)
+	}
 	started := time.Now()
-	if err := mounted.Close(ctx); err != nil {
-		return nil, newError(CodeCleanupFailed, "detach-pool-before-remove", paths.VHDX, err)
+	closeErr := closeMountedBounded(mounted)
+	closed = true
+	if closeErr != nil {
+		return nil, cleanupFailure("detach-pool-before-remove", paths.VHDX, closeErr, true)
 	}
 	identity, err := service.native.FileIdentity(paths.VHDX)
 	if err != nil || identity != hostMetadata.VHDXIdentity {
@@ -301,13 +380,35 @@ func (service *Service) Remove(ctx context.Context, config Config) (*Result, err
 	if err := os.Remove(paths.Mount); err != nil && !os.IsNotExist(err) {
 		return nil, newError(CodeCleanupFailed, "remove-mount-directory", paths.Mount, err)
 	}
-	_ = os.Remove(paths.Root)
+	if err := os.Remove(paths.Root); err != nil && !os.IsNotExist(err) {
+		return nil, newError(CodeCleanupFailed, "remove-storage-root", paths.Root, err)
+	}
 	result := baseResult("remove", paths, volume)
 	result.Status = "PASS"
 	result.BlockCloneSupported = volume.SupportsBlockCloning
 	result.Metrics.CleanupMs = time.Since(started).Milliseconds()
 	result.NativeWindowsStatus = "MEASURED"
+	if err := completePostDetachResidual(paths, &residual, true); err != nil {
+		return nil, newError(CodeCleanupFailed, "measure-post-remove-residual", paths.Root, err)
+	}
+	result.Residual = residual
 	return result, nil
+}
+
+const cleanupTimeout = 20 * time.Second
+
+func closeMountedBounded(mounted MountedPool) error {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	return mounted.Close(cleanupCtx)
+}
+
+func cleanupFailure(operation, path string, cause error, ownerCommitted bool) error {
+	return cleanupFailureState(operation, path, path, cause, ownerCommitted, "uncertain")
+}
+
+func cleanupFailureState(operation, path, ownedVHDX string, cause error, ownerCommitted bool, state string) error {
+	return &Error{Code: CodeCleanupFailed, Operation: operation, Path: path, Cause: cause, CleanupState: state, OwnerMetadataCommitted: ownerCommitted, OwnedVHDXPath: ownedVHDX, ManualRecoveryRequired: state != "released"}
 }
 
 func (service *Service) checkNative(ctx context.Context) error {
@@ -333,7 +434,7 @@ func (service *Service) checkNative(ctx context.Context) error {
 	return nil
 }
 
-func (service *Service) syntheticCloneProbe(ctx context.Context, paths Paths, clusterSize int64) (CloneMetrics, bool, error) {
+func (service *Service) syntheticCloneProbe(ctx context.Context, paths Paths, clusterSize int64) (metrics CloneMetrics, unchanged bool, returnErr error) {
 	if clusterSize <= 0 {
 		return CloneMetrics{}, false, newError(CodePoolCorrupt, "synthetic-clone", paths.PoolRoot, fmt.Errorf("invalid cluster size"))
 	}
@@ -347,7 +448,11 @@ func (service *Service) syntheticCloneProbe(ctx context.Context, paths Paths, cl
 	if err := os.MkdirAll(sourceRoot, 0700); err != nil {
 		return CloneMetrics{}, false, newError(CodeCloneFailed, "create-synthetic-probe", sourceRoot, err)
 	}
-	defer os.RemoveAll(probeRoot)
+	defer func() {
+		if cleanupErr := service.removeAll(probeRoot); cleanupErr != nil {
+			returnErr = errors.Join(returnErr, cleanupFailureState("cleanup-synthetic-probe", probeRoot, paths.VHDX, cleanupErr, false, "failed"))
+		}
+	}()
 	payload := make([]byte, clusterSize*2+137)
 	for index := range payload {
 		payload[index] = byte((index*31 + 17) % 251)
@@ -356,11 +461,19 @@ func (service *Service) syntheticCloneProbe(ctx context.Context, paths Paths, cl
 	if err := os.WriteFile(sourceFile, payload, 0600); err != nil {
 		return CloneMetrics{}, false, newError(CodeCloneFailed, "write-synthetic-source", sourceFile, err)
 	}
+	sparseSource := filepath.Join(sourceRoot, "sparse.bin")
+	if err := createSyntheticSparseFile(sparseSource, clusterSize); err != nil {
+		return CloneMetrics{}, false, newError(CodeCloneFailed, "write-synthetic-sparse-source", sparseSource, err)
+	}
+	sparseBefore, err := hashFileContext(ctx, sparseSource)
+	if err != nil {
+		return CloneMetrics{}, false, newError(CodeCloneFailed, "hash-synthetic-sparse-source", sparseSource, err)
+	}
 	sourceBefore, err := hashFileContext(ctx, sourceFile)
 	if err != nil {
 		return CloneMetrics{}, false, newError(CodeCloneFailed, "hash-synthetic-source", sourceFile, err)
 	}
-	metrics, err := service.cloner.CloneTree(ctx, sourceRoot, destinationRoot, clusterSize)
+	metrics, err = service.cloner.CloneTree(ctx, sourceRoot, destinationRoot, clusterSize)
 	if err != nil {
 		return metrics, false, mapNativeError("synthetic-block-clone", destinationRoot, err)
 	}
@@ -385,9 +498,27 @@ func (service *Service) syntheticCloneProbe(ctx context.Context, paths Paths, cl
 	if err != nil {
 		return metrics, false, newError(CodeCloneFailed, "rehash-synthetic-source", sourceFile, err)
 	}
-	unchanged := sourceBefore == sourceAfter
+	unchanged = sourceBefore == sourceAfter
 	if !unchanged {
 		return metrics, false, newError(CodeCloneFailed, "verify-allocate-on-write", sourceFile, fmt.Errorf("source changed after destination mutation"))
+	}
+	sparseDestination := filepath.Join(destinationRoot, "sparse.bin")
+	sparseAfterClone, err := hashFileContext(ctx, sparseDestination)
+	if err != nil || sparseAfterClone != sparseBefore {
+		return metrics, false, newError(CodeCloneFailed, "verify-synthetic-sparse-destination", sparseDestination, err)
+	}
+	sparseFile, err := os.OpenFile(sparseDestination, os.O_WRONLY, 0)
+	if err != nil {
+		return metrics, false, newError(CodeCloneFailed, "open-synthetic-sparse-destination", sparseDestination, err)
+	}
+	_, sparseWriteErr := sparseFile.WriteAt([]byte("private"), clusterSize)
+	sparseCloseErr := sparseFile.Close()
+	if sparseWriteErr != nil || sparseCloseErr != nil {
+		return metrics, false, newError(CodeCloneFailed, "mutate-synthetic-sparse-destination", sparseDestination, errors.Join(sparseWriteErr, sparseCloseErr))
+	}
+	sparseSourceAfter, err := hashFileContext(ctx, sparseSource)
+	if err != nil || sparseSourceAfter != sparseBefore {
+		return metrics, false, newError(CodeCloneFailed, "verify-sparse-allocate-on-write", sparseSource, err)
 	}
 	return metrics, true, nil
 }
@@ -422,7 +553,7 @@ func (service *Service) validateHostOwnership(paths Paths, metadata PoolMetadata
 	if err := validateOwnedPaths(paths); err != nil {
 		return err
 	}
-	if metadata.SchemaVersion != PoolSchemaVersion || metadata.Architecture != "Managed ReFS Library Pool" || metadata.OwnershipToken == "" || filepath.Clean(metadata.VHDXPath) != paths.VHDX {
+	if metadata.SchemaVersion != PoolSchemaVersion || metadata.Architecture != "Managed ReFS Library Pool" || metadata.OwnershipToken == "" || filepath.Clean(metadata.VHDXPath) != paths.VHDX || metadata.MinimumHostFreeBytes <= 0 || metadata.VHDXOverheadReserveBytes < 0 {
 		return newError(CodePoolCorrupt, "validate-owner-metadata", paths.Owner, fmt.Errorf("owner metadata does not match requested pool"))
 	}
 	identity, err := service.native.FileIdentity(paths.VHDX)
@@ -439,7 +570,7 @@ func (service *Service) validateHostOwnership(paths Paths, metadata PoolMetadata
 }
 
 func comparePoolIdentity(paths Paths, host, pool PoolMetadata, volume VolumeInfo) error {
-	if host.OwnershipToken != pool.OwnershipToken || host.VHDXIdentity != pool.VHDXIdentity || host.VolumeGUIDPath != pool.VolumeGUIDPath || !strings.EqualFold(pool.VolumeGUIDPath, volume.VolumeGUIDPath) || !strings.EqualFold(pool.Filesystem, volume.Filesystem) || pool.ClusterSize != volume.ClusterSize {
+	if host.OwnershipToken != pool.OwnershipToken || host.VHDXIdentity != pool.VHDXIdentity || host.VolumeGUIDPath != pool.VolumeGUIDPath || host.MinimumHostFreeBytes != pool.MinimumHostFreeBytes || host.VHDXOverheadReserveBytes != pool.VHDXOverheadReserveBytes || !strings.EqualFold(pool.VolumeGUIDPath, volume.VolumeGUIDPath) || !strings.EqualFold(pool.Filesystem, volume.Filesystem) || pool.ClusterSize != volume.ClusterSize {
 		return newError(CodePoolCorrupt, "compare-pool-identity", paths.PoolFile, fmt.Errorf("host, pool, VHDX volume identity mismatch"))
 	}
 	return nil
@@ -475,7 +606,7 @@ func validateVolume(volume VolumeInfo) error {
 
 func baseResult(operation string, paths Paths, volume VolumeInfo) *Result {
 	return &Result{
-		SchemaVersion:            "1",
+		SchemaVersion:            "2",
 		Operation:                operation,
 		Architecture:             "Managed ReFS Library Pool",
 		ReleasedVersionModified:  false,
@@ -489,14 +620,19 @@ func baseResult(operation string, paths Paths, volume VolumeInfo) *Result {
 
 func poolMetricsFromClone(clone CloneMetrics) PoolMetrics {
 	return PoolMetrics{
-		ClonedFileCount:         clone.ClonedFileCount,
-		ClonedBytes:             clone.ClonedBytes,
-		PhysicalCopiedFileCount: clone.PhysicalCopiedFileCount,
-		PhysicalCopiedBytes:     clone.PhysicalCopiedBytes,
-		TailCopiedBytes:         clone.TailCopiedBytes,
-		MetadataOnlyFileCount:   clone.MetadataOnlyFileCount,
-		FailedFileCount:         clone.FailedFileCount,
-		CloneTreeMs:             clone.CloneTreeMs,
+		ClonedFileCount:            clone.ClonedFileCount,
+		ClonedBytes:                clone.ClonedBytes,
+		PhysicalCopiedFileCount:    clone.PhysicalCopiedFileCount,
+		PhysicalCopiedBytes:        clone.PhysicalCopiedBytes,
+		TailCopiedBytes:            clone.TailCopiedBytes,
+		MetadataOnlyFileCount:      clone.MetadataOnlyFileCount,
+		FailedFileCount:            clone.FailedFileCount,
+		CloneTreeMs:                clone.CloneTreeMs,
+		SparseFileCount:            clone.SparseFileCount,
+		SparseLogicalBytes:         clone.SparseLogicalBytes,
+		SparseAllocatedSourceBytes: clone.SparseAllocatedSourceBytes,
+		SparseClonedBytes:          clone.SparseClonedBytes,
+		SparseHoleBytes:            clone.SparseHoleBytes,
 	}
 }
 
@@ -527,7 +663,7 @@ func countDirectories(root string) (int, error) {
 	}
 	count := 0
 	for _, entry := range entries {
-		if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+		if entry.IsDir() {
 			count++
 		}
 	}

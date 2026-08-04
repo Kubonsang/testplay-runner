@@ -146,11 +146,14 @@ no-replace rename into `quarantine` before a replacement can be built.
 Acquire is:
 
 ```text
-verify baseline
-→ reject orphan leases
-→ check current ReFS used + active reservations + new reservation
-→ acquire baseline active-use marker
-→ persist requested/cloning lease
+acquire pool reservation lock
+→ authoritatively remeasure ReFS used and host free space
+→ validate orphan leases and active reservations
+→ persist requested lease with O_EXCL
+→ release reservation lock
+→ verify baseline under its coordination lock
+→ acquire baseline active-use marker with O_EXCL
+→ persist cloning lease
 → Block Clone every regular file
 → verify baseline again
 → make worker writable
@@ -180,18 +183,18 @@ reused.
 The Windows implementation walks the tree and rejects reparse points and
 unsupported entry types. For each regular file it:
 
-1. creates and pre-sizes the destination;
+1. creates the destination and marks it sparse before sizing when required;
 2. compares volume serials, filesystem names, and block-refcount flags;
-3. mirrors sparse state;
+3. queries sparse allocation with `FSCTL_QUERY_ALLOCATED_RANGES`;
 4. compares source and destination integrity settings;
 5. verifies the measured ReFS cluster size;
-6. submits cluster-aligned requests strictly smaller than 4 GiB;
-7. physically writes only the measured unaligned tail;
+6. submits only allocated, cluster-aligned requests strictly smaller than 4 GiB;
+7. leaves holes unallocated and copies only unaligned allocated fragments;
 8. restores file attributes and creation/access/write timestamps; and
 9. verifies destination logical size.
 
 If no aligned bytes were cloned, if native Block Clone is unsupported, or if
-physical bytes exceed measured tails, the operation fails with
+physical bytes exceed measured unaligned fragments, the operation fails with
 `refs-block-clone-unavailable` and `fallbackUsed: false`.
 
 These constraints follow Microsoft's [ReFS Block Cloning documentation](https://learn.microsoft.com/en-us/windows-server/storage/refs/block-cloning),
@@ -206,6 +209,8 @@ The default is provisional until Windows hardware measurements exist:
 VHDX hard ceiling: 16 GiB
 testplay soft budget: 14 GiB
 per-worker reservation / emergency reserve: 2 GiB
+minimum host free-space floor: 30 GiB
+experimental VHDX overhead reserve: 2 GiB
 ```
 
 When the maximum is overridden, the default soft budget is the maximum minus
@@ -230,3 +235,56 @@ ReFS, `FSCTL_DUPLICATE_EXTENTS_TO_FILE`, junction, or Unity code.
 
 Until the Windows hardware gate is run, the native verdict is `NOT MEASURED`.
 No unexecuted native result may be recorded as PASS.
+
+## Pre-native hardening
+
+Worker capacity is reserved under the process-safe
+`<pool>/leases/.reservation.lock`. While holding it, acquire remeasures ReFS
+used bytes and host free space, validates every worker journal and orphan, sums
+active reservations, and creates the new lease with `O_EXCL`. The lock honors
+context cancellation, is released before baseline verification or cloning,
+and is never deleted merely because it appears old. Caller-supplied current
+volume usage is not accepted.
+
+Setup requires the provisional 30 GiB host free-space floor plus a 2 GiB VHDX
+overhead reserve and a 512 MiB initial-allocation allowance. Worker acquire
+remeasures the host and returns `host-free-space-floor` below the floor. These
+values remain experimental until native measurements exist.
+
+Baseline acquire, clear, and quarantine are serialized by
+`leases/baseline-<digest>.coord`; mutation also records a marker. Active-use
+checks and marker creation occur inside the same critical section, so baseline
+rename and a new reference cannot both succeed. Protection metadata records a
+schema, root ACL/mode digest, file and directory policies, and entry counts.
+Content-identical but writable or ACL-damaged baselines are corrupt.
+
+Worker release persists the `releasing`, junction removed, worker quarantined,
+worker deleted, active-use released, and `released` milestones. A repeated
+call resumes safely, and path absence is accepted only with prior ownership
+evidence.
+
+Sparse files are cloned from their allocated ranges. The destination is marked
+sparse before sizing; only aligned allocated extents are block-cloned; holes
+remain holes; and unaligned allocated fragments are physically copied and
+measured. There is no query-failure or whole-file copy fallback.
+
+Mounted cleanup uses a bounded 20-second context and joins primary and cleanup
+errors. Structured failures report `cleanupState`,
+`ownerMetadataCommitted`, `ownedVhdxPath`, and
+`manualRecoveryRequired`; uncertain detach or ownership always preserves the
+VHDX.
+
+Each residual is `{ "measured": boolean, "count": n }` for active baseline
+uses, worker journals/directories, synthetic probe directories, junctions,
+mount reparse/content state, attached disks, probe processes, and the owned
+VHDX. Unmeasured is never treated as zero. The native script records
+`PROMISING` only after regular and sparse clone, allocate-on-write isolation,
+forbidden-path checks, and measured-zero residuals all pass.
+
+Pre/post clone verification latency, verified file count, and verified logical
+bytes retain the cost of full hashes. A later latest-main design may evaluate a
+generation token, USN journal, or validated cache without weakening this
+correctness gate.
+
+Current repository status is `STATIC READY FOR WINDOWS VALIDATION`. This is a
+source/test readiness statement, not native evidence and not a release.

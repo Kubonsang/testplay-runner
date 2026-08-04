@@ -22,6 +22,7 @@ const (
 	fsctlDuplicateExtentsToFile  = uint32(0x00098344)
 	fsctlGetIntegrityInformation = uint32(0x0009027c)
 	fsctlSetSparse               = uint32(0x000900c4)
+	fsctlQueryAllocatedRanges    = uint32(0x000940cf)
 	fileAttributeSparseFile      = uint32(0x00000200)
 )
 
@@ -42,6 +43,11 @@ type integrityInformation struct {
 	Flags                    uint32
 	ChecksumChunkSizeInBytes uint32
 	ClusterSizeInBytes       uint32
+}
+
+type fileAllocatedRangeBuffer struct {
+	FileOffset int64
+	Length     int64
 }
 
 type volumeIdentity struct {
@@ -122,6 +128,11 @@ func (nativeTreeCloner) CloneTree(ctx context.Context, source, destination strin
 			metrics.PhysicalCopiedBytes += fileMetrics.PhysicalCopiedBytes
 			metrics.TailCopiedBytes += fileMetrics.TailCopiedBytes
 			metrics.MetadataOnlyFileCount += fileMetrics.MetadataOnlyFileCount
+			metrics.SparseFileCount += fileMetrics.SparseFileCount
+			metrics.SparseLogicalBytes += fileMetrics.SparseLogicalBytes
+			metrics.SparseAllocatedSourceBytes += fileMetrics.SparseAllocatedSourceBytes
+			metrics.SparseClonedBytes += fileMetrics.SparseClonedBytes
+			metrics.SparseHoleBytes += fileMetrics.SparseHoleBytes
 			if err != nil {
 				metrics.FailedFileCount++
 				return err
@@ -172,11 +183,22 @@ func cloneFile(ctx context.Context, sourcePath, destinationPath string, clusterS
 			_ = destination.Close()
 		}
 	}()
+	sourceHandle := windows.Handle(source.Fd())
+	destinationHandle := windows.Handle(destination.Fd())
+	sourceAttributes, err := fileAttributes(sourcePath)
+	if err != nil {
+		return metrics, err
+	}
+	isSparse := sourceAttributes&fileAttributeSparseFile != 0
+	if isSparse {
+		var returned uint32
+		if err := windows.DeviceIoControl(destinationHandle, fsctlSetSparse, nil, 0, nil, 0, &returned, nil); err != nil {
+			return metrics, newError(CodeBlockCloneUnavailable, "set-destination-sparse", destinationPath, err)
+		}
+	}
 	if err := destination.Truncate(info.Size()); err != nil {
 		return metrics, err
 	}
-	sourceHandle := windows.Handle(source.Fd())
-	destinationHandle := windows.Handle(destination.Fd())
 	sourceVolume, err := volumeForHandle(sourceHandle)
 	if err != nil {
 		return metrics, err
@@ -190,16 +212,6 @@ func cloneFile(ctx context.Context, sourcePath, destinationPath string, clusterS
 	}
 	if sourceVolume.Flags&fileSupportsBlockRefcounting == 0 || destinationVolume.Flags&fileSupportsBlockRefcounting == 0 {
 		return metrics, newError(CodeBlockCloneUnavailable, "block-refcount-capability", destinationPath, nil)
-	}
-	sourceAttributes, err := fileAttributes(sourcePath)
-	if err != nil {
-		return metrics, err
-	}
-	if sourceAttributes&fileAttributeSparseFile != 0 {
-		var returned uint32
-		if err := windows.DeviceIoControl(destinationHandle, fsctlSetSparse, nil, 0, nil, 0, &returned, nil); err != nil {
-			return metrics, newError(CodeBlockCloneUnavailable, "set-destination-sparse", destinationPath, err)
-		}
 	}
 	sourceIntegrity, err := getIntegrity(sourceHandle)
 	if err != nil {
@@ -215,11 +227,28 @@ func cloneFile(ctx context.Context, sourcePath, destinationPath string, clusterS
 	if int64(sourceIntegrity.ClusterSizeInBytes) != clusterSize || int64(destinationIntegrity.ClusterSizeInBytes) != clusterSize {
 		return metrics, newError(CodePoolCorrupt, "cluster-size-mismatch", destinationPath, fmt.Errorf("expected=%d source=%d destination=%d", clusterSize, sourceIntegrity.ClusterSizeInBytes, destinationIntegrity.ClusterSizeInBytes))
 	}
-	plan, err := PlanClone(info.Size(), clusterSize)
-	if err != nil {
-		return metrics, err
+	var cloneRanges, physicalRanges []CloneRange
+	if isSparse {
+		plan, err := PlanSparseCloneFromQuery(info.Size(), clusterSize, func() ([]AllocatedRange, error) { return queryAllocatedRangesForClone(sourceHandle, info.Size()) })
+		if err != nil {
+			return metrics, newError(CodeBlockCloneUnavailable, "FSCTL_QUERY_ALLOCATED_RANGES", sourcePath, err)
+		}
+		cloneRanges, physicalRanges = plan.CloneRanges, plan.PhysicalRanges
+		metrics.SparseFileCount = 1
+		metrics.SparseLogicalBytes = info.Size()
+		metrics.SparseAllocatedSourceBytes = plan.AllocatedBytes
+		metrics.SparseHoleBytes = plan.HoleBytes
+	} else {
+		plan, err := PlanClone(info.Size(), clusterSize)
+		if err != nil {
+			return metrics, err
+		}
+		cloneRanges = plan.Ranges
+		if plan.TailBytes > 0 {
+			physicalRanges = []CloneRange{{Offset: plan.TailOffset, Length: plan.TailBytes}}
+		}
 	}
-	for _, cloneRange := range plan.Ranges {
+	for _, cloneRange := range cloneRanges {
 		if err := ctx.Err(); err != nil {
 			return metrics, err
 		}
@@ -239,21 +268,22 @@ func cloneFile(ctx context.Context, sourcePath, destinationPath string, clusterS
 			return metrics, newError(code, "FSCTL_DUPLICATE_EXTENTS_TO_FILE", destinationPath, err)
 		}
 		metrics.ClonedBytes += cloneRange.Length
+		if isSparse {
+			metrics.SparseClonedBytes += cloneRange.Length
+		}
 	}
-	if len(plan.Ranges) > 0 {
+	if len(cloneRanges) > 0 {
 		metrics.ClonedFileCount = 1
 	}
-	if plan.TailBytes > 0 {
-		buffer := make([]byte, plan.TailBytes)
-		if _, err := source.ReadAt(buffer, plan.TailOffset); err != nil && err != io.EOF {
+	for _, physicalRange := range physicalRanges {
+		if err := copyFileRange(ctx, source, destination, physicalRange); err != nil {
 			return metrics, err
 		}
-		if _, err := destination.WriteAt(buffer, plan.TailOffset); err != nil {
-			return metrics, err
-		}
+		metrics.PhysicalCopiedBytes += physicalRange.Length
+		metrics.TailCopiedBytes += physicalRange.Length
+	}
+	if len(physicalRanges) > 0 {
 		metrics.PhysicalCopiedFileCount = 1
-		metrics.PhysicalCopiedBytes = plan.TailBytes
-		metrics.TailCopiedBytes = plan.TailBytes
 	}
 	if info.Size() == 0 {
 		metrics.MetadataOnlyFileCount = 1
@@ -279,6 +309,76 @@ func cloneFile(ctx context.Context, sourcePath, destinationPath string, clusterS
 		return metrics, err
 	}
 	return metrics, nil
+}
+
+var queryAllocatedRangesForClone = queryAllocatedRanges
+
+func queryAllocatedRanges(handle windows.Handle, fileSize int64) ([]AllocatedRange, error) {
+	if fileSize == 0 {
+		return nil, nil
+	}
+	const rangeBatch = 128
+	output := make([]fileAllocatedRangeBuffer, rangeBatch)
+	var ranges []AllocatedRange
+	for offset := int64(0); offset < fileSize; {
+		input := fileAllocatedRangeBuffer{FileOffset: offset, Length: fileSize - offset}
+		var returned uint32
+		err := windows.DeviceIoControl(handle, fsctlQueryAllocatedRanges,
+			(*byte)(unsafe.Pointer(&input)), uint32(unsafe.Sizeof(input)),
+			(*byte)(unsafe.Pointer(&output[0])), uint32(len(output))*uint32(unsafe.Sizeof(output[0])), &returned, nil)
+		if err != nil && !errors.Is(err, windows.ERROR_MORE_DATA) {
+			return nil, err
+		}
+		count := int(returned / uint32(unsafe.Sizeof(output[0])))
+		if returned%uint32(unsafe.Sizeof(output[0])) != 0 || count > len(output) {
+			return nil, fmt.Errorf("malformed allocated range response: %d bytes", returned)
+		}
+		if count == 0 {
+			break
+		}
+		for _, item := range output[:count] {
+			ranges = append(ranges, AllocatedRange{Offset: item.FileOffset, Length: item.Length})
+		}
+		next := output[count-1].FileOffset + output[count-1].Length
+		if next <= offset {
+			return nil, fmt.Errorf("allocated range query made no progress")
+		}
+		offset = next
+		if err == nil {
+			break
+		}
+	}
+	return ranges, nil
+}
+
+func copyFileRange(ctx context.Context, source, destination *os.File, cloneRange CloneRange) error {
+	buffer := make([]byte, 1<<20)
+	for offset, remaining := cloneRange.Offset, cloneRange.Length; remaining > 0; {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		chunk := int64(len(buffer))
+		if chunk > remaining {
+			chunk = remaining
+		}
+		read, err := source.ReadAt(buffer[:chunk], offset)
+		if err != nil && err != io.EOF {
+			return err
+		}
+		if int64(read) != chunk {
+			return io.ErrUnexpectedEOF
+		}
+		written, err := destination.WriteAt(buffer[:chunk], offset)
+		if err != nil {
+			return err
+		}
+		if written != read {
+			return io.ErrShortWrite
+		}
+		offset += chunk
+		remaining -= chunk
+	}
+	return nil
 }
 
 func volumeForHandle(handle windows.Handle) (volumeIdentity, error) {

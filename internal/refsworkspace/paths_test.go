@@ -11,7 +11,7 @@ func TestNewPathsSeparatesHardAndSoftCeilings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.MaximumBytes != DefaultMaximumBytes || config.SoftBudgetBytes != DefaultSoftBudget || config.WorkerReserveBytes != DefaultReserveBytes {
+	if config.MaximumBytes != DefaultMaximumBytes || config.SoftBudgetBytes != DefaultSoftBudget || config.WorkerReserveBytes != DefaultReserveBytes || config.MinimumHostFreeBytes != DefaultMinimumHostFreeBytes || config.VHDXOverheadReserveBytes != DefaultVHDXOverheadReserveBytes {
 		t.Fatalf("config=%+v", config)
 	}
 	if !PathWithin(paths.Root, paths.VHDX) || !PathWithin(paths.Mount, paths.PoolRoot) {

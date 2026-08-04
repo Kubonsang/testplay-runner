@@ -3,6 +3,7 @@ package refsworkspace
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,10 +18,13 @@ import (
 type BaselineState string
 
 const (
-	BaselineMissing BaselineState = "missing"
-	BaselineValid   BaselineState = "valid"
-	BaselineCorrupt BaselineState = "corrupt"
-	BaselineStale   BaselineState = "stale"
+	BaselineMissing   BaselineState = "missing"
+	BaselineValid     BaselineState = "valid"
+	BaselineCorrupt   BaselineState = "corrupt"
+	BaselineStale     BaselineState = "stale"
+	BaselineAvailable BaselineState = "available"
+	BaselineInUse     BaselineState = "in-use"
+	BaselineMutating  BaselineState = "mutating"
 )
 
 const (
@@ -31,12 +35,12 @@ const (
 var digestPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 type BaselineMetadata struct {
-	SchemaVersion  int              `json:"schemaVersion"`
-	Key            CompatibilityKey `json:"key"`
-	CreatedAt      time.Time        `json:"createdAt"`
-	Library        TreeInfo         `json:"library"`
-	OwnershipToken string           `json:"ownershipToken"`
-	Protection     []string         `json:"protection"`
+	SchemaVersion  int                `json:"schemaVersion"`
+	Key            CompatibilityKey   `json:"key"`
+	CreatedAt      time.Time          `json:"createdAt"`
+	Library        TreeInfo           `json:"library"`
+	OwnershipToken string             `json:"ownershipToken"`
+	Protection     ProtectionEvidence `json:"protection"`
 }
 
 type Baseline struct {
@@ -46,9 +50,10 @@ type Baseline struct {
 }
 
 type BaselineResolution struct {
-	State    BaselineState `json:"state"`
-	Baseline *Baseline     `json:"baseline,omitempty"`
-	Reason   string        `json:"reason,omitempty"`
+	State             BaselineState `json:"state"`
+	Baseline          *Baseline     `json:"baseline,omitempty"`
+	Reason            string        `json:"reason,omitempty"`
+	CoordinationState BaselineState `json:"coordinationState,omitempty"`
 }
 
 type BaselineMetrics struct {
@@ -65,8 +70,9 @@ type BaselineMetrics struct {
 type BaselineBuilder func(ctx context.Context, libraryPath string) error
 
 type LibraryBaselineStore struct {
-	paths Paths
-	now   func() time.Time
+	paths            Paths
+	now              func() time.Time
+	coordinationHook func(string)
 }
 
 func NewLibraryBaselineStore(paths Paths) *LibraryBaselineStore {
@@ -105,9 +111,8 @@ func (s *LibraryBaselineStore) Resolve(ctx context.Context, key CompatibilityKey
 	return BaselineResolution{State: BaselineValid, Baseline: baseline}, metrics, nil
 }
 
-func (s *LibraryBaselineStore) Ensure(ctx context.Context, key CompatibilityKey, build BaselineBuilder) (*Baseline, BaselineState, BaselineMetrics, error) {
+func (s *LibraryBaselineStore) Ensure(ctx context.Context, key CompatibilityKey, build BaselineBuilder) (returnBaseline *Baseline, returnState BaselineState, metrics BaselineMetrics, returnErr error) {
 	started := time.Now()
-	metrics := BaselineMetrics{}
 	if build == nil {
 		return nil, "", metrics, newError(CodeInvalidConfiguration, "ensure-baseline", "", fmt.Errorf("builder is required"))
 	}
@@ -115,7 +120,7 @@ func (s *LibraryBaselineStore) Ensure(ctx context.Context, key CompatibilityKey,
 	if err != nil {
 		return nil, "", metrics, err
 	}
-	defer lock.release()
+	defer func() { returnErr = errors.Join(returnErr, lock.release()) }()
 
 	resolution, verifyMetrics, err := s.Resolve(ctx, key)
 	metrics.BaselineVerifyMs += verifyMetrics.BaselineVerifyMs
@@ -145,7 +150,9 @@ func (s *LibraryBaselineStore) Ensure(ctx context.Context, key CompatibilityKey,
 	committed := false
 	defer func() {
 		if !committed {
-			_ = os.RemoveAll(staging)
+			if cleanupErr := os.RemoveAll(staging); cleanupErr != nil {
+				returnErr = errors.Join(returnErr, newError(CodeCleanupFailed, "cleanup-baseline-staging", staging, cleanupErr))
+			}
 		}
 	}()
 	libraryPath := filepath.Join(staging, "Library")
@@ -161,7 +168,8 @@ func (s *LibraryBaselineStore) Ensure(ctx context.Context, key CompatibilityKey,
 	if err := validateLibraryTree(libraryPath); err != nil {
 		return nil, resolution.State, metrics, newError(CodeBaselineCorrupt, "validate-baseline-tree", libraryPath, err)
 	}
-	if err := protectBaselineTree(libraryPath); err != nil {
+	protection, err := protectBaselineTree(libraryPath)
+	if err != nil {
 		return nil, resolution.State, metrics, newError(CodeBaselineCorrupt, "protect-baseline", libraryPath, err)
 	}
 	tree, err := HashTree(ctx, libraryPath)
@@ -174,7 +182,7 @@ func (s *LibraryBaselineStore) Ensure(ctx context.Context, key CompatibilityKey,
 		CreatedAt:      s.now().UTC(),
 		Library:        tree,
 		OwnershipToken: token,
-		Protection:     []string{"read-only-attributes", "acl-boundary", "active-use-markers", "integrity-hash"},
+		Protection:     protection,
 	}
 	if err := writeJSONAtomic(filepath.Join(staging, baselineMetadataFile), metadata, 0600); err != nil {
 		return nil, resolution.State, metrics, newError(CodeBaselineCorrupt, "write-baseline-metadata", staging, err)
@@ -237,21 +245,11 @@ func (s *LibraryBaselineStore) Verify(ctx context.Context, baseline *Baseline) (
 }
 
 func (s *LibraryBaselineStore) Clear(ctx context.Context, key CompatibilityKey) error {
-	if err := s.ensureNotInUse(key); err != nil {
-		return err
-	}
 	path := s.baselinePath(key)
 	if !PathWithin(s.paths.Baselines, path) || filepath.Dir(path) != s.paths.Baselines {
 		return newError(CodeOwnershipMismatch, "clear-baseline", path, fmt.Errorf("unsafe baseline path"))
 	}
-	resolution, _, err := s.Resolve(ctx, key)
-	if err != nil {
-		return err
-	}
-	if resolution.State == BaselineMissing {
-		return newError(CodeBaselineMissing, "clear-baseline", path, nil)
-	}
-	quarantined, err := s.Quarantine(ctx, key, "clear")
+	quarantined, err := s.quarantineCoordinated(ctx, key, "clear", "clear-baseline")
 	if err != nil {
 		return err
 	}
@@ -265,9 +263,30 @@ func (s *LibraryBaselineStore) Clear(ctx context.Context, key CompatibilityKey) 
 }
 
 func (s *LibraryBaselineStore) Quarantine(ctx context.Context, key CompatibilityKey, reason string) (string, error) {
+	return s.quarantineCoordinated(ctx, key, reason, "quarantine-baseline")
+}
+
+func (s *LibraryBaselineStore) quarantineCoordinated(ctx context.Context, key CompatibilityKey, reason, operation string) (destination string, returnErr error) {
 	if err := ctx.Err(); err != nil {
-		return "", cancelled("quarantine-baseline", s.baselinePath(key), err)
+		return "", cancelled(operation, s.baselinePath(key), err)
 	}
+	lock, err := s.acquireBaselineCoordination(ctx, key, operation)
+	if err != nil {
+		return "", err
+	}
+	defer func() { returnErr = errors.Join(returnErr, lock.release()) }()
+	if s.coordinationHook != nil {
+		s.coordinationHook(operation)
+	}
+	mutationMarker := s.baselineMutationPath(key)
+	if err := createJSONExclusive(mutationMarker, map[string]any{"schemaVersion": LeaseSchemaVersion, "keyDigest": key.Digest, "operation": operation}); err != nil {
+		return "", newError(CodeLeaseConflict, "create-baseline-mutation", mutationMarker, err)
+	}
+	defer func() {
+		if err := os.Remove(mutationMarker); err != nil && !os.IsNotExist(err) {
+			returnErr = errors.Join(returnErr, newError(CodeCleanupFailed, "remove-baseline-mutation", mutationMarker, err))
+		}
+	}()
 	if err := s.ensureNotInUse(key); err != nil {
 		return "", err
 	}
@@ -295,7 +314,7 @@ func (s *LibraryBaselineStore) Quarantine(ctx context.Context, key Compatibility
 		}
 		return '-'
 	}, strings.ToLower(reason))
-	destination := filepath.Join(s.paths.Quarantine, key.Digest+"-"+safeReason+"-"+token[:12])
+	destination = filepath.Join(s.paths.Quarantine, key.Digest+"-"+safeReason+"-"+token[:12])
 	if _, err := os.Lstat(destination); !os.IsNotExist(err) {
 		return "", newError(CodeCleanupFailed, "quarantine-no-replace", destination, fmt.Errorf("destination already exists"))
 	}
@@ -338,6 +357,9 @@ func (s *LibraryBaselineStore) verifyPath(ctx context.Context, path string, key 
 	if tree != metadata.Library {
 		return nil, "Library integrity verification failed", nil
 	}
+	if err := verifyBaselineProtection(libraryPath, metadata.Protection); err != nil {
+		return nil, "Library protection verification failed: " + err.Error(), nil
+	}
 	return &Baseline{Path: path, LibraryPath: libraryPath, Metadata: metadata}, "", nil
 }
 
@@ -357,7 +379,12 @@ func (s *LibraryBaselineStore) acquireCreationLock(key CompatibilityKey) (*creat
 	return &creationLock{path: path}, nil
 }
 
-func (lock *creationLock) release() { _ = os.RemoveAll(lock.path) }
+func (lock *creationLock) release() error {
+	if err := os.Remove(lock.path); err != nil {
+		return newError(CodeCleanupFailed, "release-baseline-creation-lock", lock.path, err)
+	}
+	return nil
+}
 
 type activeUse struct {
 	SchemaVersion  int    `json:"schemaVersion"`
@@ -366,7 +393,7 @@ type activeUse struct {
 	OwnershipToken string `json:"ownershipToken"`
 }
 
-func (s *LibraryBaselineStore) AcquireUse(key CompatibilityKey, leaseID string) (func() error, error) {
+func (s *LibraryBaselineStore) AcquireUse(ctx context.Context, key CompatibilityKey, leaseID string) (release func() error, returnErr error) {
 	if err := validateKey(key); err != nil {
 		return nil, err
 	}
@@ -379,6 +406,29 @@ func (s *LibraryBaselineStore) AcquireUse(key CompatibilityKey, leaseID string) 
 	}
 	if err := os.MkdirAll(s.paths.Leases, 0700); err != nil {
 		return nil, newError(CodeLeaseConflict, "create-lease-root", s.paths.Leases, err)
+	}
+	lock, err := s.acquireBaselineCoordination(ctx, key, "acquire-baseline-use")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { returnErr = errors.Join(returnErr, lock.release()) }()
+	if s.coordinationHook != nil {
+		s.coordinationHook("acquire-baseline-use")
+	}
+	if _, err := os.Lstat(s.baselineMutationPath(key)); err == nil {
+		return nil, newError(CodeBaselineInUse, "acquire-baseline-use", s.baselinePath(key), fmt.Errorf("baseline is mutating"))
+	} else if !os.IsNotExist(err) {
+		return nil, newError(CodeLeaseConflict, "inspect-baseline-mutation", s.baselineMutationPath(key), err)
+	}
+	resolution, _, err := s.Resolve(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if resolution.State == BaselineMissing {
+		return nil, newError(CodeBaselineMissing, "acquire-baseline-use", s.baselinePath(key), nil)
+	}
+	if resolution.State != BaselineValid {
+		return nil, newError(CodeBaselineCorrupt, "acquire-baseline-use", s.baselinePath(key), fmt.Errorf("state=%s reason=%s", resolution.State, resolution.Reason))
 	}
 	marker := filepath.Join(s.paths.Leases, "active-"+key.Digest+"-"+leaseID+".json")
 	data, _ := json.Marshal(activeUse{SchemaVersion: LeaseSchemaVersion, KeyDigest: key.Digest, LeaseID: leaseID, OwnershipToken: token})
@@ -402,6 +452,9 @@ func (s *LibraryBaselineStore) AcquireUse(key CompatibilityKey, leaseID string) 
 		}
 		contents, err := os.ReadFile(marker)
 		if err != nil {
+			if os.IsNotExist(err) && released {
+				return nil
+			}
 			return newError(CodeOwnershipMismatch, "read-baseline-use", marker, err)
 		}
 		var current activeUse
@@ -414,6 +467,40 @@ func (s *LibraryBaselineStore) AcquireUse(key CompatibilityKey, leaseID string) 
 		released = true
 		return nil
 	}, nil
+}
+
+func (s *LibraryBaselineStore) acquireBaselineCoordination(ctx context.Context, key CompatibilityKey, operation string) (*coordinationLock, error) {
+	if err := validateKey(key); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(s.paths.Leases, 0700); err != nil {
+		return nil, newError(CodeLeaseConflict, "create-lease-root", s.paths.Leases, err)
+	}
+	return acquireCoordinationLock(ctx, filepath.Join(s.paths.Leases, "baseline-"+key.Digest+".coord"), operation)
+}
+
+func (s *LibraryBaselineStore) baselineMutationPath(key CompatibilityKey) string {
+	return filepath.Join(s.paths.Leases, "baseline-"+key.Digest+".mutation.json")
+}
+
+func (s *LibraryBaselineStore) Status(ctx context.Context, key CompatibilityKey) (BaselineResolution, BaselineMetrics, error) {
+	if _, err := os.Lstat(s.baselineMutationPath(key)); err == nil {
+		return BaselineResolution{State: BaselineMutating, CoordinationState: BaselineMutating, Reason: "baseline mutation marker exists"}, BaselineMetrics{}, nil
+	} else if !os.IsNotExist(err) {
+		return BaselineResolution{}, BaselineMetrics{}, newError(CodeLeaseConflict, "inspect-baseline-mutation", s.baselineMutationPath(key), err)
+	}
+	resolution, metrics, err := s.Resolve(ctx, key)
+	if err != nil || resolution.State != BaselineValid {
+		return resolution, metrics, err
+	}
+	if err := s.ensureNotInUse(key); ErrorCode(err) == CodeBaselineInUse {
+		resolution.CoordinationState = BaselineInUse
+	} else if err != nil {
+		return BaselineResolution{}, metrics, err
+	} else {
+		resolution.CoordinationState = BaselineAvailable
+	}
+	return resolution, metrics, nil
 }
 
 func (s *LibraryBaselineStore) ensureNotInUse(key CompatibilityKey) error {

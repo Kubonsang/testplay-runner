@@ -16,6 +16,7 @@ change or invalidate the released v0.13 Image + native CoW benchmark history.
 | Project identity | NOT MEASURED |
 | VHDX maximum | NOT MEASURED |
 | soft budget / reserve | NOT MEASURED |
+| minimum host free / VHDX overhead reserve | NOT MEASURED |
 | ReFS cluster size | NOT MEASURED |
 | host filesystem | NOT MEASURED |
 
@@ -97,6 +98,8 @@ must be recorded separately and only while no worker is active.
 | allocated bytes | NOT MEASURED | NOT MEASURED | NOT MEASURED | NOT MEASURED |
 | cloned bytes | n/a | NOT MEASURED | n/a | n/a |
 | physical tail bytes | n/a | NOT MEASURED | n/a | n/a |
+| sparse logical / allocated / hole bytes | n/a | NOT MEASURED | n/a | n/a |
+| pre/post clone baseline verify ms | n/a | NOT MEASURED | n/a | n/a |
 
 ## Native result JSON
 
@@ -114,14 +117,32 @@ recorded Windows machine.
   "baselineUnchanged": false,
   "semanticEquivalent": false,
   "residual": {
-    "activeLeases": 0,
-    "workerLibraries": 0,
-    "junctions": 0,
-    "attachedDisks": 0,
-    "probeProcesses": 0
+    "status": "NOT_MEASURED",
+    "activeBaselineUses": { "measured": false, "count": 0 },
+    "workerLeaseJournals": { "measured": false, "count": 0 },
+    "workerDirectories": { "measured": false, "count": 0 },
+    "quarantineEntries": { "measured": false, "count": 0 },
+    "coordinationArtifacts": { "measured": false, "count": 0 },
+    "syntheticProbeDirectories": { "measured": false, "count": 0 },
+    "mountReparsePoints": { "measured": false, "count": 0 },
+    "mountDirectoryEntries": { "measured": false, "count": 0 },
+    "junctions": { "measured": false, "count": 0 },
+    "attachedDisks": { "measured": false, "count": 0 },
+    "probeProcesses": { "measured": false, "count": 0 },
+    "ownedVhdxFiles": { "measured": false, "count": 0 }
   }
 }
 ```
+
+The Windows script may record `PROMISING` only after native setup, regular and
+sparse synthetic Block Clone, allocate-on-write isolation, forbidden-path
+checks, and every applicable measured-zero residual pass. Unity parity and the
+1/2/4/8 ladder remain `NOT MEASURED`; `PROMISING` is not `PROVEN`.
+
+Full baseline hashes remain the correctness gate. Record
+`baselinePreCloneVerifyMs`, `baselinePostCloneVerifyMs`,
+`baselineVerifyFileCount`, and `baselineVerifyLogicalBytes` before considering
+a generation-token, USN, or validated-cache optimization.
 
 ## Verdict
 

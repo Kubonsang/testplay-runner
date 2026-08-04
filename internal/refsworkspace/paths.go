@@ -30,8 +30,17 @@ func NewPaths(config Config) (Config, Paths, error) {
 	if config.SoftBudgetBytes == 0 {
 		config.SoftBudgetBytes = config.MaximumBytes - config.WorkerReserveBytes
 	}
+	if config.MinimumHostFreeBytes == 0 {
+		config.MinimumHostFreeBytes = DefaultMinimumHostFreeBytes
+	}
+	if config.VHDXOverheadReserveBytes == 0 {
+		config.VHDXOverheadReserveBytes = DefaultVHDXOverheadReserveBytes
+	}
 	if config.MaximumBytes < 8<<30 || config.MaximumBytes%512 != 0 || config.SoftBudgetBytes <= 0 || config.WorkerReserveBytes <= 0 || config.SoftBudgetBytes+config.WorkerReserveBytes > config.MaximumBytes {
 		return Config{}, Paths{}, newError(CodeInvalidConfiguration, "validate-storage-ceiling", root, fmt.Errorf("require maximum >= 8 GiB and soft budget + reserve <= maximum"))
+	}
+	if config.MinimumHostFreeBytes < 0 || config.VHDXOverheadReserveBytes < 0 {
+		return Config{}, Paths{}, newError(CodeInvalidConfiguration, "validate-host-free-floor", root, fmt.Errorf("host free floor and VHDX overhead reserve must not be negative"))
 	}
 	config.Root = root
 	vhdxPath := filepath.Join(root, "managed-library-pool.vhdx")

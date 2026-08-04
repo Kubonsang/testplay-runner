@@ -13,12 +13,14 @@ import (
 )
 
 var (
-	rootPath      string
-	poolFile      string
-	mountRoot     string
-	maximumBytes  int64
-	softBudget    int64
-	workerReserve int64
+	rootPath            string
+	poolFile            string
+	mountRoot           string
+	maximumBytes        int64
+	softBudget          int64
+	workerReserve       int64
+	minimumHostFree     int64
+	vhdxOverheadReserve int64
 )
 
 func main() {
@@ -49,6 +51,8 @@ func newRootCommand() *cobra.Command {
 	root.PersistentFlags().Int64Var(&maximumBytes, "max-bytes", 0, "dynamic VHDX hard ceiling")
 	root.PersistentFlags().Int64Var(&softBudget, "soft-budget-bytes", 0, "testplay soft allocation budget")
 	root.PersistentFlags().Int64Var(&workerReserve, "worker-reserve-bytes", 0, "reservation required before each worker")
+	root.PersistentFlags().Int64Var(&minimumHostFree, "minimum-host-free-bytes", 0, "minimum host free-space floor")
+	root.PersistentFlags().Int64Var(&vhdxOverheadReserve, "vhdx-overhead-reserve-bytes", 0, "experimental VHDX metadata/allocation overhead reserve")
 	for _, operation := range []string{"setup", "status", "probe", "remove"} {
 		op := operation
 		root.AddCommand(&cobra.Command{
@@ -108,25 +112,43 @@ func commandConfig() (refsworkspace.Config, error) {
 	if workerReserve != 0 {
 		config.WorkerReserveBytes = workerReserve
 	}
+	if minimumHostFree != 0 {
+		config.MinimumHostFreeBytes = minimumHostFree
+	}
+	if vhdxOverheadReserve != 0 {
+		config.VHDXOverheadReserveBytes = vhdxOverheadReserve
+	}
 	return config, nil
 }
 
 func writeError(err error) {
 	operation := ""
 	path := ""
+	cleanupState := ""
+	ownerCommitted := false
+	ownedVHDX := ""
+	manualRecovery := false
 	var probeErr *refsworkspace.Error
 	if errors.As(err, &probeErr) {
 		operation = probeErr.Operation
 		path = probeErr.Path
+		cleanupState = probeErr.CleanupState
+		ownerCommitted = probeErr.OwnerMetadataCommitted
+		ownedVHDX = probeErr.OwnedVHDXPath
+		manualRecovery = probeErr.ManualRecoveryRequired
 	}
 	payload := map[string]any{
-		"schemaVersion":            "1",
+		"schemaVersion":            "2",
 		"status":                   "FAILED",
 		"architecture":             "Managed ReFS Library Pool",
 		"code":                     refsworkspace.ErrorCode(err),
 		"operation":                operation,
 		"path":                     path,
 		"message":                  err.Error(),
+		"cleanupState":             cleanupState,
+		"ownerMetadataCommitted":   ownerCommitted,
+		"ownedVhdxPath":            ownedVHDX,
+		"manualRecoveryRequired":   manualRecovery,
 		"fallbackUsed":             false,
 		"physicalImageCreated":     false,
 		"differencingChildCreated": false,
