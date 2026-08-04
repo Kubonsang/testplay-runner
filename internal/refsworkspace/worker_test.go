@@ -91,7 +91,9 @@ func TestWorkerReservationIsAtomicAcrossConcurrentAcquires(t *testing.T) {
 	}
 	workspace := t.TempDir()
 	meter := &fakeWorkerStorageMeter{used: 80, hostFree: 100 << 30}
-	manager := NewWorkerManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{}, meter)
+	policy := testWorkerPolicy()
+	policy.MaximumBytes, policy.SoftBudgetBytes, policy.WorkerReserveBytes = 130, 110, 20
+	manager := newWorkerManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{}, policy, meter)
 	start := make(chan struct{})
 	type outcome struct {
 		id    string
@@ -105,10 +107,7 @@ func TestWorkerReservationIsAtomicAcrossConcurrentAcquires(t *testing.T) {
 		go func(id string) {
 			ready.Done()
 			<-start
-			lease, _, err := manager.Acquire(context.Background(), WorkerRequest{
-				Key: key, LeaseID: id, JunctionPath: filepath.Join(workspace, id), ClusterSize: 4096,
-				SoftBudgetBytes: 110, ExpectedReserveBytes: 20, MinimumHostFreeBytes: 1,
-			})
+			lease, _, err := manager.Acquire(context.Background(), WorkerRequest{Key: key, LeaseID: id, JunctionPath: filepath.Join(workspace, id)})
 			results <- outcome{id: id, lease: lease, err: err}
 		}(id)
 	}
@@ -153,16 +152,18 @@ func TestWorkerReservationIsAtomicAcrossConcurrentAcquires(t *testing.T) {
 func TestWorkerHostFreeFloor(t *testing.T) {
 	paths := testPoolPaths(t)
 	store := NewLibraryBaselineStore(paths)
-	request := WorkerRequest{Key: testCompatibilityKey("3"), LeaseID: "lease-host1", JunctionPath: filepath.Join(t.TempDir(), "Library"), ClusterSize: 4096, SoftBudgetBytes: 100, ExpectedReserveBytes: 10, MinimumHostFreeBytes: 50}
-	manager := NewWorkerManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{}, &fakeWorkerStorageMeter{hostFree: 49})
+	request := WorkerRequest{Key: testCompatibilityKey("3"), LeaseID: "lease-host1", JunctionPath: filepath.Join(t.TempDir(), "Library")}
+	policy := testWorkerPolicy()
+	policy.MaximumBytes, policy.SoftBudgetBytes, policy.WorkerReserveBytes, policy.MinimumHostFreeBytes = 110, 100, 10, 50
+	manager := newWorkerManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{}, policy, &fakeWorkerStorageMeter{hostFree: 59})
 	if _, _, err := manager.Acquire(context.Background(), request); ErrorCode(err) != CodeHostFreeSpaceFloor {
 		t.Fatalf("err=%v", err)
 	}
-	manager = NewWorkerManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{}, &fakeWorkerStorageMeter{hostFree: 50, hostErr: errors.New("measurement failed")})
+	manager = newWorkerManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{}, policy, &fakeWorkerStorageMeter{hostFree: 60, hostErr: errors.New("measurement failed")})
 	if _, _, err := manager.Acquire(context.Background(), request); ErrorCode(err) != CodeHostFreeSpaceFloor {
 		t.Fatalf("err=%v", err)
 	}
-	manager = NewWorkerManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{}, &fakeWorkerStorageMeter{hostFree: 50})
+	manager = newWorkerManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{}, policy, &fakeWorkerStorageMeter{hostFree: 60})
 	if _, _, err := manager.Acquire(context.Background(), request); ErrorCode(err) != CodeBaselineMissing {
 		t.Fatalf("exact floor was not accepted: %v", err)
 	}
@@ -187,15 +188,17 @@ func (meter *decreasingHostMeter) HostFreeBytes(context.Context) (int64, error) 
 func TestParallelReservationsRemeasureDecreasingHostFree(t *testing.T) {
 	paths := testPoolPaths(t)
 	store := NewLibraryBaselineStore(paths)
-	meter := &decreasingHostMeter{host: []int64{50, 49}}
-	manager := NewWorkerManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{}, meter)
+	meter := &decreasingHostMeter{host: []int64{51, 50}}
+	policy := testWorkerPolicy()
+	policy.MaximumBytes, policy.SoftBudgetBytes, policy.WorkerReserveBytes, policy.MinimumHostFreeBytes = 101, 100, 1, 50
+	manager := newWorkerManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{}, policy, meter)
 	start := make(chan struct{})
 	results := make(chan error, 2)
 	for index := 0; index < 2; index++ {
 		go func(index int) {
 			<-start
 			metadata := WorkerMetadata{SchemaVersion: LeaseSchemaVersion, LeaseID: fmt.Sprintf("lease-free%d", index), State: LeaseRequested, PID: manager.pid, OwnershipToken: strings.Repeat(fmt.Sprintf("%x", index+1), 64), ReservedBytes: 1}
-			_, err := manager.reserveWorker(context.Background(), WorkerRequest{LeaseID: metadata.LeaseID, SoftBudgetBytes: 100, ExpectedReserveBytes: 1, MinimumHostFreeBytes: 50}, metadata)
+			_, err := manager.reserveWorker(context.Background(), WorkerRequest{LeaseID: metadata.LeaseID}, metadata)
 			results <- err
 		}(index)
 	}
@@ -234,7 +237,7 @@ func TestReservationLockCancellationPreservesLockEvidence(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	_, _, err := manager.Acquire(ctx, WorkerRequest{Key: testCompatibilityKey("f"), LeaseID: "lease-lock1", JunctionPath: filepath.Join(t.TempDir(), "Library"), ClusterSize: 4096, SoftBudgetBytes: 100, ExpectedReserveBytes: 1, MinimumHostFreeBytes: 1})
+	_, _, err := manager.Acquire(ctx, WorkerRequest{Key: testCompatibilityKey("f"), LeaseID: "lease-lock1", JunctionPath: filepath.Join(t.TempDir(), "Library")})
 	if ErrorCode(err) != CodeCancelled {
 		t.Fatalf("err=%v", err)
 	}
@@ -262,7 +265,7 @@ func TestWorkerReleaseResumesAfterEveryPersistedMilestone(t *testing.T) {
 				t.Fatal(err)
 			}
 			manager := newWorkerTestManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{})
-			lease, _, err := manager.Acquire(context.Background(), WorkerRequest{Key: key, LeaseID: fmt.Sprintf("lease-idem%d", index), JunctionPath: filepath.Join(t.TempDir(), "Library"), ClusterSize: 4096, SoftBudgetBytes: 1 << 30, ExpectedReserveBytes: 1 << 20, MinimumHostFreeBytes: 1})
+			lease, _, err := manager.Acquire(context.Background(), WorkerRequest{Key: key, LeaseID: fmt.Sprintf("lease-idem%d", index), JunctionPath: filepath.Join(t.TempDir(), "Library")})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -308,7 +311,7 @@ func TestWorkerReleaseRetriesReleasedJournalWriteAndLeaseDelete(t *testing.T) {
 				t.Fatal(err)
 			}
 			manager := newWorkerTestManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{})
-			lease, _, err := manager.Acquire(context.Background(), WorkerRequest{Key: key, LeaseID: "lease-write1", JunctionPath: filepath.Join(t.TempDir(), "Library"), ClusterSize: 4096, SoftBudgetBytes: 1 << 30, ExpectedReserveBytes: 1 << 20, MinimumHostFreeBytes: 1})
+			lease, _, err := manager.Acquire(context.Background(), WorkerRequest{Key: key, LeaseID: "lease-write1", JunctionPath: filepath.Join(t.TempDir(), "Library")})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -349,7 +352,11 @@ func TestWorkerReleaseRetriesReleasedJournalWriteAndLeaseDelete(t *testing.T) {
 }
 
 func newWorkerTestManager(paths Paths, store *LibraryBaselineStore, cloner TreeCloner, junctions Junctioner) *WorkerManager {
-	return NewWorkerManager(paths, store, cloner, junctions, &fakeWorkerStorageMeter{hostFree: 100 << 30})
+	return newWorkerManager(paths, store, cloner, junctions, testWorkerPolicy(), &fakeWorkerStorageMeter{hostFree: 100 << 30})
+}
+
+func testWorkerPolicy() PoolPolicy {
+	return PoolPolicy{MaximumBytes: 2 << 30, SoftBudgetBytes: 1 << 30, WorkerReserveBytes: 1 << 20, MinimumHostFreeBytes: 1, VHDXOverheadReserveBytes: 1, ClusterSize: 4096}
 }
 
 func TestWorkerAcquireIsolationReleaseAndResidual(t *testing.T) {
@@ -373,12 +380,9 @@ func TestWorkerAcquireIsolationReleaseAndResidual(t *testing.T) {
 	manager := newWorkerTestManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{})
 	request := func(id string) WorkerRequest {
 		return WorkerRequest{
-			Key:                  key,
-			LeaseID:              id,
-			JunctionPath:         filepath.Join(workspace, id+"-Library"),
-			ClusterSize:          4096,
-			SoftBudgetBytes:      1 << 30,
-			ExpectedReserveBytes: 1 << 20,
+			Key:          key,
+			LeaseID:      id,
+			JunctionPath: filepath.Join(workspace, id+"-Library"),
 		}
 	}
 	workerA, metricsA, err := manager.Acquire(context.Background(), request("lease-0001"))
@@ -436,14 +440,13 @@ func TestWorkerBudgetFailsBeforeClone(t *testing.T) {
 	paths := testPoolPaths(t)
 	store := NewLibraryBaselineStore(paths)
 	meter := &fakeWorkerStorageMeter{used: 90, hostFree: 100 << 30}
-	manager := NewWorkerManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{}, meter)
+	policy := testWorkerPolicy()
+	policy.MaximumBytes, policy.SoftBudgetBytes, policy.WorkerReserveBytes = 120, 100, 20
+	manager := newWorkerManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{}, policy, meter)
 	_, _, err := manager.Acquire(context.Background(), WorkerRequest{
-		Key:                  testCompatibilityKey("e"),
-		LeaseID:              "lease-0003",
-		JunctionPath:         filepath.Join(t.TempDir(), "Library"),
-		ClusterSize:          4096,
-		SoftBudgetBytes:      100,
-		ExpectedReserveBytes: 20,
+		Key:          testCompatibilityKey("e"),
+		LeaseID:      "lease-0003",
+		JunctionPath: filepath.Join(t.TempDir(), "Library"),
 	})
 	if ErrorCode(err) != CodeStorageBudgetExceeded {
 		t.Fatalf("err=%v", err)
@@ -462,12 +465,9 @@ func TestWorkerRejectsSilentPhysicalFallback(t *testing.T) {
 	}
 	manager := newWorkerTestManager(paths, store, copyClaimingCloner{fallback: true}, symlinkJunctioner{})
 	_, _, err = manager.Acquire(context.Background(), WorkerRequest{
-		Key:                  key,
-		LeaseID:              "lease-0004",
-		JunctionPath:         filepath.Join(t.TempDir(), "Library"),
-		ClusterSize:          4096,
-		SoftBudgetBytes:      1 << 30,
-		ExpectedReserveBytes: 1 << 20,
+		Key:          key,
+		LeaseID:      "lease-0004",
+		JunctionPath: filepath.Join(t.TempDir(), "Library"),
 	})
 	if ErrorCode(err) != CodeBlockCloneUnavailable {
 		t.Fatalf("err=%v", err)
@@ -492,12 +492,9 @@ func TestWorkerJunctionFailureCleansOwnedWorkerAndReferences(t *testing.T) {
 	}
 	manager := newWorkerTestManager(paths, store, copyClaimingCloner{}, failingJunctioner{err: errors.New("junction failure")})
 	_, _, err = manager.Acquire(context.Background(), WorkerRequest{
-		Key:                  key,
-		LeaseID:              "lease-0005",
-		JunctionPath:         filepath.Join(t.TempDir(), "Library"),
-		ClusterSize:          4096,
-		SoftBudgetBytes:      1 << 30,
-		ExpectedReserveBytes: 1 << 20,
+		Key:          key,
+		LeaseID:      "lease-0005",
+		JunctionPath: filepath.Join(t.TempDir(), "Library"),
 	})
 	if ErrorCode(err) != CodeJunctionFailed {
 		t.Fatalf("err=%v", err)

@@ -3,15 +3,14 @@ package refsworkspace
 import "time"
 
 const (
-	PoolSchemaVersion                 = 2
-	BaselineSchemaVersion             = 2
-	LeaseSchemaVersion                = 2
-	DefaultMaximumBytes               = int64(16 << 30)
-	DefaultSoftBudget                 = int64(14 << 30)
-	DefaultReserveBytes               = int64(2 << 30)
-	DefaultMinimumHostFreeBytes       = int64(30 << 30)
-	DefaultVHDXOverheadReserveBytes   = int64(2 << 30)
-	DefaultInitialPoolAllocationBytes = int64(512 << 20)
+	PoolSchemaVersion               = 2
+	BaselineSchemaVersion           = 2
+	LeaseSchemaVersion              = 2
+	DefaultMaximumBytes             = int64(16 << 30)
+	DefaultSoftBudget               = int64(14 << 30)
+	DefaultReserveBytes             = int64(2 << 30)
+	DefaultMinimumHostFreeBytes     = int64(30 << 30)
+	DefaultVHDXOverheadReserveBytes = int64(2 << 30)
 )
 
 type Config struct {
@@ -68,6 +67,18 @@ type PoolMetadata struct {
 	WorkerReserveBytes       int64     `json:"workerReserveBytes"`
 	MinimumHostFreeBytes     int64     `json:"minimumHostFreeBytes"`
 	VHDXOverheadReserveBytes int64     `json:"vhdxOverheadReserveBytes"`
+}
+
+// PoolPolicy is the storage policy accepted only after the host metadata,
+// mounted-volume metadata, and in-volume metadata have been cross-checked.
+// Per-run requests cannot weaken these limits.
+type PoolPolicy struct {
+	MaximumBytes             int64 `json:"maximumBytes"`
+	SoftBudgetBytes          int64 `json:"softBudgetBytes"`
+	WorkerReserveBytes       int64 `json:"workerReserveBytes"`
+	MinimumHostFreeBytes     int64 `json:"minimumHostFreeBytes"`
+	VHDXOverheadReserveBytes int64 `json:"vhdxOverheadReserveBytes"`
+	ClusterSize              int64 `json:"clusterSize"`
 }
 
 type PoolMetrics struct {
@@ -128,7 +139,16 @@ type Residual struct {
 	ActiveBaselineUses        ResidualMetric `json:"activeBaselineUses"`
 	WorkerLeaseJournals       ResidualMetric `json:"workerLeaseJournals"`
 	WorkerDirectories         ResidualMetric `json:"workerDirectories"`
+	BaselineCreationLocks     ResidualMetric `json:"baselineCreationLocks"`
+	BaselineStagingDirs       ResidualMetric `json:"baselineStagingDirs"`
+	WorkerStagingDirs         ResidualMetric `json:"workerStagingDirs"`
+	UnknownLeaseArtifacts     ResidualMetric `json:"unknownLeaseArtifacts"`
+	UnknownBaselineEntries    ResidualMetric `json:"unknownBaselineEntries"`
+	UnknownWorkerArtifacts    ResidualMetric `json:"unknownWorkerArtifacts"`
 	QuarantineEntries         ResidualMetric `json:"quarantineEntries"`
+	ReservationLocks          ResidualMetric `json:"reservationLocks"`
+	BaselineCoordinationLocks ResidualMetric `json:"baselineCoordinationLocks"`
+	BaselineMutationMarkers   ResidualMetric `json:"baselineMutationMarkers"`
 	CoordinationArtifacts     ResidualMetric `json:"coordinationArtifacts"`
 	SyntheticProbeDirectories ResidualMetric `json:"syntheticProbeDirectories"`
 	MountReparsePoints        ResidualMetric `json:"mountReparsePoints"`

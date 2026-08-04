@@ -48,7 +48,7 @@ func newRootCommand() *cobra.Command {
 	root.PersistentFlags().StringVar(&rootPath, "root", "", "absolute host storage root (defaults to %LOCALAPPDATA%\\TestPlay\\Storage)")
 	root.PersistentFlags().StringVar(&poolFile, "pool-file", "", "absolute Dynamic VHDX path (must be a direct child of root)")
 	root.PersistentFlags().StringVar(&mountRoot, "mount-root", "", "absolute private mount path (must be a direct child of root)")
-	root.PersistentFlags().Int64Var(&maximumBytes, "max-bytes", 0, "dynamic VHDX hard ceiling")
+	root.PersistentFlags().Int64Var(&maximumBytes, "max-bytes", 0, "dynamic VHDX guest virtual-size ceiling")
 	root.PersistentFlags().Int64Var(&softBudget, "soft-budget-bytes", 0, "testplay soft allocation budget")
 	root.PersistentFlags().Int64Var(&workerReserve, "worker-reserve-bytes", 0, "reservation required before each worker")
 	root.PersistentFlags().Int64Var(&minimumHostFree, "minimum-host-free-bytes", 0, "minimum host free-space floor")

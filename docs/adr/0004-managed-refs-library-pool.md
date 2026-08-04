@@ -39,7 +39,7 @@ Use the VHDX for:
 - private managed-volume installation and removal;
 - host filesystem isolation;
 - attach/detach lifecycle; and
-- a maximum virtual-size hard ceiling.
+- a maximum guest-volume virtual-size ceiling.
 
 Use ReFS for:
 
@@ -48,8 +48,9 @@ Use ReFS for:
 - allocation of worker metadata and changed clusters.
 
 The distinction matters. VHDX does not provide the worker clone primitive, and
-ReFS does not provide the installable single-file boundary or the host-level
-hard ceiling.
+ReFS does not provide the installable single-file boundary. The VHDX maximum
+is not a host-file allocation guarantee; testplay separately reserves the full
+maximum plus overhead so maximum guest growth still preserves the host floor.
 
 ## Same-volume constraint
 
@@ -75,10 +76,11 @@ Read-only attributes alone are not considered immutability. Verification and
 active-use ownership remain authoritative even when an administrator can
 override an ACL.
 
-Protection is independently verified evidence. Metadata records a protection
-schema, canonical root ACL/mode digest, file read-only policy, directory
-policy, and protected entry counts. A byte-identical baseline with changed ACL
-or writability is corrupt.
+Protection is independently verified evidence. Metadata records a path-sorted
+recursive security-descriptor digest for every directory and regular file,
+including read-only and inheritance state. Windows reads descriptors with
+`GetNamedSecurityInfo`. A byte-identical baseline with a changed root, child,
+or file ACL, enabled inheritance, changed count, or writability is corrupt.
 
 ## Concurrency and cleanup decision
 
@@ -93,10 +95,12 @@ coordination lock and explicit mutation marker. Clear/quarantine checks active
 uses before rename; acquire checks mutation and validity before marker
 creation. Baseline rename and a new active marker cannot both win.
 
-Worker release is a persisted state machine: junction removed, worker
-quarantined, ownership verified, worker deleted, active-use released, released,
-and lease deleted. Repetition resumes safely; unexplained absence is an
-ownership error.
+Worker release persists milestones: junction removed, worker quarantined,
+ownership verified, worker deleted, active-use released, released, and lease
+deleted. Retry is supported only in the same process through the same
+`WorkerLease` object. New-process journal resume, forced-termination recovery,
+and reboot recovery are not implemented; unexplained absence is an ownership
+error.
 
 Mounted cleanup uses a bounded context and joins primary and cleanup errors.
 Uncertain detach, visibility, or ownership preserves the VHDX and emits manual
@@ -105,10 +109,11 @@ cannot masquerade as zero.
 
 ## Sparse-file decision
 
-Sparse Library files stay sparse. Query `FSCTL_QUERY_ALLOCATED_RANGES`, mark the
-destination sparse before sizing, clone only aligned allocated extents, leave
-holes unallocated, and copy only unaligned allocated fragments. Query or clone
-failure is explicit and never selects whole-file or whole-tree copying.
+Sparse Library files stay sparse. Each `FSCTL_QUERY_ALLOCATED_RANGES` page is
+clipped to its query and file boundaries, sorted, and merged across overlap,
+adjacency, and pagination duplicates. Overflow and no-progress responses fail.
+The destination is sparse before sizing; only aligned extents are cloned,
+holes remain unallocated, and only unaligned fragments are copied.
 
 ## Why allocation deltas are not zero
 
@@ -124,6 +129,14 @@ Deleting workers does not imply automatic host-file shrink. Compact is a
 future explicit maintenance operation and is never run while Unity is active.
 
 ## Consequences
+
+Storage policy is an authority boundary: `WorkerRequest` contains no policy
+fields, and workers receive a `PoolPolicy` only after host metadata, in-volume
+metadata, and the mounted ReFS volume match in full. Fresh installation creates
+missing parent segments from a canonical existing ancestor and rejects
+intermediate symlinks/reparse points. Residual inspection uses exact artifact
+allowlists; unknown and staging entries are explicit evidence. The binary does
+not claim probe-process zero, leaving that measurement to the outer harness.
 
 Benefits:
 

@@ -314,41 +314,27 @@ func cloneFile(ctx context.Context, sourcePath, destinationPath string, clusterS
 var queryAllocatedRangesForClone = queryAllocatedRanges
 
 func queryAllocatedRanges(handle windows.Handle, fileSize int64) ([]AllocatedRange, error) {
-	if fileSize == 0 {
-		return nil, nil
-	}
 	const rangeBatch = 128
 	output := make([]fileAllocatedRangeBuffer, rangeBatch)
-	var ranges []AllocatedRange
-	for offset := int64(0); offset < fileSize; {
-		input := fileAllocatedRangeBuffer{FileOffset: offset, Length: fileSize - offset}
+	return collectAllocatedRangesPaged(fileSize, func(offset, length int64) ([]AllocatedRange, bool, error) {
+		input := fileAllocatedRangeBuffer{FileOffset: offset, Length: length}
 		var returned uint32
 		err := windows.DeviceIoControl(handle, fsctlQueryAllocatedRanges,
 			(*byte)(unsafe.Pointer(&input)), uint32(unsafe.Sizeof(input)),
 			(*byte)(unsafe.Pointer(&output[0])), uint32(len(output))*uint32(unsafe.Sizeof(output[0])), &returned, nil)
 		if err != nil && !errors.Is(err, windows.ERROR_MORE_DATA) {
-			return nil, err
+			return nil, false, err
 		}
 		count := int(returned / uint32(unsafe.Sizeof(output[0])))
 		if returned%uint32(unsafe.Sizeof(output[0])) != 0 || count > len(output) {
-			return nil, fmt.Errorf("malformed allocated range response: %d bytes", returned)
+			return nil, false, fmt.Errorf("malformed allocated range response: %d bytes", returned)
 		}
-		if count == 0 {
-			break
-		}
+		ranges := make([]AllocatedRange, 0, count)
 		for _, item := range output[:count] {
 			ranges = append(ranges, AllocatedRange{Offset: item.FileOffset, Length: item.Length})
 		}
-		next := output[count-1].FileOffset + output[count-1].Length
-		if next <= offset {
-			return nil, fmt.Errorf("allocated range query made no progress")
-		}
-		offset = next
-		if err == nil {
-			break
-		}
-	}
-	return ranges, nil
+		return ranges, errors.Is(err, windows.ERROR_MORE_DATA), nil
+	})
 }
 
 func copyFileRange(ctx context.Context, source, destination *os.File, cloneRange CloneRange) error {

@@ -174,9 +174,11 @@ persist releasing
 → persist released and remove lease record
 ```
 
-Forced termination and reboot recovery are not completion claims of this
-probe. A dead-process lease is reported as `orphan-found`; it is not silently
-reused.
+Repeated `Release` calls are supported only in the same process through the
+same `WorkerLease` object. Resuming a journal in a new process, forced
+termination recovery, and reboot recovery are not implemented. Future design
+names include `ResumeLeaseFromJournal`, `RecoverOrphanWorker`, and
+`ReconcilePool`; a dead-process lease is currently reported as `orphan-found`.
 
 ## Block Clone policy
 
@@ -185,7 +187,9 @@ unsupported entry types. For each regular file it:
 
 1. creates the destination and marks it sparse before sizing when required;
 2. compares volume serials, filesystem names, and block-refcount flags;
-3. queries sparse allocation with `FSCTL_QUERY_ALLOCATED_RANGES`;
+3. queries sparse allocation with `FSCTL_QUERY_ALLOCATED_RANGES`, clips every
+   page to query/file bounds, then sorts and merges overlap, adjacency, and
+   duplicates while rejecting overflow and no-progress pagination;
 4. compares source and destination integrity settings;
 5. verifies the measured ReFS cluster size;
 6. submits only allocated, cluster-aligned requests strictly smaller than 4 GiB;
@@ -206,7 +210,7 @@ and [`GetVolumeInformationByHandleW`](https://learn.microsoft.com/en-us/windows/
 The default is provisional until Windows hardware measurements exist:
 
 ```text
-VHDX hard ceiling: 16 GiB
+VHDX guest virtual-size ceiling: 16 GiB
 testplay soft budget: 14 GiB
 per-worker reservation / emergency reserve: 2 GiB
 minimum host free-space floor: 30 GiB
@@ -246,21 +250,38 @@ context cancellation, is released before baseline verification or cloning,
 and is never deleted merely because it appears old. Caller-supplied current
 volume usage is not accepted.
 
-Setup requires the provisional 30 GiB host free-space floor plus a 2 GiB VHDX
-overhead reserve and a 512 MiB initial-allocation allowance. Worker acquire
-remeasures the host and returns `host-free-space-floor` below the floor. These
-values remain experimental until native measurements exist.
+Setup requires the provisional 30 GiB host floor plus the full 16 GiB VHDX
+maximum and 2 GiB overhead reserve. The VHDX maximum is a guest-volume
+virtual-size ceiling; a separate testplay reservation policy protects the host
+disk floor. Worker acquire requires the floor plus its full worker reserve and
+fails closed on overflow or measurement failure. These values remain
+experimental until native measurements exist.
+
+`WorkerRequest` contains only the compatibility key, lease ID, and junction
+path. `PoolPolicy` is built only after host metadata, in-volume metadata, and
+the mounted ReFS identity agree on every identity, capability, and storage
+field. Callers cannot override maximum, soft budget, reserve, host floor, or
+cluster size.
+
+Fresh setup supports a missing `%LOCALAPPDATA%\TestPlay\Storage` tree. It finds
+and canonicalizes the nearest existing ancestor, rejects symlinks/reparse
+points and files, creates each segment sequentially, then revalidates the final
+canonical identity. Existing non-empty roots are rejected.
 
 Baseline acquire, clear, and quarantine are serialized by
 `leases/baseline-<digest>.coord`; mutation also records a marker. Active-use
 checks and marker creation occur inside the same critical section, so baseline
 rename and a new reference cannot both succeed. Protection metadata records a
-schema, root ACL/mode digest, file and directory policies, and entry counts.
-Content-identical but writable or ACL-damaged baselines are corrupt.
+path-sorted recursive descriptor digest over every directory and regular file,
+including object type, read-only state, and inheritance state. Native Windows
+inspection uses `GetNamedSecurityInfo`; a changed child/file ACL, enabled
+inheritance, changed entry count, or writable file is corrupt even when content
+is identical.
 
 Worker release persists the `releasing`, junction removed, worker quarantined,
 worker deleted, active-use released, and `released` milestones. A repeated
-call resumes safely, and path absence is accepted only with prior ownership
+same-process call on the same object resumes safely; post-crash journal resume
+is not implemented. Path absence is accepted only with prior ownership
 evidence.
 
 Sparse files are cloned from their allocated ranges. The destination is marked
@@ -274,10 +295,14 @@ errors. Structured failures report `cleanupState`,
 `manualRecoveryRequired`; uncertain detach or ownership always preserves the
 VHDX.
 
-Each residual is `{ "measured": boolean, "count": n }` for active baseline
-uses, worker journals/directories, synthetic probe directories, junctions,
-mount reparse/content state, attached disks, probe processes, and the owned
-VHDX. Unmeasured is never treated as zero. The native script records
+Each residual is `{ "measured": boolean, "count": n }`. Exact allowlists
+separately count baseline creation/coordination/reservation/mutation artifacts,
+baseline and worker staging directories, and unknown lease/baseline/worker
+entries in addition to lifecycle, mount, junction, disk, and VHDX evidence.
+The binary leaves `probeProcesses.measured=false`; only the outer PowerShell
+harness completes that measurement. `attachedDisks` is measured only after
+the bounded detach visibility check succeeds. Unmeasured is never treated as
+zero. The native script records
 `PROMISING` only after regular and sparse clone, allocate-on-write isolation,
 forbidden-path checks, and measured-zero residuals all pass.
 

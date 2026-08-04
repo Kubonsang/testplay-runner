@@ -3,12 +3,11 @@
 package refsworkspace
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func protectBaselineTree(root string) (ProtectionEvidence, error) {
@@ -45,6 +44,7 @@ func verifyBaselineProtection(root string, expected ProtectionEvidence) error {
 
 func inspectUnixProtection(root string) (ProtectionEvidence, error) {
 	result := ProtectionEvidence{SchemaVersion: protectionSchemaVersion, FilePolicy: "all-regular-files-read-only", DirectoryPolicy: "all-directories-non-writable"}
+	var records []string
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -57,20 +57,35 @@ func inspectUnixProtection(root string) (ProtectionEvidence, error) {
 			if info.Mode().Perm()&0222 != 0 {
 				return fmt.Errorf("writable directory: %s", path)
 			}
+			result.DirectoryCount++
 			result.ProtectedDirectoryCount++
+			result.NonInheritingEntryCount++
 		} else if entry.Type().IsRegular() {
 			result.RegularFileCount++
 			if info.Mode().Perm()&0222 != 0 {
 				return fmt.Errorf("writable file: %s", path)
 			}
 			result.ReadOnlyFileCount++
+			result.NonInheritingEntryCount++
 		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		kind := "O"
+		if entry.IsDir() {
+			kind = "D"
+		} else if entry.Type().IsRegular() {
+			kind = "F"
+		}
+		record := fmt.Sprintf("%s|%s|mode=%#o|readonly=%t|noninheriting=true", kind, filepath.ToSlash(relative), info.Mode().Perm(), info.Mode().Perm()&0222 == 0)
+		records = append(records, record)
 		if path == root {
-			digest := sha256.Sum256([]byte(fmt.Sprintf("mode=%#o", info.Mode().Perm())))
-			result.RootDescriptorSHA256 = hex.EncodeToString(digest[:])
+			result.RootDescriptorSHA256 = protectionStringSHA256(strings.TrimSpace(record))
 		}
 		return nil
 	})
+	result.TreeDescriptorSHA256 = protectionRecordsSHA256(records)
 	return result, err
 }
 

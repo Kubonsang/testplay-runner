@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -105,7 +106,8 @@ func newFakePoolNative() *fakePoolNative {
 
 func TestPoolSetupEnforcesHostFreeFloorBeforeWrites(t *testing.T) {
 	native := newFakePoolNative()
-	native.hostFree = DefaultMinimumHostFreeBytes + DefaultVHDXOverheadReserveBytes + DefaultInitialPoolAllocationBytes - 1
+	required := DefaultMinimumHostFreeBytes + DefaultMaximumBytes + DefaultVHDXOverheadReserveBytes
+	native.hostFree = required - 1
 	root := filepath.Join(t.TempDir(), "storage")
 	if _, err := NewService(native, copyClaimingCloner{}).Setup(context.Background(), Config{Root: root}); ErrorCode(err) != CodeHostFreeSpaceFloor {
 		t.Fatalf("err=%v", err)
@@ -113,9 +115,48 @@ func TestPoolSetupEnforcesHostFreeFloorBeforeWrites(t *testing.T) {
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Fatalf("insufficient setup wrote root: %v", err)
 	}
-	native.hostFree = DefaultMinimumHostFreeBytes + DefaultVHDXOverheadReserveBytes + DefaultInitialPoolAllocationBytes
+	native.hostFree = required
 	if _, err := NewService(native, copyClaimingCloner{}).Setup(context.Background(), Config{Root: root}); err != nil {
 		t.Fatalf("exact floor failed: %v", err)
+	}
+}
+
+func TestPoolSetupAcceptsHostFreeAboveFullMaximumReservation(t *testing.T) {
+	native := newFakePoolNative()
+	native.hostFree = DefaultMinimumHostFreeBytes + DefaultMaximumBytes + DefaultVHDXOverheadReserveBytes + 1
+	if _, err := NewService(native, copyClaimingCloner{}).Setup(context.Background(), Config{Root: filepath.Join(t.TempDir(), "storage")}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPoolSetupCreatesCompletelyMissingDefaultParents(t *testing.T) {
+	native := newFakePoolNative()
+	root := filepath.Join(t.TempDir(), "TestPlay", "Storage")
+	result, err := NewService(native, copyClaimingCloner{}).Setup(context.Background(), Config{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "PASS" {
+		t.Fatalf("result=%+v", result)
+	}
+	for _, path := range []string{filepath.Dir(result.Paths.Root), result.Paths.Root} {
+		info, err := os.Lstat(path)
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			t.Fatalf("unsafe fresh-install path %q: %v", path, err)
+		}
+	}
+}
+
+func TestPoolSetupRejectsHostFloorIntegerOverflow(t *testing.T) {
+	native := newFakePoolNative()
+	maximum := int64(math.MaxInt64 / 512 * 512)
+	_, err := NewService(native, copyClaimingCloner{}).Setup(context.Background(), Config{
+		Root: filepath.Join(t.TempDir(), "storage"), MaximumBytes: maximum,
+		SoftBudgetBytes: 8 << 30, WorkerReserveBytes: 1 << 30,
+		MinimumHostFreeBytes: 1 << 30, VHDXOverheadReserveBytes: 1,
+	})
+	if ErrorCode(err) != CodeHostFreeSpaceFloor {
+		t.Fatalf("err=%v", err)
 	}
 }
 

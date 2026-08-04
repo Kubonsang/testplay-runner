@@ -62,13 +62,20 @@ func (service *Service) Setup(ctx context.Context, config Config) (returnResult 
 	if err := service.checkNative(ctx); err != nil {
 		return nil, err
 	}
-	hostFreeBefore, err := service.native.HostFreeBytes(filepath.Dir(paths.Root))
+	hostMeasurementPath, _, err := nearestExistingAncestor(paths.Root)
 	if err != nil {
-		return nil, newError(CodeHostFreeSpaceFloor, "measure-host-free-before-setup", filepath.Dir(paths.Root), err)
+		return nil, newError(CodeHostFreeSpaceFloor, "find-host-volume-before-setup", paths.Root, err)
 	}
-	requiredHostFree := config.MinimumHostFreeBytes + config.VHDXOverheadReserveBytes + DefaultInitialPoolAllocationBytes
+	hostFreeBefore, err := service.native.HostFreeBytes(hostMeasurementPath)
+	if err != nil {
+		return nil, newError(CodeHostFreeSpaceFloor, "measure-host-free-before-setup", hostMeasurementPath, err)
+	}
+	requiredHostFree, ok := checkedSumInt64(config.MinimumHostFreeBytes, config.MaximumBytes, config.VHDXOverheadReserveBytes)
+	if !ok {
+		return nil, newError(CodeHostFreeSpaceFloor, "validate-host-free-before-setup", hostMeasurementPath, fmt.Errorf("host free requirement overflows"))
+	}
 	if hostFreeBefore < requiredHostFree {
-		return nil, newError(CodeHostFreeSpaceFloor, "validate-host-free-before-setup", filepath.Dir(paths.Root), fmt.Errorf("hostFree=%d required=%d", hostFreeBefore, requiredHostFree))
+		return nil, newError(CodeHostFreeSpaceFloor, "validate-host-free-before-setup", hostMeasurementPath, fmt.Errorf("hostFree=%d required=%d", hostFreeBefore, requiredHostFree))
 	}
 	if err := prepareSetupRoot(paths); err != nil {
 		return nil, err
@@ -218,6 +225,9 @@ func (service *Service) inspect(ctx context.Context, config Config, runProbe boo
 	if err := service.checkNative(ctx); err != nil {
 		return nil, err
 	}
+	if err := validateExistingPoolPaths(paths); err != nil {
+		return nil, err
+	}
 	hostMetadata, err := readPoolMetadata(paths.Owner)
 	if err != nil {
 		return nil, err
@@ -302,6 +312,9 @@ func (service *Service) Remove(ctx context.Context, config Config) (returnResult
 	if err := service.checkNative(ctx); err != nil {
 		return nil, err
 	}
+	if err := validateExistingPoolPaths(paths); err != nil {
+		return nil, err
+	}
 	hostMetadata, err := readPoolMetadata(paths.Owner)
 	if err != nil {
 		return nil, err
@@ -360,6 +373,19 @@ func (service *Service) Remove(ctx context.Context, config Config) (returnResult
 	residual, err := measureMountedResidual(paths)
 	if err != nil {
 		return nil, newError(CodeCleanupFailed, "measure-mounted-residual", paths.PoolRoot, err)
+	}
+	for name, metric := range map[string]ResidualMetric{
+		"baseline creation locks": residual.BaselineCreationLocks,
+		"baseline staging":        residual.BaselineStagingDirs,
+		"worker staging":          residual.WorkerStagingDirs,
+		"unknown lease":           residual.UnknownLeaseArtifacts,
+		"unknown baseline":        residual.UnknownBaselineEntries,
+		"unknown worker":          residual.UnknownWorkerArtifacts,
+		"quarantine":              residual.QuarantineEntries,
+	} {
+		if metric.Count != 0 {
+			return nil, newError(CodeOrphanFound, "remove-pool", paths.PoolRoot, fmt.Errorf("%s residual=%d", name, metric.Count))
+		}
 	}
 	started := time.Now()
 	closeErr := closeMountedBounded(mounted)
@@ -524,27 +550,49 @@ func (service *Service) syntheticCloneProbe(ctx context.Context, paths Paths, cl
 }
 
 func prepareSetupRoot(paths Paths) error {
-	parent, err := canonicalExistingPath(filepath.Dir(paths.Root))
-	if err != nil || parent != filepath.Clean(filepath.Dir(paths.Root)) {
-		return newError(CodeInvalidConfiguration, "canonical-root-parent", filepath.Dir(paths.Root), err)
-	}
 	if info, err := os.Lstat(paths.Root); err == nil {
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return newError(CodeOwnershipMismatch, "validate-existing-root", paths.Root, fmt.Errorf("root is not a real directory"))
+		}
+		if reparse, inspectErr := inspectPathReparse(paths.Root); inspectErr != nil || reparse {
+			return newError(CodeOwnershipMismatch, "validate-existing-root", paths.Root, errors.Join(inspectErr, fmt.Errorf("root is a reparse point")))
 		}
 		entries, err := os.ReadDir(paths.Root)
 		if err != nil || len(entries) != 0 {
 			return newError(CodePoolCorrupt, "validate-existing-root", paths.Root, errors.Join(err, fmt.Errorf("pool root must be empty")))
 		}
 	} else if os.IsNotExist(err) {
-		if err := os.Mkdir(paths.Root, 0700); err != nil {
-			return newError(CodePoolCorrupt, "create-root", paths.Root, err)
+		if _, err := PrepareOwnedRoot(paths.Root); err != nil {
+			return err
 		}
 	} else {
 		return newError(CodePoolCorrupt, "stat-root", paths.Root, err)
 	}
 	if err := os.Mkdir(paths.Mount, 0700); err != nil {
 		return newError(CodePoolCorrupt, "create-mount", paths.Mount, err)
+	}
+	if reparse, err := inspectPathReparse(paths.Mount); err != nil || reparse {
+		return newError(CodeOwnershipMismatch, "validate-mount", paths.Mount, errors.Join(err, fmt.Errorf("mount is a reparse point")))
+	}
+	return nil
+}
+
+func validateExistingPoolPaths(paths Paths) error {
+	for _, path := range []string{paths.Root, paths.Mount} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return newError(CodePoolNotFound, "validate-existing-pool-path", path, err)
+			}
+			return newError(CodePoolCorrupt, "validate-existing-pool-path", path, err)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return newError(CodeOwnershipMismatch, "validate-existing-pool-path", path, fmt.Errorf("path is not a real directory"))
+		}
+		reparse, err := inspectPathReparse(path)
+		if err != nil || reparse {
+			return newError(CodeOwnershipMismatch, "validate-existing-pool-path", path, errors.Join(err, fmt.Errorf("path is a reparse point")))
+		}
 	}
 	return nil
 }
@@ -553,7 +601,7 @@ func (service *Service) validateHostOwnership(paths Paths, metadata PoolMetadata
 	if err := validateOwnedPaths(paths); err != nil {
 		return err
 	}
-	if metadata.SchemaVersion != PoolSchemaVersion || metadata.Architecture != "Managed ReFS Library Pool" || metadata.OwnershipToken == "" || filepath.Clean(metadata.VHDXPath) != paths.VHDX || metadata.MinimumHostFreeBytes <= 0 || metadata.VHDXOverheadReserveBytes < 0 {
+	if metadata.SchemaVersion != PoolSchemaVersion || metadata.Architecture != managedReFSArchitecture || metadata.OwnershipToken == "" || filepath.Clean(metadata.VHDXPath) != paths.VHDX || metadata.MinimumHostFreeBytes <= 0 || metadata.VHDXOverheadReserveBytes < 0 || metadata.MaximumBytes <= 0 || metadata.SoftBudgetBytes <= 0 || metadata.WorkerReserveBytes <= 0 || metadata.ClusterSize <= 0 || !strings.EqualFold(metadata.Filesystem, "ReFS") {
 		return newError(CodePoolCorrupt, "validate-owner-metadata", paths.Owner, fmt.Errorf("owner metadata does not match requested pool"))
 	}
 	identity, err := service.native.FileIdentity(paths.VHDX)
@@ -570,8 +618,11 @@ func (service *Service) validateHostOwnership(paths Paths, metadata PoolMetadata
 }
 
 func comparePoolIdentity(paths Paths, host, pool PoolMetadata, volume VolumeInfo) error {
-	if host.OwnershipToken != pool.OwnershipToken || host.VHDXIdentity != pool.VHDXIdentity || host.VolumeGUIDPath != pool.VolumeGUIDPath || host.MinimumHostFreeBytes != pool.MinimumHostFreeBytes || host.VHDXOverheadReserveBytes != pool.VHDXOverheadReserveBytes || !strings.EqualFold(pool.VolumeGUIDPath, volume.VolumeGUIDPath) || !strings.EqualFold(pool.Filesystem, volume.Filesystem) || pool.ClusterSize != volume.ClusterSize {
-		return newError(CodePoolCorrupt, "compare-pool-identity", paths.PoolFile, fmt.Errorf("host, pool, VHDX volume identity mismatch"))
+	if filepath.Clean(host.VHDXPath) != paths.VHDX || filepath.Clean(pool.VHDXPath) != paths.VHDX {
+		return newError(CodePoolCorrupt, "compare-pool-identity", paths.PoolFile, fmt.Errorf("metadata VHDX path mismatch"))
+	}
+	if _, err := BuildVerifiedPoolPolicy(host, pool, volume); err != nil {
+		return newError(CodePoolCorrupt, "compare-pool-identity", paths.PoolFile, err)
 	}
 	return nil
 }
@@ -608,7 +659,7 @@ func baseResult(operation string, paths Paths, volume VolumeInfo) *Result {
 	return &Result{
 		SchemaVersion:            "2",
 		Operation:                operation,
-		Architecture:             "Managed ReFS Library Pool",
+		Architecture:             managedReFSArchitecture,
 		ReleasedVersionModified:  false,
 		PhysicalImageCreated:     false,
 		DifferencingChildCreated: false,

@@ -36,6 +36,7 @@ $summary = [ordered]@{
   sourceUnchanged = 'NOT MEASURED'
   baselineUnchanged = 'NOT MEASURED'
   residualStatus = 'NOT_MEASURED'
+  probeProcesses = [ordered]@{ measured = $false; count = $null }
   setupResidual = $null
   probeResidual = $null
   statusResidual = $null
@@ -73,19 +74,27 @@ function Assert-NoForbiddenPath($Result, [string]$Operation) {
   if ($Result.differencingChildCreated -ne $false) { throw "$Operation created a forbidden differencing child" }
 }
 
-function Assert-MeasuredZeroResidual($Residual, [int]$ExpectedVhdxFiles, [string]$Operation) {
+function Assert-BinaryZeroResidual($Residual, [int]$ExpectedVhdxFiles, [string]$Operation) {
   $names = @(
     'activeBaselineUses',
     'workerLeaseJournals',
     'workerDirectories',
+    'baselineCreationLocks',
+    'baselineStagingDirs',
+    'workerStagingDirs',
+    'unknownLeaseArtifacts',
+    'unknownBaselineEntries',
+    'unknownWorkerArtifacts',
     'quarantineEntries',
+    'reservationLocks',
+    'baselineCoordinationLocks',
+    'baselineMutationMarkers',
     'coordinationArtifacts',
     'syntheticProbeDirectories',
     'mountReparsePoints',
     'mountDirectoryEntries',
     'junctions',
-    'attachedDisks',
-    'probeProcesses'
+    'attachedDisks'
   )
   foreach ($name in $names) {
     $metric = $Residual.$name
@@ -98,6 +107,9 @@ function Assert-MeasuredZeroResidual($Residual, [int]$ExpectedVhdxFiles, [string
   if ([int]$Residual.ownedVhdxFiles.count -ne $ExpectedVhdxFiles) {
     throw "$Operation owned VHDX count is $($Residual.ownedVhdxFiles.count), expected $ExpectedVhdxFiles"
   }
+  if ($null -eq $Residual.probeProcesses -or $Residual.probeProcesses.measured -ne $false) {
+    throw "$Operation binary must leave probeProcesses unmeasured for the outer harness"
+  }
 }
 
 try {
@@ -108,7 +120,7 @@ try {
   Assert-NoForbiddenPath $setup 'setup'
   if ($setup.status -ne 'PASS' -or $setup.volume.filesystem -ne 'ReFS') { throw 'setup did not produce a ready ReFS pool' }
   if ($setup.blockCloneSupported -ne $true) { throw 'setup did not prove Block Clone capability' }
-  Assert-MeasuredZeroResidual $setup.residual 1 'setup'
+  Assert-BinaryZeroResidual $setup.residual 1 'setup'
   $summary.setupResidual = $setup.residual
 
   $probe = Invoke-ProbeCommand 'probe'
@@ -121,25 +133,28 @@ try {
     throw 'sparse synthetic Block Clone evidence did not pass'
   }
   if ($probe.sourceUnchanged -ne $true) { throw 'allocate-on-write source isolation failed' }
-  Assert-MeasuredZeroResidual $probe.residual 1 'probe'
+  Assert-BinaryZeroResidual $probe.residual 1 'probe'
   $summary.probeResidual = $probe.residual
 
   $status = Invoke-ProbeCommand 'status'
   Assert-NoForbiddenPath $status 'status'
   if ($status.status -ne 'READY' -or $status.volume.filesystem -ne 'ReFS') { throw 'post-probe status is not ready' }
-  Assert-MeasuredZeroResidual $status.residual 1 'status'
+  Assert-BinaryZeroResidual $status.residual 1 'status'
   $summary.statusResidual = $status.residual
 
   $probeProcesses = @(Get-Process -Name 'testplay-refs-probe' -ErrorAction SilentlyContinue)
   if ($probeProcesses.Count -ne 0) { throw "$($probeProcesses.Count) probe helper processes remain" }
+  $summary.probeProcesses = [ordered]@{ measured = $true; count = 0 }
 
   if ($RemoveAfter) {
     $removed = Invoke-ProbeCommand 'remove'
     Assert-NoForbiddenPath $removed 'remove'
-    Assert-MeasuredZeroResidual $removed.residual 0 'remove'
+    Assert-BinaryZeroResidual $removed.residual 0 'remove'
     if (Test-Path -LiteralPath $poolFile) { throw 'VHDX remains after remove' }
     if (Test-Path -LiteralPath $mountRoot) { throw 'mount directory remains after remove' }
     $summary.removeResidual = $removed.residual
+    $probeProcesses = @(Get-Process -Name 'testplay-refs-probe' -ErrorAction SilentlyContinue)
+    if ($probeProcesses.Count -ne 0) { throw "$($probeProcesses.Count) probe helper processes remain after remove" }
   }
 
   $summary.status = 'PROMISING'

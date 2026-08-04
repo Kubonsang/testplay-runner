@@ -3,14 +3,14 @@
 package refsworkspace
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"golang.org/x/sys/windows"
 )
 
 // protectBaselineTree applies read-only attributes and a non-inheriting ACL.
@@ -36,7 +36,7 @@ func protectBaselineTree(root string) (ProtectionEvidence, error) {
 }
 
 func verifyBaselineProtection(root string, expected ProtectionEvidence) error {
-	if expected.SchemaVersion != protectionSchemaVersion || expected.FilePolicy != "all-regular-files-read-only" || expected.DirectoryPolicy != "root-acl-non-inheriting-read-only-users" {
+	if expected.SchemaVersion != protectionSchemaVersion || expected.FilePolicy != "all-regular-files-read-only" || expected.DirectoryPolicy != "recursive-acl-non-inheriting-read-only-users" {
 		return fmt.Errorf("missing or unsupported protection policy")
 	}
 	actual, err := inspectWindowsProtection(root)
@@ -50,16 +50,21 @@ func verifyBaselineProtection(root string, expected ProtectionEvidence) error {
 }
 
 func inspectWindowsProtection(root string) (ProtectionEvidence, error) {
-	result := ProtectionEvidence{SchemaVersion: protectionSchemaVersion, FilePolicy: "all-regular-files-read-only", DirectoryPolicy: "root-acl-non-inheriting-read-only-users"}
+	result := ProtectionEvidence{SchemaVersion: protectionSchemaVersion, FilePolicy: "all-regular-files-read-only", DirectoryPolicy: "recursive-acl-non-inheriting-read-only-users"}
+	var records []string
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
+		kind := "O"
+		readOnly := false
 		if entry.IsDir() {
+			kind = "D"
+			result.DirectoryCount++
 			result.ProtectedDirectoryCount++
-			return nil
 		}
 		if entry.Type().IsRegular() {
+			kind = "F"
 			result.RegularFileCount++
 			attributes, err := fileAttributes(path)
 			if err != nil {
@@ -69,20 +74,40 @@ func inspectWindowsProtection(root string) (ProtectionEvidence, error) {
 				return fmt.Errorf("writable file: %s", path)
 			}
 			result.ReadOnlyFileCount++
+			readOnly = true
+		}
+		descriptor, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.GROUP_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+		if err != nil {
+			return fmt.Errorf("read security descriptor %s: %w", path, err)
+		}
+		control, _, err := descriptor.Control()
+		if err != nil {
+			return fmt.Errorf("read security descriptor control %s: %w", path, err)
+		}
+		nonInheriting := control&windows.SE_DACL_PROTECTED != 0
+		if !nonInheriting {
+			return fmt.Errorf("inheriting ACL: %s", path)
+		}
+		result.NonInheritingEntryCount++
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		sddl := descriptor.String()
+		if sddl == "" {
+			return fmt.Errorf("empty security descriptor: %s", path)
+		}
+		record := fmt.Sprintf("%s|%s|readonly=%t|noninheriting=%t|%s", kind, filepath.ToSlash(relative), readOnly, nonInheriting, sddl)
+		records = append(records, record)
+		if path == root {
+			result.RootDescriptorSHA256 = protectionStringSHA256(sddl)
 		}
 		return nil
 	})
 	if err != nil {
 		return ProtectionEvidence{}, err
 	}
-	command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "(Get-Acl -LiteralPath $env:TESTPLAY_REFS_PROTECTION_PATH).Sddl")
-	command.Env = append(os.Environ(), "TESTPLAY_REFS_PROTECTION_PATH="+root)
-	output, err := command.Output()
-	if err != nil {
-		return ProtectionEvidence{}, fmt.Errorf("read baseline ACL: %w", err)
-	}
-	digest := sha256.Sum256([]byte(strings.TrimSpace(string(output))))
-	result.RootDescriptorSHA256 = hex.EncodeToString(digest[:])
+	result.TreeDescriptorSHA256 = protectionRecordsSHA256(records)
 	return result, nil
 }
 

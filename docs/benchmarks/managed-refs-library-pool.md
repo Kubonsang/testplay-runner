@@ -20,6 +20,10 @@ change or invalidate the released v0.13 Image + native CoW benchmark history.
 | ReFS cluster size | NOT MEASURED |
 | host filesystem | NOT MEASURED |
 
+The VHDX maximum is the guest volume's virtual-size ceiling. Before setup,
+testplay's separate host reservation gate requires minimum host free space plus
+the full VHDX maximum plus overhead; each worker gate includes its reserve.
+
 Required variables:
 
 ```text
@@ -30,6 +34,20 @@ TESTPLAY_REFS_MOUNT_ROOT
 TESTPLAY_REFS_ARTIFACT_ROOT
 TESTPLAY_REFS_MAX_BYTES
 ```
+
+## Static evidence boundaries
+
+Worker storage limits come only from a `PoolPolicy` verified against both
+metadata copies and the mounted volume; `WorkerRequest` cannot override them.
+Fresh setup creates missing path segments sequentially from a canonical
+existing ancestor and rejects intermediate symlinks/reparse points. Recursive
+baseline protection evidence covers child directories and files. Sparse range
+pages are clipped, sorted, merged, and checked for overflow/no progress.
+Residual classification uses exact allowlists and reports staging and unknown
+artifacts; the binary leaves process count unmeasured for the outer harness.
+Release retry is supported only in the same process on the same object;
+new-process journal resume, forced termination, and reboot recovery are not
+implemented.
 
 ## Correctness gate
 
@@ -121,7 +139,16 @@ recorded Windows machine.
     "activeBaselineUses": { "measured": false, "count": 0 },
     "workerLeaseJournals": { "measured": false, "count": 0 },
     "workerDirectories": { "measured": false, "count": 0 },
+    "baselineCreationLocks": { "measured": false, "count": 0 },
+    "baselineStagingDirs": { "measured": false, "count": 0 },
+    "workerStagingDirs": { "measured": false, "count": 0 },
+    "unknownLeaseArtifacts": { "measured": false, "count": 0 },
+    "unknownBaselineEntries": { "measured": false, "count": 0 },
+    "unknownWorkerArtifacts": { "measured": false, "count": 0 },
     "quarantineEntries": { "measured": false, "count": 0 },
+    "reservationLocks": { "measured": false, "count": 0 },
+    "baselineCoordinationLocks": { "measured": false, "count": 0 },
+    "baselineMutationMarkers": { "measured": false, "count": 0 },
     "coordinationArtifacts": { "measured": false, "count": 0 },
     "syntheticProbeDirectories": { "measured": false, "count": 0 },
     "mountReparsePoints": { "measured": false, "count": 0 },
@@ -136,7 +163,9 @@ recorded Windows machine.
 
 The Windows script may record `PROMISING` only after native setup, regular and
 sparse synthetic Block Clone, allocate-on-write isolation, forbidden-path
-checks, and every applicable measured-zero residual pass. Unity parity and the
+checks, every binary-measurable residual, and the outer probe-process count are
+measured zero. The binary intentionally leaves process count unmeasured;
+unknown artifacts or staging remnants fail the harness. Unity parity and the
 1/2/4/8 ladder remain `NOT MEASURED`; `PROMISING` is not `PROVEN`.
 
 Full baseline hashes remain the correctness gate. Record

@@ -27,13 +27,9 @@ type Junctioner interface {
 }
 
 type WorkerRequest struct {
-	Key                  CompatibilityKey
-	LeaseID              string
-	JunctionPath         string
-	ClusterSize          int64
-	SoftBudgetBytes      int64
-	ExpectedReserveBytes int64
-	MinimumHostFreeBytes int64
+	Key          CompatibilityKey
+	LeaseID      string
+	JunctionPath string
 }
 
 type WorkerStorageMeter interface {
@@ -96,27 +92,41 @@ type WorkerManager struct {
 	pid             int
 	processAlive    func(int) bool
 	storage         WorkerStorageMeter
+	policy          PoolPolicy
 	releaseHook     func(string) error
 	removeLease     func(string) error
 	updateLeaseHook func(*WorkerMetadata) error
 }
 
-func NewWorkerManager(paths Paths, baselines *LibraryBaselineStore, cloner TreeCloner, junctions Junctioner, meters ...WorkerStorageMeter) *WorkerManager {
-	manager := &WorkerManager{
+func NewVerifiedWorkerManager(paths Paths, baselines *LibraryBaselineStore, cloner TreeCloner, junctions Junctioner, host, pool PoolMetadata, volume VolumeInfo) (*WorkerManager, error) {
+	if err := validateOwnedPaths(paths); err != nil {
+		return nil, err
+	}
+	policy, err := BuildVerifiedPoolPolicy(host, pool, volume)
+	if err != nil {
+		return nil, err
+	}
+	if filepath.Clean(pool.VHDXPath) != paths.VHDX {
+		return nil, newError(CodePoolCorrupt, "verify-worker-pool-path", paths.VHDX, fmt.Errorf("verified metadata references %q", pool.VHDXPath))
+	}
+	return newWorkerManager(paths, baselines, cloner, junctions, policy, newNativeWorkerStorageMeter(paths)), nil
+}
+
+// newWorkerManager is intentionally unexported. It is the unit-test seam for
+// storage meters; production callers must use NewVerifiedWorkerManager.
+func newWorkerManager(paths Paths, baselines *LibraryBaselineStore, cloner TreeCloner, junctions Junctioner, policy PoolPolicy, meter WorkerStorageMeter) *WorkerManager {
+	return &WorkerManager{
 		paths:        paths,
 		baselines:    baselines,
 		cloner:       cloner,
 		junctions:    junctions,
+		policy:       policy,
 		now:          time.Now,
 		pid:          os.Getpid(),
 		processAlive: processIsAlive,
 		removeLease:  os.Remove,
-		storage:      newNativeWorkerStorageMeter(paths),
+		storage:      meter,
 	}
-	if len(meters) != 0 {
-		manager.storage = meters[0]
-	}
-	return manager
 }
 
 type WorkerLease struct {
@@ -138,17 +148,11 @@ func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest
 	if err := ctx.Err(); err != nil {
 		return nil, metrics, cancelled("worker-acquire", request.LeaseID, err)
 	}
-	if !leaseIDPattern.MatchString(request.LeaseID) || request.JunctionPath == "" || !filepath.IsAbs(request.JunctionPath) || request.ClusterSize <= 0 {
-		return nil, metrics, newError(CodeInvalidConfiguration, "worker-request", request.LeaseID, fmt.Errorf("invalid lease, junction, or cluster size"))
+	if !leaseIDPattern.MatchString(request.LeaseID) || request.JunctionPath == "" || !filepath.IsAbs(request.JunctionPath) {
+		return nil, metrics, newError(CodeInvalidConfiguration, "worker-request", request.LeaseID, fmt.Errorf("invalid lease or junction"))
 	}
-	if request.SoftBudgetBytes <= 0 || request.ExpectedReserveBytes <= 0 {
-		return nil, metrics, newError(CodeInvalidConfiguration, "worker-budget", request.LeaseID, fmt.Errorf("soft budget and reservation must be positive"))
-	}
-	if request.MinimumHostFreeBytes == 0 {
-		request.MinimumHostFreeBytes = DefaultMinimumHostFreeBytes
-	}
-	if request.MinimumHostFreeBytes < 0 {
-		return nil, metrics, newError(CodeInvalidConfiguration, "worker-host-free-floor", request.LeaseID, fmt.Errorf("minimum host free bytes must not be negative"))
+	if manager.policy.ClusterSize <= 0 || manager.policy.SoftBudgetBytes <= 0 || manager.policy.WorkerReserveBytes <= 0 || manager.policy.MinimumHostFreeBytes <= 0 {
+		return nil, metrics, newError(CodeInvalidConfiguration, "worker-policy", request.LeaseID, fmt.Errorf("verified worker policy is incomplete"))
 	}
 	if err := os.MkdirAll(manager.paths.Workers, 0700); err != nil {
 		return nil, metrics, newError(CodeCloneFailed, "create-workers-root", manager.paths.Workers, err)
@@ -165,7 +169,7 @@ func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest
 		SchemaVersion: LeaseSchemaVersion, LeaseID: request.LeaseID, KeyDigest: request.Key.Digest,
 		State: LeaseRequested, PID: manager.pid, CreatedAt: manager.now().UTC(), UpdatedAt: manager.now().UTC(),
 		OwnershipToken: token, WorkerPath: workerPath, JunctionPath: filepath.Clean(request.JunctionPath),
-		ReservedBytes:  request.ExpectedReserveBytes,
+		ReservedBytes:  manager.policy.WorkerReserveBytes,
 		QuarantinePath: filepath.Join(manager.paths.Quarantine, "worker-"+request.LeaseID+"-"+token[:12]),
 	}
 	leaseFile, err := manager.reserveWorker(ctx, request, metadata)
@@ -225,7 +229,7 @@ func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest
 	if err := manager.updateLease(leaseFile, &metadata); err != nil {
 		return nil, metrics, err
 	}
-	cloneMetrics, err := manager.cloner.CloneTree(ctx, resolution.Baseline.LibraryPath, filepath.Join(staging, "Library"), request.ClusterSize)
+	cloneMetrics, err := manager.cloner.CloneTree(ctx, resolution.Baseline.LibraryPath, filepath.Join(staging, "Library"), manager.policy.ClusterSize)
 	metadata.Clone = cloneMetrics
 	cloneWorkerMetrics := workerMetricsFromClone(cloneMetrics)
 	cloneWorkerMetrics.BaselinePreCloneVerifyMs = metrics.BaselinePreCloneVerifyMs
@@ -298,6 +302,9 @@ func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest
 }
 
 func (manager *WorkerManager) reserveWorker(ctx context.Context, request WorkerRequest, metadata WorkerMetadata) (leaseFile string, returnErr error) {
+	if metadata.ReservedBytes != manager.policy.WorkerReserveBytes {
+		return "", newError(CodeInvalidConfiguration, "reserve-worker", request.LeaseID, fmt.Errorf("journal reserve does not match verified policy"))
+	}
 	lock, err := acquireCoordinationLock(ctx, filepath.Join(manager.paths.Leases, ".reservation.lock"), "reserve-worker")
 	if err != nil {
 		return "", err
@@ -314,16 +321,20 @@ func (manager *WorkerManager) reserveWorker(ctx context.Context, request WorkerR
 	if err != nil {
 		return "", newError(CodeHostFreeSpaceFloor, "measure-host-free", manager.paths.Root, err)
 	}
-	if hostFree < request.MinimumHostFreeBytes {
-		return "", newError(CodeHostFreeSpaceFloor, "reserve-worker", request.LeaseID, fmt.Errorf("hostFree=%d minimum=%d", hostFree, request.MinimumHostFreeBytes))
+	requiredHostFree, ok := checkedAddInt64(manager.policy.MinimumHostFreeBytes, manager.policy.WorkerReserveBytes)
+	if !ok {
+		return "", newError(CodeHostFreeSpaceFloor, "reserve-worker", request.LeaseID, fmt.Errorf("host free requirement overflows"))
+	}
+	if hostFree < requiredHostFree {
+		return "", newError(CodeHostFreeSpaceFloor, "reserve-worker", request.LeaseID, fmt.Errorf("hostFree=%d required=%d", hostFree, requiredHostFree))
 	}
 	activeReservations, err := manager.checkLeases(request.LeaseID)
 	if err != nil {
 		return "", err
 	}
-	available := request.SoftBudgetBytes - used
-	if available < 0 || activeReservations > available || request.ExpectedReserveBytes > available-activeReservations {
-		return "", newError(CodeStorageBudgetExceeded, "reserve-worker", request.LeaseID, fmt.Errorf("used=%d activeReservations=%d requested=%d budget=%d", used, activeReservations, request.ExpectedReserveBytes, request.SoftBudgetBytes))
+	available := manager.policy.SoftBudgetBytes - used
+	if available < 0 || activeReservations > available || manager.policy.WorkerReserveBytes > available-activeReservations {
+		return "", newError(CodeStorageBudgetExceeded, "reserve-worker", request.LeaseID, fmt.Errorf("used=%d activeReservations=%d requested=%d budget=%d", used, activeReservations, manager.policy.WorkerReserveBytes, manager.policy.SoftBudgetBytes))
 	}
 	leaseFile = filepath.Join(manager.paths.Leases, "worker-"+request.LeaseID+".json")
 	if err := createJSONExclusive(leaseFile, metadata); err != nil {
@@ -343,7 +354,9 @@ func (lease *WorkerLease) MarkRunning() error {
 }
 
 // Release requires the caller to have already observed complete Unity process
-// termination. Forced-termination recovery is intentionally outside this probe.
+// termination. Retry is idempotent only in the same process through this same
+// WorkerLease object. Loading a journal in a new process, forced-termination
+// recovery, and reboot recovery are intentionally outside this probe.
 func (lease *WorkerLease) Release(ctx context.Context) (WorkerMetrics, error) {
 	lease.mu.Lock()
 	defer lease.mu.Unlock()

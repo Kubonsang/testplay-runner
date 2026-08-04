@@ -200,13 +200,30 @@ func TestBaselineProtectionDamageIsCorruptionEvenWhenContentMatches(t *testing.T
 			}
 		}},
 		{name: "root writable", damage: func(t *testing.T, baseline *Baseline) {
-			if err := os.Chmod(baseline.LibraryPath, 0700); err != nil {
+			if err := damageDirectoryProtectionForTest(baseline.LibraryPath); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "child directory writable", damage: func(t *testing.T, baseline *Baseline) {
+			if err := damageDirectoryProtectionForTest(filepath.Join(baseline.LibraryPath, "ArtifactDB")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "file ACL", damage: func(t *testing.T, baseline *Baseline) {
+			if err := damageFileProtectionForTest(filepath.Join(baseline.LibraryPath, "artifact.bin")); err != nil {
 				t.Fatal(err)
 			}
 		}},
 		{name: "metadata digest", damage: func(t *testing.T, baseline *Baseline) {
 			metadata := baseline.Metadata
-			metadata.Protection.RootDescriptorSHA256 = strings.Repeat("0", 64)
+			metadata.Protection.TreeDescriptorSHA256 = strings.Repeat("0", 64)
+			if err := writeJSONAtomic(filepath.Join(baseline.Path, baselineMetadataFile), metadata, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "entry count", damage: func(t *testing.T, baseline *Baseline) {
+			metadata := baseline.Metadata
+			metadata.Protection.DirectoryCount++
 			if err := writeJSONAtomic(filepath.Join(baseline.Path, baselineMetadataFile), metadata, 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -224,6 +241,12 @@ func TestBaselineProtectionDamageIsCorruptionEvenWhenContentMatches(t *testing.T
 			store := NewLibraryBaselineStore(paths)
 			key := testCompatibilityKey("6")
 			baseline, _, _, err := store.Ensure(context.Background(), key, func(_ context.Context, libraryPath string) error {
+				if err := os.Mkdir(filepath.Join(libraryPath, "ArtifactDB"), 0700); err != nil {
+					return err
+				}
+				if err := os.WriteFile(filepath.Join(libraryPath, "ArtifactDB", "child.bin"), []byte("child-content"), 0600); err != nil {
+					return err
+				}
 				return os.WriteFile(filepath.Join(libraryPath, "artifact.bin"), []byte("same-content"), 0600)
 			})
 			if err != nil {
