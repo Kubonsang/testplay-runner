@@ -68,12 +68,14 @@ function Invoke-ProbeCommand([string]$Operation) {
   $exit = $LASTEXITCODE
   $artifact = Join-Path $artifactRoot "$Operation.json"
   $output | Set-Content -LiteralPath $artifact -Encoding utf8
+  $result = $null
+  try { $result = $output | ConvertFrom-Json } catch { }
+  $devDriveEvidence = if ($null -ne $result.devDrive) { $result.devDrive } elseif ($null -ne $result.nativeEvidence.devDrive) { $result.nativeEvidence.devDrive } else { $null }
+  if ($null -ne $devDriveEvidence -and $null -ne $devDriveEvidence.queryOutput) {
+    $devDriveEvidence.queryOutput | Set-Content -LiteralPath (Join-Path $artifactRoot "$Operation-dev-drive-query.txt") -Encoding utf8 -NoNewline
+  }
   if ($exit -ne 0) {
     throw "$Operation failed with exit code ${exit}: $output"
-  }
-  $result = $output | ConvertFrom-Json
-  if ($null -ne $result.devDrive -and $null -ne $result.devDrive.queryOutput) {
-    $result.devDrive.queryOutput | Set-Content -LiteralPath (Join-Path $artifactRoot "$Operation-dev-drive-query.txt") -Encoding utf8 -NoNewline
   }
   return $result
 }

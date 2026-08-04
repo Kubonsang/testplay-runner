@@ -23,13 +23,14 @@ New-Item -ItemType Junction -Path $junction -Target $target -ErrorAction Stop | 
 `
 
 func (nativeJunctioner) Create(target, junction string) error {
+	originalTarget, originalJunction := target, junction
 	targetResolved, err := canonicalExistingPath(target)
 	if err != nil {
-		return err
+		return newError(CodeJunctionFailed, "canonical-junction-target", originalTarget, err)
 	}
 	parent, err := canonicalExistingPath(filepath.Dir(junction))
 	if err != nil {
-		return err
+		return newError(CodeJunctionFailed, "canonical-junction-parent", originalJunction, err)
 	}
 	junction = filepath.Join(parent, filepath.Base(junction))
 	if _, err := os.Lstat(junction); !os.IsNotExist(err) {
@@ -48,6 +49,7 @@ func (nativeJunctioner) Create(target, junction string) error {
 }
 
 func (nativeJunctioner) Remove(target, junction string) error {
+	originalTarget := target
 	info, err := os.Lstat(junction)
 	if err != nil {
 		return err
@@ -61,7 +63,7 @@ func (nativeJunctioner) Remove(target, junction string) error {
 	}
 	expected, err := canonicalExistingPath(target)
 	if err != nil {
-		return err
+		return newError(CodeJunctionFailed, "canonical-junction-target", originalTarget, err)
 	}
 	if !strings.EqualFold(filepath.Clean(resolved), expected) {
 		return fmt.Errorf("junction target changed: resolved=%q expected=%q", resolved, expected)

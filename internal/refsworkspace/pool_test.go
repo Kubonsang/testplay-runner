@@ -273,6 +273,65 @@ func TestPoolSetupPersistsVHDXAndStatusDoesNotReformat(t *testing.T) {
 	}
 }
 
+type postMountFailureCloner struct {
+	request CloneRequest
+}
+
+func (cloner *postMountFailureCloner) CloneTree(_ context.Context, request CloneRequest) (CloneMetrics, error) {
+	cloner.request = request
+	return CloneMetrics{}, newError(CodeCloneFailed, "validate-clone-source", request.Source, errors.New("injected post-mount path validation failure"))
+}
+
+func TestPoolPostMountCloneFailurePreservesNativeEvidence(t *testing.T) {
+	native := newFakePoolNative()
+	cloner := &postMountFailureCloner{}
+	config := Config{Root: filepath.Join(t.TempDir(), "storage")}
+	_, err := NewService(native, cloner).Setup(context.Background(), config)
+	var cloneErr *Error
+	if !errors.As(err, &cloneErr) || cloneErr.Code != CodeCloneFailed {
+		t.Fatalf("err=%v", err)
+	}
+	if cloneErr.CleanupState != "released" || cloneErr.ManualRecoveryRequired || cloneErr.NativeEvidence == nil {
+		t.Fatalf("error=%+v", cloneErr)
+	}
+	evidence := cloneErr.NativeEvidence
+	if evidence.DevDrive == nil || !evidence.DevDrive.FormatAttempted || !evidence.DevDrive.FormatSucceeded || evidence.DevDrive.QueryExitCode != 0 || evidence.DevDrive.QueryOutput != "Developer volumes are enabled." || !evidence.DevDrive.TemporaryDriveLetterAssigned || !evidence.DevDrive.TemporaryDriveLetterRemoved || !evidence.DevDrive.PrivateMountVerified {
+		t.Fatalf("devDrive=%+v", evidence.DevDrive)
+	}
+	if evidence.Filesystem == nil || *evidence.Filesystem != "ReFS" || evidence.ClusterSize == nil || *evidence.ClusterSize != 4096 || evidence.BlockCloneSupported == nil || !*evidence.BlockCloneSupported {
+		t.Fatalf("volume evidence=%+v", evidence)
+	}
+	if evidence.LastCompletedMilestone != "volume-capability-validation" || evidence.RegularBlockCloneIOCTLAttempted == nil || *evidence.RegularBlockCloneIOCTLAttempted || evidence.SparseBlockCloneIOCTLAttempted == nil || *evidence.SparseBlockCloneIOCTLAttempted {
+		t.Fatalf("attempt evidence=%+v", evidence)
+	}
+	if evidence.Milestones.RegularBlockCloneIOCTL != NativeMilestoneNotAttempted || evidence.Milestones.SparseBlockCloneIOCTL != NativeMilestoneNotAttempted || evidence.Milestones.Cleanup != NativeMilestoneReleased {
+		t.Fatalf("milestones=%+v", evidence.Milestones)
+	}
+	_, paths, pathsErr := NewPaths(config)
+	if pathsErr != nil {
+		t.Fatal(pathsErr)
+	}
+	if cloner.request.TrustedRoot != paths.PoolRoot || !PathWithin(cloner.request.TrustedRoot, cloner.request.Source) || !PathWithin(cloner.request.TrustedRoot, cloner.request.Destination) {
+		t.Fatalf("production clone request=%+v paths=%+v", cloner.request, paths)
+	}
+	if _, statErr := os.Stat(paths.VHDX); !os.IsNotExist(statErr) {
+		t.Fatalf("released failure retained partial VHDX: %v", statErr)
+	}
+}
+
+func TestPoolPreMountFailureDoesNotInventNativeEvidence(t *testing.T) {
+	native := newFakePoolNative()
+	native.mountErr = errors.New("AttachVirtualDisk failed")
+	_, err := NewService(native, copyClaimingCloner{}).Setup(context.Background(), Config{Root: filepath.Join(t.TempDir(), "storage")})
+	var probeErr *Error
+	if !errors.As(err, &probeErr) {
+		t.Fatal(err)
+	}
+	if probeErr.NativeEvidence != nil {
+		t.Fatalf("pre-mount evidence was invented: %+v", probeErr.NativeEvidence)
+	}
+}
+
 func TestPoolRemoveIsTheOnlyLifecycleThatDeletesPersistentVHDX(t *testing.T) {
 	native := newFakePoolNative()
 	service := NewService(native, copyClaimingCloner{})

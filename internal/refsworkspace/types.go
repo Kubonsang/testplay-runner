@@ -86,6 +86,41 @@ type DevDriveEvidence struct {
 	PrivateMountVerified         bool   `json:"privateMountVerified"`
 }
 
+const (
+	NativeMilestoneNotAttempted = "NOT_ATTEMPTED"
+	NativeMilestoneNotMeasured  = "NOT_MEASURED"
+	NativeMilestoneMeasuredPass = "MEASURED_PASS"
+	NativeMilestoneMeasuredFail = "MEASURED_FAIL"
+	NativeMilestoneReleased     = "MEASURED_RELEASED"
+	NativeMilestoneUncertain    = "MEASURED_UNCERTAIN"
+)
+
+type NativeMilestones struct {
+	DevDriveFormat         string `json:"devDriveFormat"`
+	PrivateMount           string `json:"privateMount"`
+	FilesystemValidation   string `json:"filesystemValidation"`
+	BlockCloneCapability   string `json:"blockCloneCapability"`
+	RegularBlockCloneIOCTL string `json:"regularBlockCloneIOCTL"`
+	SparseBlockCloneIOCTL  string `json:"sparseBlockCloneIOCTL"`
+	CoWIsolation           string `json:"cowIsolation"`
+	Cleanup                string `json:"cleanup"`
+}
+
+// NativeEvidence is optional on errors. Pointer fields distinguish an actual
+// false/zero measurement from a milestone that was never reached.
+type NativeEvidence struct {
+	WindowsProvider                 string            `json:"windowsProvider"`
+	VolumeKind                      string            `json:"volumeKind"`
+	DevDrive                        *DevDriveEvidence `json:"devDrive,omitempty"`
+	Filesystem                      *string           `json:"filesystem,omitempty"`
+	ClusterSize                     *int64            `json:"clusterSize,omitempty"`
+	BlockCloneSupported             *bool             `json:"blockCloneSupported,omitempty"`
+	LastCompletedMilestone          string            `json:"lastCompletedMilestone,omitempty"`
+	RegularBlockCloneIOCTLAttempted *bool             `json:"regularBlockCloneIOCTLAttempted,omitempty"`
+	SparseBlockCloneIOCTLAttempted  *bool             `json:"sparseBlockCloneIOCTLAttempted,omitempty"`
+	Milestones                      NativeMilestones  `json:"nativeMilestones"`
+}
+
 // PoolPolicy is the storage policy accepted only after the host metadata,
 // mounted-volume metadata, and in-volume metadata have been cross-checked.
 // Per-run requests cannot weaken these limits.
@@ -99,31 +134,33 @@ type PoolPolicy struct {
 }
 
 type PoolMetrics struct {
-	PoolSetupMs                 int64 `json:"poolSetupMs,omitempty"`
-	PoolAttachMs                int64 `json:"poolAttachMs,omitempty"`
-	PoolMountMs                 int64 `json:"poolMountMs,omitempty"`
-	ClonedFileCount             int64 `json:"clonedFileCount,omitempty"`
-	ClonedBytes                 int64 `json:"clonedBytes,omitempty"`
-	PhysicalCopiedFileCount     int64 `json:"physicalCopiedFileCount,omitempty"`
-	PhysicalCopiedBytes         int64 `json:"physicalCopiedBytes,omitempty"`
-	TailCopiedBytes             int64 `json:"tailCopiedBytes,omitempty"`
-	MetadataOnlyFileCount       int64 `json:"metadataOnlyFileCount,omitempty"`
-	FailedFileCount             int64 `json:"failedFileCount,omitempty"`
-	CloneTreeMs                 int64 `json:"cloneTreeMs,omitempty"`
-	RefsVolumeUsedBefore        int64 `json:"refsVolumeUsedBefore,omitempty"`
-	RefsVolumeUsedAfterBaseline int64 `json:"refsVolumeUsedAfterBaseline,omitempty"`
-	RefsVolumeUsedAfterAcquire  int64 `json:"refsVolumeUsedAfterAcquire,omitempty"`
-	RefsVolumeUsedAfterUnity    int64 `json:"refsVolumeUsedAfterUnity,omitempty"`
-	RefsVolumeUsedAfterRelease  int64 `json:"refsVolumeUsedAfterRelease,omitempty"`
-	HostVHDXLogicalBytes        int64 `json:"hostVhdxLogicalBytes,omitempty"`
-	HostVHDXAllocatedBytes      int64 `json:"hostVhdxAllocatedBytes,omitempty"`
-	HostFreeBytes               int64 `json:"hostFreeBytes,omitempty"`
-	CleanupMs                   int64 `json:"cleanupMs,omitempty"`
-	SparseFileCount             int64 `json:"sparseFileCount,omitempty"`
-	SparseLogicalBytes          int64 `json:"sparseLogicalBytes,omitempty"`
-	SparseAllocatedSourceBytes  int64 `json:"sparseAllocatedSourceBytes,omitempty"`
-	SparseClonedBytes           int64 `json:"sparseClonedBytes,omitempty"`
-	SparseHoleBytes             int64 `json:"sparseHoleBytes,omitempty"`
+	PoolSetupMs                     int64 `json:"poolSetupMs,omitempty"`
+	PoolAttachMs                    int64 `json:"poolAttachMs,omitempty"`
+	PoolMountMs                     int64 `json:"poolMountMs,omitempty"`
+	ClonedFileCount                 int64 `json:"clonedFileCount,omitempty"`
+	ClonedBytes                     int64 `json:"clonedBytes,omitempty"`
+	PhysicalCopiedFileCount         int64 `json:"physicalCopiedFileCount,omitempty"`
+	PhysicalCopiedBytes             int64 `json:"physicalCopiedBytes,omitempty"`
+	TailCopiedBytes                 int64 `json:"tailCopiedBytes,omitempty"`
+	MetadataOnlyFileCount           int64 `json:"metadataOnlyFileCount,omitempty"`
+	FailedFileCount                 int64 `json:"failedFileCount,omitempty"`
+	CloneTreeMs                     int64 `json:"cloneTreeMs,omitempty"`
+	RefsVolumeUsedBefore            int64 `json:"refsVolumeUsedBefore,omitempty"`
+	RefsVolumeUsedAfterBaseline     int64 `json:"refsVolumeUsedAfterBaseline,omitempty"`
+	RefsVolumeUsedAfterAcquire      int64 `json:"refsVolumeUsedAfterAcquire,omitempty"`
+	RefsVolumeUsedAfterUnity        int64 `json:"refsVolumeUsedAfterUnity,omitempty"`
+	RefsVolumeUsedAfterRelease      int64 `json:"refsVolumeUsedAfterRelease,omitempty"`
+	HostVHDXLogicalBytes            int64 `json:"hostVhdxLogicalBytes,omitempty"`
+	HostVHDXAllocatedBytes          int64 `json:"hostVhdxAllocatedBytes,omitempty"`
+	HostFreeBytes                   int64 `json:"hostFreeBytes,omitempty"`
+	CleanupMs                       int64 `json:"cleanupMs,omitempty"`
+	SparseFileCount                 int64 `json:"sparseFileCount,omitempty"`
+	SparseLogicalBytes              int64 `json:"sparseLogicalBytes,omitempty"`
+	SparseAllocatedSourceBytes      int64 `json:"sparseAllocatedSourceBytes,omitempty"`
+	SparseClonedBytes               int64 `json:"sparseClonedBytes,omitempty"`
+	SparseHoleBytes                 int64 `json:"sparseHoleBytes,omitempty"`
+	RegularBlockCloneIOCTLAttempted bool  `json:"regularBlockCloneIOCTLAttempted,omitempty"`
+	SparseBlockCloneIOCTLAttempted  bool  `json:"sparseBlockCloneIOCTLAttempted,omitempty"`
 }
 
 type Result struct {
@@ -134,6 +171,7 @@ type Result struct {
 	WindowsProvider          string           `json:"windowsProvider"`
 	VolumeKind               string           `json:"volumeKind"`
 	DevDrive                 DevDriveEvidence `json:"devDrive"`
+	NativeEvidence           *NativeEvidence  `json:"nativeEvidence,omitempty"`
 	ReleasedVersionModified  bool             `json:"releasedVersionModified"`
 	PhysicalImageCreated     bool             `json:"physicalImageCreated"`
 	DifferencingChildCreated bool             `json:"differencingChildCreated"`
@@ -180,20 +218,22 @@ type Residual struct {
 }
 
 type CloneMetrics struct {
-	CloneTreeMs                int64 `json:"cloneTreeMs"`
-	ClonedFileCount            int64 `json:"clonedFileCount"`
-	ClonedBytes                int64 `json:"clonedBytes"`
-	PhysicalCopiedFileCount    int64 `json:"physicalCopiedFileCount"`
-	PhysicalCopiedBytes        int64 `json:"physicalCopiedBytes"`
-	TailCopiedBytes            int64 `json:"tailCopiedBytes"`
-	MetadataOnlyFileCount      int64 `json:"metadataOnlyFileCount"`
-	FailedFileCount            int64 `json:"failedFileCount"`
-	FallbackUsed               bool  `json:"fallbackUsed"`
-	SparseFileCount            int64 `json:"sparseFileCount"`
-	SparseLogicalBytes         int64 `json:"sparseLogicalBytes"`
-	SparseAllocatedSourceBytes int64 `json:"sparseAllocatedSourceBytes"`
-	SparseClonedBytes          int64 `json:"sparseClonedBytes"`
-	SparseHoleBytes            int64 `json:"sparseHoleBytes"`
+	CloneTreeMs                     int64 `json:"cloneTreeMs"`
+	ClonedFileCount                 int64 `json:"clonedFileCount"`
+	ClonedBytes                     int64 `json:"clonedBytes"`
+	PhysicalCopiedFileCount         int64 `json:"physicalCopiedFileCount"`
+	PhysicalCopiedBytes             int64 `json:"physicalCopiedBytes"`
+	TailCopiedBytes                 int64 `json:"tailCopiedBytes"`
+	MetadataOnlyFileCount           int64 `json:"metadataOnlyFileCount"`
+	FailedFileCount                 int64 `json:"failedFileCount"`
+	FallbackUsed                    bool  `json:"fallbackUsed"`
+	SparseFileCount                 int64 `json:"sparseFileCount"`
+	SparseLogicalBytes              int64 `json:"sparseLogicalBytes"`
+	SparseAllocatedSourceBytes      int64 `json:"sparseAllocatedSourceBytes"`
+	SparseClonedBytes               int64 `json:"sparseClonedBytes"`
+	SparseHoleBytes                 int64 `json:"sparseHoleBytes"`
+	RegularBlockCloneIOCTLAttempted bool  `json:"regularBlockCloneIOCTLAttempted"`
+	SparseBlockCloneIOCTLAttempted  bool  `json:"sparseBlockCloneIOCTLAttempted"`
 }
 
 type LeaseState string

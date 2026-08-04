@@ -54,6 +54,7 @@ func NewNativeService() *Service {
 
 func (service *Service) Setup(ctx context.Context, config Config) (returnResult *Result, returnErr error) {
 	started := time.Now()
+	var nativeEvidence *NativeEvidence
 	config, paths, err := NewPaths(config)
 	if err != nil {
 		return nil, err
@@ -112,6 +113,15 @@ func (service *Service) Setup(ctx context.Context, config Config) (returnResult 
 			}
 			returnErr = errorWithCleanupEvidence(returnErr, state, paths.VHDX, committedOwner)
 		}
+		if returnErr != nil && nativeEvidence != nil {
+			cleanupState := "uncertain"
+			var evidenceError *Error
+			if errors.As(returnErr, &evidenceError) && evidenceError.CleanupState != "" {
+				cleanupState = evidenceError.CleanupState
+			}
+			nativeEvidence.recordCleanup(cleanupState)
+			returnErr = errorWithNativeEvidence(returnErr, nativeEvidence)
+		}
 	}()
 	if err := service.native.CreateDynamic(paths.VHDX, config.MaximumBytes); err != nil {
 		return nil, mapNativeError("create-dynamic-vhdx", paths.VHDX, err)
@@ -139,15 +149,18 @@ func (service *Service) Setup(ctx context.Context, config Config) (returnResult 
 		}
 	}()
 	volume := mounted.Volume()
+	nativeEvidence = newPostMountNativeEvidence(mounted.DevDriveEvidence(), volume)
 	if err := validateVolume(volume); err != nil {
 		return nil, err
 	}
+	nativeEvidence.recordVolumeCapabilityValidation(volume)
 	for _, path := range []string{paths.PoolRoot, paths.Baselines, paths.Workers, paths.Leases, paths.Quarantine} {
 		if err := os.MkdirAll(path, 0700); err != nil {
 			return nil, newError(CodePoolCorrupt, "create-pool-layout", path, err)
 		}
 	}
 	cloneMetrics, sourceUnchanged, err := service.syntheticCloneProbe(ctx, paths, volume.ClusterSize)
+	nativeEvidence.recordCloneMetrics(cloneMetrics, err)
 	if err != nil {
 		return nil, err
 	}
@@ -195,10 +208,12 @@ func (service *Service) Setup(ctx context.Context, config Config) (returnResult 
 		return nil, cleanupFailure("detach-pool-after-setup", paths.VHDX, closeErr, true)
 	}
 	cleanupSafe = true
+	nativeEvidence.recordCleanup("released")
 	usage, _ := service.native.FileUsage(paths.VHDX)
 	hostFree, _ := service.native.HostFreeBytes(paths.Root)
 	result := baseResult("setup", paths, volume)
 	result.DevDrive = mounted.DevDriveEvidence()
+	result.NativeEvidence = nativeEvidence
 	result.Status = "PASS"
 	result.Pool = &metadata
 	result.BlockCloneSupported = true
@@ -513,7 +528,10 @@ func (service *Service) syntheticCloneProbe(ctx context.Context, paths Paths, cl
 	if err != nil {
 		return CloneMetrics{}, false, newError(CodeCloneFailed, "hash-synthetic-source", sourceFile, err)
 	}
-	metrics, err = service.cloner.CloneTree(ctx, sourceRoot, destinationRoot, clusterSize)
+	metrics, err = service.cloner.CloneTree(ctx, CloneRequest{
+		TrustedRoot: paths.PoolRoot,
+		Source:      sourceRoot, Destination: destinationRoot, ClusterSize: clusterSize,
+	})
 	if err != nil {
 		return metrics, false, mapNativeError("synthetic-block-clone", destinationRoot, err)
 	}
@@ -687,19 +705,21 @@ func baseResult(operation string, paths Paths, volume VolumeInfo) *Result {
 
 func poolMetricsFromClone(clone CloneMetrics) PoolMetrics {
 	return PoolMetrics{
-		ClonedFileCount:            clone.ClonedFileCount,
-		ClonedBytes:                clone.ClonedBytes,
-		PhysicalCopiedFileCount:    clone.PhysicalCopiedFileCount,
-		PhysicalCopiedBytes:        clone.PhysicalCopiedBytes,
-		TailCopiedBytes:            clone.TailCopiedBytes,
-		MetadataOnlyFileCount:      clone.MetadataOnlyFileCount,
-		FailedFileCount:            clone.FailedFileCount,
-		CloneTreeMs:                clone.CloneTreeMs,
-		SparseFileCount:            clone.SparseFileCount,
-		SparseLogicalBytes:         clone.SparseLogicalBytes,
-		SparseAllocatedSourceBytes: clone.SparseAllocatedSourceBytes,
-		SparseClonedBytes:          clone.SparseClonedBytes,
-		SparseHoleBytes:            clone.SparseHoleBytes,
+		ClonedFileCount:                 clone.ClonedFileCount,
+		ClonedBytes:                     clone.ClonedBytes,
+		PhysicalCopiedFileCount:         clone.PhysicalCopiedFileCount,
+		PhysicalCopiedBytes:             clone.PhysicalCopiedBytes,
+		TailCopiedBytes:                 clone.TailCopiedBytes,
+		MetadataOnlyFileCount:           clone.MetadataOnlyFileCount,
+		FailedFileCount:                 clone.FailedFileCount,
+		CloneTreeMs:                     clone.CloneTreeMs,
+		SparseFileCount:                 clone.SparseFileCount,
+		SparseLogicalBytes:              clone.SparseLogicalBytes,
+		SparseAllocatedSourceBytes:      clone.SparseAllocatedSourceBytes,
+		SparseClonedBytes:               clone.SparseClonedBytes,
+		SparseHoleBytes:                 clone.SparseHoleBytes,
+		RegularBlockCloneIOCTLAttempted: clone.RegularBlockCloneIOCTLAttempted,
+		SparseBlockCloneIOCTLAttempted:  clone.SparseBlockCloneIOCTLAttempted,
 	}
 }
 

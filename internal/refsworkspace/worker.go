@@ -229,7 +229,11 @@ func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest
 	if err := manager.updateLease(leaseFile, &metadata); err != nil {
 		return nil, metrics, err
 	}
-	cloneMetrics, err := manager.cloner.CloneTree(ctx, resolution.Baseline.LibraryPath, filepath.Join(staging, "Library"), manager.policy.ClusterSize)
+	cloneMetrics, err := manager.cloner.CloneTree(ctx, CloneRequest{
+		TrustedRoot: manager.paths.PoolRoot,
+		Source:      resolution.Baseline.LibraryPath, Destination: filepath.Join(staging, "Library"),
+		ClusterSize: manager.policy.ClusterSize,
+	})
 	metadata.Clone = cloneMetrics
 	cloneWorkerMetrics := workerMetricsFromClone(cloneMetrics)
 	cloneWorkerMetrics.BaselinePreCloneVerifyMs = metrics.BaselinePreCloneVerifyMs

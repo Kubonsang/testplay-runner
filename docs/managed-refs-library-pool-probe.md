@@ -332,6 +332,21 @@ the disk and left no owned VHDX or mount. That result is retained as evidence
 for the rejected generic provider; it is not evidence against the Dev Drive
 provider.
 
+The first Dev Drive provider run at commit
+`6fd8074f36a38c064b6435c33dee3f3b60e4ba93` failed after mount at
+`canonical-clone-source`: `filepath.EvalSymlinks` returned `too many links`
+under the Windows volume mount. Cleanup was `released`; regular and sparse
+Block Clone IOCTLs were not executed. Its artifact ZIP SHA-256 is
+`047150F95E9B2FA772947D10E891C12B5BD236C86C488C8A9A3B10A55C988BC8`.
+
+A follow-up run with trusted-root clone validation completed Dev Drive setup,
+regular/sparse Block Clone, and CoW isolation, then failed at the next detached
+`probe` with `pool-not-found` because it attempted to read the in-volume
+`pool.json` before attaching the VHDX. The persistent VHDX was preserved and no
+disk, temporary drive letter, or probe process remained attached. Follow-up
+artifact ZIP SHA-256:
+`96FC061E9D8694D2FE25D5DBEDD5C50C6CA497235FC10A17DC03998196642554`.
+
 Current repository status is `STATIC READY FOR DEV DRIVE VALIDATION`. This is
 a source/test readiness statement, not native evidence and not a release.
 Native Dev Drive setup, Unity correctness, and 1/2/4/8 workers remain

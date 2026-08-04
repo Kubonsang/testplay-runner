@@ -26,9 +26,11 @@ const (
 	fileAttributeSparseFile      = uint32(0x00000200)
 )
 
-type nativeTreeCloner struct{}
+type nativeTreeCloner struct {
+	paths clonePathInspector
+}
 
-func NewNativeTreeCloner() TreeCloner { return nativeTreeCloner{} }
+func NewNativeTreeCloner() TreeCloner { return nativeTreeCloner{paths: windowsClonePathInspector{}} }
 
 type duplicateExtentsData struct {
 	FileHandle       windows.Handle
@@ -64,35 +66,34 @@ type directoryMetadata struct {
 	written    windows.Filetime
 }
 
-func (nativeTreeCloner) CloneTree(ctx context.Context, source, destination string, clusterSize int64) (metrics CloneMetrics, returnErr error) {
+func (cloner nativeTreeCloner) CloneTree(ctx context.Context, request CloneRequest) (metrics CloneMetrics, returnErr error) {
 	started := time.Now()
 	defer func() { metrics.CloneTreeMs = time.Since(started).Milliseconds() }()
+	originalSource, originalDestination := request.Source, request.Destination
 	if err := ctx.Err(); err != nil {
-		return metrics, cancelled("clone-tree", destination, err)
+		return metrics, cancelled("clone-tree", originalDestination, err)
 	}
-	if _, err := PlanClone(0, clusterSize); err != nil {
-		return metrics, newError(CodeInvalidConfiguration, "clone-tree-cluster", source, err)
+	if _, err := PlanClone(0, request.ClusterSize); err != nil {
+		return metrics, newError(CodeInvalidConfiguration, "clone-tree-cluster", originalSource, err)
 	}
-	source, err := canonicalExistingPath(source)
+	inspector := cloner.paths
+	if inspector == nil {
+		inspector = windowsClonePathInspector{}
+	}
+	scope, err := prepareCloneScope(request, inspector)
 	if err != nil {
-		return metrics, newError(CodeCloneFailed, "canonical-clone-source", source, err)
+		return metrics, err
 	}
-	info, err := os.Lstat(source)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return metrics, newError(CodeCloneFailed, "validate-clone-source", source, errors.Join(err, fmt.Errorf("source must be a real directory")))
-	}
-	if _, err := os.Lstat(destination); !os.IsNotExist(err) {
-		return metrics, newError(CodeCloneFailed, "validate-clone-destination", destination, fmt.Errorf("destination must not exist"))
-	}
-	if err := os.MkdirAll(destination, 0700); err != nil {
-		return metrics, newError(CodeCloneFailed, "create-clone-destination", destination, err)
-	}
+	source, destination, clusterSize := scope.Source, scope.Destination, request.ClusterSize
 	var directories []directoryMetadata
 	err = filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := validateCloneTreeEntry(path, inspector); err != nil {
 			return err
 		}
 		rel, err := filepath.Rel(source, path)
@@ -259,6 +260,11 @@ func cloneFile(ctx context.Context, sourcePath, destinationPath string, clusterS
 			ByteCount:        cloneRange.Length,
 		}
 		var returned uint32
+		if isSparse {
+			metrics.SparseBlockCloneIOCTLAttempted = true
+		} else {
+			metrics.RegularBlockCloneIOCTLAttempted = true
+		}
 		err := windows.DeviceIoControl(destinationHandle, fsctlDuplicateExtentsToFile, (*byte)(unsafe.Pointer(&request)), uint32(unsafe.Sizeof(request)), nil, 0, &returned, nil)
 		if err != nil {
 			code := CodeCloneFailed

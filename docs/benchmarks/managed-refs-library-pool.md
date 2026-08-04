@@ -37,6 +37,26 @@ Its retained native result was Windows 11 Pro 25H2 build 26200.8875,
 This is evidence about the rejected generic provider only. The Dev Drive VHDX
 provider has not yet been run on native hardware.
 
+## Retained Dev Drive path-validation failure
+
+The first native Dev Drive run at commit
+`6fd8074f36a38c064b6435c33dee3f3b60e4ba93` on Windows 11 Pro build
+26200.8875 reached the mounted pool and then failed with `clone-failed` at
+`canonical-clone-source`. `filepath.EvalSymlinks` returned `too many links`
+beneath the Windows directory volume mount. Cleanup was `released`; regular
+and sparse Block Clone IOCTLs were `NOT EXECUTED`. The artifact ZIP SHA-256 is
+`047150F95E9B2FA772947D10E891C12B5BD236C86C488C8A9A3B10A55C988BC8`.
+This evidence is retained and is not overwritten by follow-up runs.
+
+The path-validation follow-up on the same Windows build passed Dev Drive setup,
+ReFS/block-refcount capability validation, regular and sparse Block Clone, and
+allocate-on-write source isolation. The subsequent detached `probe` failed
+before attach with `pool-not-found` while reading the in-volume `pool.json`
+through the empty host mount directory. Because `remove` was not reached, the
+persistent VHDX was preserved; attached disks, new drive letters, and probe
+processes measured zero. The follow-up artifact ZIP SHA-256 is
+`96FC061E9D8694D2FE25D5DBEDD5C50C6CA497235FC10A17DC03998196642554`.
+
 Required variables:
 
 ```text

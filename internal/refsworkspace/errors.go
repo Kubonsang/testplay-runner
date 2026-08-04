@@ -38,14 +38,15 @@ const (
 
 // Error is the stable machine-readable error boundary for the probe.
 type Error struct {
-	Code                   string `json:"code"`
-	Operation              string `json:"operation,omitempty"`
-	Path                   string `json:"path,omitempty"`
-	Cause                  error  `json:"-"`
-	CleanupState           string `json:"cleanupState,omitempty"`
-	OwnerMetadataCommitted bool   `json:"ownerMetadataCommitted"`
-	OwnedVHDXPath          string `json:"ownedVhdxPath,omitempty"`
-	ManualRecoveryRequired bool   `json:"manualRecoveryRequired"`
+	Code                   string          `json:"code"`
+	Operation              string          `json:"operation,omitempty"`
+	Path                   string          `json:"path,omitempty"`
+	Cause                  error           `json:"-"`
+	CleanupState           string          `json:"cleanupState,omitempty"`
+	OwnerMetadataCommitted bool            `json:"ownerMetadataCommitted"`
+	OwnedVHDXPath          string          `json:"ownedVhdxPath,omitempty"`
+	ManualRecoveryRequired bool            `json:"manualRecoveryRequired"`
+	NativeEvidence         *NativeEvidence `json:"nativeEvidence,omitempty"`
 }
 
 func (e *Error) Error() string {
@@ -85,7 +86,27 @@ func errorWithCleanupEvidence(err error, state, ownedVHDX string, ownerCommitted
 	if errors.As(err, &existing) {
 		operation, path = existing.Operation, existing.Path
 	}
-	return &Error{Code: code, Operation: operation, Path: path, Cause: err, CleanupState: state, OwnerMetadataCommitted: ownerCommitted, OwnedVHDXPath: ownedVHDX, ManualRecoveryRequired: state != "released"}
+	var nativeEvidence *NativeEvidence
+	if existing != nil {
+		nativeEvidence = existing.NativeEvidence
+	}
+	return &Error{Code: code, Operation: operation, Path: path, Cause: err, CleanupState: state, OwnerMetadataCommitted: ownerCommitted, OwnedVHDXPath: ownedVHDX, ManualRecoveryRequired: state != "released", NativeEvidence: nativeEvidence}
+}
+
+func errorWithNativeEvidence(err error, evidence *NativeEvidence) error {
+	if err == nil || evidence == nil {
+		return err
+	}
+	var existing *Error
+	if errors.As(err, &existing) {
+		return &Error{
+			Code: existing.Code, Operation: existing.Operation, Path: existing.Path, Cause: err,
+			CleanupState: existing.CleanupState, OwnerMetadataCommitted: existing.OwnerMetadataCommitted,
+			OwnedVHDXPath: existing.OwnedVHDXPath, ManualRecoveryRequired: existing.ManualRecoveryRequired,
+			NativeEvidence: evidence,
+		}
+	}
+	return &Error{Code: ErrorCode(err), Cause: err, NativeEvidence: evidence}
 }
 
 func ErrorCode(err error) string {

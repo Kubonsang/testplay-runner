@@ -231,7 +231,16 @@ func PlanSparseCloneFromQuery(fileSize, clusterSize int64, query func() ([]Alloc
 }
 
 type TreeCloner interface {
-	CloneTree(context.Context, string, string, int64) (CloneMetrics, error)
+	CloneTree(context.Context, CloneRequest) (CloneMetrics, error)
+}
+
+// CloneRequest binds every production clone to the managed pool root whose
+// identity was verified when the pool was mounted.
+type CloneRequest struct {
+	TrustedRoot string
+	Source      string
+	Destination string
+	ClusterSize int64
 }
 
 func ValidateCloneMetrics(metrics CloneMetrics) error {

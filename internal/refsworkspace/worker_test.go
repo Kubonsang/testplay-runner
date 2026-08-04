@@ -19,10 +19,14 @@ type copyClaimingCloner struct {
 	fail     error
 }
 
-func (cloner copyClaimingCloner) CloneTree(ctx context.Context, source, destination string, clusterSize int64) (CloneMetrics, error) {
+func (cloner copyClaimingCloner) CloneTree(ctx context.Context, request CloneRequest) (CloneMetrics, error) {
 	if cloner.fail != nil {
 		return CloneMetrics{FailedFileCount: 1}, cloner.fail
 	}
+	if request.TrustedRoot == "" || !PathWithin(request.TrustedRoot, request.Source) || !PathWithin(request.TrustedRoot, request.Destination) {
+		return CloneMetrics{FailedFileCount: 1}, fmt.Errorf("clone request escaped trusted root: %+v", request)
+	}
+	source, destination, clusterSize := request.Source, request.Destination, request.ClusterSize
 	if err := shadow.CopyDirParallel(ctx, source, destination, 2); err != nil {
 		return CloneMetrics{}, err
 	}
@@ -33,13 +37,16 @@ func (cloner copyClaimingCloner) CloneTree(ctx context.Context, source, destinat
 	aligned := usage.LogicalBytes / clusterSize * clusterSize
 	tail := usage.LogicalBytes - aligned
 	return CloneMetrics{
-		CloneTreeMs:             1,
-		ClonedFileCount:         1,
-		ClonedBytes:             aligned,
-		PhysicalCopiedFileCount: boolCount(tail > 0),
-		PhysicalCopiedBytes:     tail,
-		TailCopiedBytes:         tail,
-		FallbackUsed:            cloner.fallback,
+		CloneTreeMs:                     1,
+		ClonedFileCount:                 1,
+		ClonedBytes:                     aligned,
+		PhysicalCopiedFileCount:         boolCount(tail > 0),
+		PhysicalCopiedBytes:             tail,
+		TailCopiedBytes:                 tail,
+		FallbackUsed:                    cloner.fallback,
+		RegularBlockCloneIOCTLAttempted: true,
+		SparseBlockCloneIOCTLAttempted:  true,
+		SparseClonedBytes:               aligned,
 	}, nil
 }
 

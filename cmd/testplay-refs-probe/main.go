@@ -122,12 +122,17 @@ func commandConfig() (refsworkspace.Config, error) {
 }
 
 func writeError(err error) {
+	_ = json.NewEncoder(os.Stdout).Encode(errorPayload(err))
+}
+
+func errorPayload(err error) map[string]any {
 	operation := ""
 	path := ""
 	cleanupState := ""
 	ownerCommitted := false
 	ownedVHDX := ""
 	manualRecovery := false
+	var nativeEvidence *refsworkspace.NativeEvidence
 	var probeErr *refsworkspace.Error
 	if errors.As(err, &probeErr) {
 		operation = probeErr.Operation
@@ -136,6 +141,7 @@ func writeError(err error) {
 		ownerCommitted = probeErr.OwnerMetadataCommitted
 		ownedVHDX = probeErr.OwnedVHDXPath
 		manualRecovery = probeErr.ManualRecoveryRequired
+		nativeEvidence = probeErr.NativeEvidence
 	}
 	payload := map[string]any{
 		"schemaVersion":            "2",
@@ -156,7 +162,31 @@ func writeError(err error) {
 		"differencingChildCreated": false,
 		"nativeWindowsStatus":      "NOT MEASURED",
 	}
-	_ = json.NewEncoder(os.Stdout).Encode(payload)
+	if nativeEvidence != nil {
+		payload["nativeWindowsStatus"] = "PARTIALLY_MEASURED"
+		payload["nativeEvidence"] = nativeEvidence
+		payload["lastCompletedMilestone"] = nativeEvidence.LastCompletedMilestone
+		payload["nativeMilestones"] = nativeEvidence.Milestones
+		if nativeEvidence.DevDrive != nil {
+			payload["devDrive"] = nativeEvidence.DevDrive
+		}
+		if nativeEvidence.Filesystem != nil {
+			payload["filesystem"] = nativeEvidence.Filesystem
+		}
+		if nativeEvidence.ClusterSize != nil {
+			payload["clusterSize"] = nativeEvidence.ClusterSize
+		}
+		if nativeEvidence.BlockCloneSupported != nil {
+			payload["blockCloneSupported"] = nativeEvidence.BlockCloneSupported
+		}
+		if nativeEvidence.RegularBlockCloneIOCTLAttempted != nil {
+			payload["regularBlockCloneIOCTLAttempted"] = nativeEvidence.RegularBlockCloneIOCTLAttempted
+		}
+		if nativeEvidence.SparseBlockCloneIOCTLAttempted != nil {
+			payload["sparseBlockCloneIOCTLAttempted"] = nativeEvidence.SparseBlockCloneIOCTLAttempted
+		}
+	}
+	return payload
 }
 
 func exitCode(err error) int {
