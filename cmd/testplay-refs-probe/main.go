@@ -1,0 +1,151 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/Kubonsang/testplay-runner/internal/refsworkspace"
+	"github.com/spf13/cobra"
+)
+
+var (
+	rootPath      string
+	poolFile      string
+	mountRoot     string
+	maximumBytes  int64
+	softBudget    int64
+	workerReserve int64
+)
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	command := newRootCommand()
+	command.SetContext(ctx)
+	command.SilenceErrors = true
+	command.SilenceUsage = true
+	if err := command.Execute(); err != nil {
+		writeError(err)
+		os.Exit(exitCode(err))
+	}
+}
+
+func newRootCommand() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "testplay-refs-probe",
+		Short: "Standalone Managed ReFS Library Pool architecture probe",
+		Args:  cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			return errors.New("one command is required: setup, status, probe, or remove")
+		},
+	}
+	root.PersistentFlags().StringVar(&rootPath, "root", "", "absolute host storage root (defaults to %LOCALAPPDATA%\\TestPlay\\Storage)")
+	root.PersistentFlags().StringVar(&poolFile, "pool-file", "", "absolute Dynamic VHDX path (must be a direct child of root)")
+	root.PersistentFlags().StringVar(&mountRoot, "mount-root", "", "absolute private mount path (must be a direct child of root)")
+	root.PersistentFlags().Int64Var(&maximumBytes, "max-bytes", 0, "dynamic VHDX hard ceiling")
+	root.PersistentFlags().Int64Var(&softBudget, "soft-budget-bytes", 0, "testplay soft allocation budget")
+	root.PersistentFlags().Int64Var(&workerReserve, "worker-reserve-bytes", 0, "reservation required before each worker")
+	for _, operation := range []string{"setup", "status", "probe", "remove"} {
+		op := operation
+		root.AddCommand(&cobra.Command{
+			Use:   op,
+			Short: op + " the standalone Managed ReFS Library Pool",
+			Args:  cobra.NoArgs,
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				config, err := commandConfig()
+				if err != nil {
+					return &refsworkspace.Error{Code: refsworkspace.CodeUnsupportedPlatform, Operation: "default-config", Cause: err}
+				}
+				service := refsworkspace.NewNativeService()
+				var result *refsworkspace.Result
+				switch op {
+				case "setup":
+					result, err = service.Setup(cmd.Context(), config)
+				case "status":
+					result, err = service.Status(cmd.Context(), config)
+				case "probe":
+					result, err = service.Probe(cmd.Context(), config)
+				case "remove":
+					result, err = service.Remove(cmd.Context(), config)
+				}
+				if err != nil {
+					return err
+				}
+				return json.NewEncoder(os.Stdout).Encode(result)
+			},
+		})
+	}
+	return root
+}
+
+func commandConfig() (refsworkspace.Config, error) {
+	var config refsworkspace.Config
+	var err error
+	if rootPath == "" {
+		config, err = refsworkspace.DefaultConfig()
+		if err != nil {
+			return config, err
+		}
+	} else {
+		config.Root = rootPath
+	}
+	if poolFile != "" {
+		config.VHDXPath = poolFile
+	}
+	if mountRoot != "" {
+		config.MountRoot = mountRoot
+	}
+	if maximumBytes != 0 {
+		config.MaximumBytes = maximumBytes
+	}
+	if softBudget != 0 {
+		config.SoftBudgetBytes = softBudget
+	}
+	if workerReserve != 0 {
+		config.WorkerReserveBytes = workerReserve
+	}
+	return config, nil
+}
+
+func writeError(err error) {
+	operation := ""
+	path := ""
+	var probeErr *refsworkspace.Error
+	if errors.As(err, &probeErr) {
+		operation = probeErr.Operation
+		path = probeErr.Path
+	}
+	payload := map[string]any{
+		"schemaVersion":            "1",
+		"status":                   "FAILED",
+		"architecture":             "Managed ReFS Library Pool",
+		"code":                     refsworkspace.ErrorCode(err),
+		"operation":                operation,
+		"path":                     path,
+		"message":                  err.Error(),
+		"fallbackUsed":             false,
+		"physicalImageCreated":     false,
+		"differencingChildCreated": false,
+		"nativeWindowsStatus":      "NOT MEASURED",
+	}
+	_ = json.NewEncoder(os.Stdout).Encode(payload)
+}
+
+func exitCode(err error) int {
+	switch refsworkspace.ErrorCode(err) {
+	case refsworkspace.CodeUnsupportedPlatform, refsworkspace.CodeReFSFormatUnavailable, refsworkspace.CodeBlockCloneUnavailable:
+		return 6
+	case refsworkspace.CodeNotElevated:
+		return 7
+	case refsworkspace.CodeCancelled:
+		return 8
+	case refsworkspace.CodeInvalidConfiguration:
+		return 5
+	default:
+		return 1
+	}
+}
