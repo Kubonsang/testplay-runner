@@ -16,6 +16,7 @@ type MountedPool interface {
 	Volume() VolumeInfo
 	Metrics() NativeMountMetrics
 	DevDriveEvidence() DevDriveEvidence
+	WaitReady(context.Context, Paths, PoolMetadata) (time.Duration, error)
 	Close(context.Context) error
 }
 
@@ -38,14 +39,16 @@ type PoolNative interface {
 }
 
 type Service struct {
-	native    PoolNative
-	cloner    TreeCloner
-	now       func() time.Time
-	removeAll func(string) error
+	native          PoolNative
+	cloner          TreeCloner
+	now             func() time.Time
+	removeAll       func(string) error
+	readMetadata    func(string) (PoolMetadata, error)
+	compareIdentity func(Paths, PoolMetadata, PoolMetadata, VolumeInfo) error
 }
 
 func NewService(native PoolNative, cloner TreeCloner) *Service {
-	return &Service{native: native, cloner: cloner, now: time.Now, removeAll: os.RemoveAll}
+	return &Service{native: native, cloner: cloner, now: time.Now, removeAll: os.RemoveAll, readMetadata: readPoolMetadata, compareIdentity: comparePoolIdentity}
 }
 
 func NewNativeService() *Service {
@@ -197,6 +200,13 @@ func (service *Service) Setup(ctx context.Context, config Config) (returnResult 
 		return nil, newError(CodePoolCorrupt, "write-owner-metadata", paths.Owner, err)
 	}
 	committedOwner = true
+	readBack, err := service.readMetadata(paths.PoolFile)
+	if err != nil {
+		return nil, err
+	}
+	if err := service.compareIdentity(paths, metadata, readBack, volume); err != nil {
+		return nil, err
+	}
 	residual, err := measureMountedResidual(paths)
 	if err != nil {
 		return nil, newError(CodeCleanupFailed, "measure-mounted-residual", paths.PoolRoot, err)
@@ -255,7 +265,7 @@ func (service *Service) inspect(ctx context.Context, config Config, runProbe boo
 	if err := validateExistingPoolPaths(paths); err != nil {
 		return nil, err
 	}
-	hostMetadata, err := readPoolMetadata(paths.Owner)
+	hostMetadata, err := service.readMetadata(paths.Owner)
 	if err != nil {
 		return nil, err
 	}
@@ -264,25 +274,48 @@ func (service *Service) inspect(ctx context.Context, config Config, runProbe boo
 	}
 	mounted, err := service.native.Mount(ctx, paths.VHDX, paths.Mount, false)
 	if err != nil {
-		return nil, mapNativeError("mount-existing-pool", paths.VHDX, err)
+		return nil, persistentMountFailure(mapNativeError("mount-existing-pool", paths.VHDX, err), paths.VHDX)
 	}
+	volume := mounted.Volume()
+	nativeEvidence := newPostMountNativeEvidence(mounted.DevDriveEvidence(), volume)
 	closed := false
 	defer func() {
 		if !closed {
 			if closeErr := closeMountedBounded(mounted); closeErr != nil {
 				returnErr = cleanupFailure("cleanup-mounted-inspection", paths.VHDX, errors.Join(returnErr, closeErr), true)
+				nativeEvidence.recordCleanup("uncertain")
+			} else {
+				closed = true
 			}
 		}
+		if returnErr != nil {
+			state := "preserved"
+			var evidenceErr *Error
+			if errors.As(returnErr, &evidenceErr) && evidenceErr.CleanupState != "" {
+				state = evidenceErr.CleanupState
+			}
+			if state != "uncertain" && state != "failed" {
+				state = "preserved"
+			}
+			returnErr = errorWithCleanupEvidence(returnErr, state, paths.VHDX, true)
+			nativeEvidence.recordCleanup(state)
+			returnErr = errorWithNativeEvidence(returnErr, nativeEvidence)
+		}
 	}()
-	volume := mounted.Volume()
 	if err := validateVolume(volume); err != nil {
 		return nil, err
 	}
-	poolMetadata, err := readPoolMetadata(paths.PoolFile)
+	nativeEvidence.recordVolumeCapabilityValidation(volume)
+	readyDuration, err := mounted.WaitReady(ctx, paths, hostMetadata)
+	nativeEvidence.recordMountedPoolReadiness(err == nil)
 	if err != nil {
 		return nil, err
 	}
-	if err := comparePoolIdentity(paths, hostMetadata, poolMetadata, volume); err != nil {
+	poolMetadata, err := service.readMetadata(paths.PoolFile)
+	if err != nil {
+		return nil, err
+	}
+	if err := service.compareIdentity(paths, hostMetadata, poolMetadata, volume); err != nil {
 		return nil, err
 	}
 	result := baseResult("status", paths, volume)
@@ -292,11 +325,13 @@ func (service *Service) inspect(ctx context.Context, config Config, runProbe boo
 	result.BlockCloneSupported = volume.SupportsBlockCloning
 	result.Metrics.PoolAttachMs = mounted.Metrics().AttachMs
 	result.Metrics.PoolMountMs = mounted.Metrics().MountMs
+	result.Metrics.PoolReadinessMs = readyDuration.Milliseconds()
 	result.Metrics.RefsVolumeUsedBefore = volume.UsedBytes
 	if runProbe {
 		result.Operation = "probe"
 		result.Status = "PASS"
 		cloneMetrics, sourceUnchanged, err := service.syntheticCloneProbe(ctx, paths, volume.ClusterSize)
+		nativeEvidence.recordCloneMetrics(cloneMetrics, err)
 		if err != nil {
 			return nil, err
 		}
@@ -305,6 +340,7 @@ func (service *Service) inspect(ctx context.Context, config Config, runProbe boo
 		clonePoolMetrics := poolMetricsFromClone(cloneMetrics)
 		clonePoolMetrics.PoolAttachMs = result.Metrics.PoolAttachMs
 		clonePoolMetrics.PoolMountMs = result.Metrics.PoolMountMs
+		clonePoolMetrics.PoolReadinessMs = result.Metrics.PoolReadinessMs
 		clonePoolMetrics.RefsVolumeUsedBefore = result.Metrics.RefsVolumeUsedBefore
 		result.Metrics = clonePoolMetrics
 	}
@@ -318,6 +354,7 @@ func (service *Service) inspect(ctx context.Context, config Config, runProbe boo
 	if closeErr != nil {
 		return nil, cleanupFailure("detach-pool-after-inspection", paths.VHDX, closeErr, true)
 	}
+	nativeEvidence.recordCleanup("released")
 	usage, _ := service.native.FileUsage(paths.VHDX)
 	hostFree, _ := service.native.HostFreeBytes(paths.Root)
 	result.Metrics.HostVHDXLogicalBytes = usage.LogicalBytes
@@ -325,6 +362,7 @@ func (service *Service) inspect(ctx context.Context, config Config, runProbe boo
 	result.Metrics.HostFreeBytes = hostFree
 	result.Metrics.CleanupMs = time.Since(closeStarted).Milliseconds()
 	result.NativeWindowsStatus = "MEASURED"
+	result.NativeEvidence = nativeEvidence
 	if err := completePostDetachResidual(paths, &residual, true); err != nil {
 		return nil, newError(CodeCleanupFailed, "measure-post-detach-residual", paths.Mount, err)
 	}
@@ -343,7 +381,7 @@ func (service *Service) Remove(ctx context.Context, config Config) (returnResult
 	if err := validateExistingPoolPaths(paths); err != nil {
 		return nil, err
 	}
-	hostMetadata, err := readPoolMetadata(paths.Owner)
+	hostMetadata, err := service.readMetadata(paths.Owner)
 	if err != nil {
 		return nil, err
 	}
@@ -352,19 +390,48 @@ func (service *Service) Remove(ctx context.Context, config Config) (returnResult
 	}
 	mounted, err := service.native.Mount(ctx, paths.VHDX, paths.Mount, false)
 	if err != nil {
-		return nil, mapNativeError("mount-pool-for-remove", paths.VHDX, err)
+		return nil, persistentMountFailure(mapNativeError("mount-pool-for-remove", paths.VHDX, err), paths.VHDX)
 	}
+	volume := mounted.Volume()
+	nativeEvidence := newPostMountNativeEvidence(mounted.DevDriveEvidence(), volume)
 	closed := false
+	persistentRetained := true
 	defer func() {
 		if !closed {
 			if closeErr := closeMountedBounded(mounted); closeErr != nil {
 				returnErr = cleanupFailure("cleanup-mounted-remove", paths.VHDX, errors.Join(returnErr, closeErr), true)
+				nativeEvidence.recordCleanup("uncertain")
+			} else {
+				closed = true
 			}
 		}
+		if returnErr != nil {
+			state := "preserved"
+			var evidenceErr *Error
+			if errors.As(returnErr, &evidenceErr) && evidenceErr.CleanupState != "" {
+				state = evidenceErr.CleanupState
+			}
+			if !persistentRetained || state == "uncertain" || state == "failed" {
+				state = "uncertain"
+			} else {
+				state = "preserved"
+			}
+			returnErr = errorWithCleanupEvidence(returnErr, state, paths.VHDX, true)
+			nativeEvidence.recordCleanup(state)
+			returnErr = errorWithNativeEvidence(returnErr, nativeEvidence)
+		}
 	}()
-	volume := mounted.Volume()
-	poolMetadata, readErr := readPoolMetadata(paths.PoolFile)
-	identityErr := comparePoolIdentity(paths, hostMetadata, poolMetadata, volume)
+	if err := validateVolume(volume); err != nil {
+		return nil, err
+	}
+	nativeEvidence.recordVolumeCapabilityValidation(volume)
+	readyDuration, readyErr := mounted.WaitReady(ctx, paths, hostMetadata)
+	nativeEvidence.recordMountedPoolReadiness(readyErr == nil)
+	if readyErr != nil {
+		return nil, readyErr
+	}
+	poolMetadata, readErr := service.readMetadata(paths.PoolFile)
+	identityErr := service.compareIdentity(paths, hostMetadata, poolMetadata, volume)
 	if readErr != nil || identityErr != nil {
 		return nil, errors.Join(readErr, identityErr)
 	}
@@ -428,6 +495,7 @@ func (service *Service) Remove(ctx context.Context, config Config) (returnResult
 	if err := service.native.RemoveVHDX(paths.VHDX); err != nil {
 		return nil, newError(CodeCleanupFailed, "remove-vhdx", paths.VHDX, err)
 	}
+	persistentRetained = false
 	if err := os.Remove(paths.Owner); err != nil {
 		return nil, newError(CodeCleanupFailed, "remove-owner", paths.Owner, err)
 	}
@@ -441,8 +509,11 @@ func (service *Service) Remove(ctx context.Context, config Config) (returnResult
 	result.DevDrive = mounted.DevDriveEvidence()
 	result.Status = "PASS"
 	result.BlockCloneSupported = volume.SupportsBlockCloning
+	result.Metrics.PoolReadinessMs = readyDuration.Milliseconds()
 	result.Metrics.CleanupMs = time.Since(started).Milliseconds()
 	result.NativeWindowsStatus = "MEASURED"
+	nativeEvidence.recordCleanup("released")
+	result.NativeEvidence = nativeEvidence
 	if err := completePostDetachResidual(paths, &residual, true); err != nil {
 		return nil, newError(CodeCleanupFailed, "measure-post-remove-residual", paths.Root, err)
 	}
@@ -463,7 +534,16 @@ func cleanupFailure(operation, path string, cause error, ownerCommitted bool) er
 }
 
 func cleanupFailureState(operation, path, ownedVHDX string, cause error, ownerCommitted bool, state string) error {
-	return &Error{Code: CodeCleanupFailed, Operation: operation, Path: path, Cause: cause, CleanupState: state, OwnerMetadataCommitted: ownerCommitted, OwnedVHDXPath: ownedVHDX, ManualRecoveryRequired: state != "released"}
+	return &Error{Code: CodeCleanupFailed, Operation: operation, Path: path, Cause: cause, CleanupState: state, OwnerMetadataCommitted: ownerCommitted, OwnedVHDXPath: ownedVHDX, ManualRecoveryRequired: state != "released" && state != "preserved"}
+}
+
+func persistentMountFailure(err error, ownedVHDX string) error {
+	state := "uncertain"
+	var evidence *Error
+	if errors.As(err, &evidence) && (evidence.CleanupState == "released" || evidence.CleanupState == "preserved") {
+		state = "preserved"
+	}
+	return errorWithCleanupEvidence(err, state, ownedVHDX, true)
 }
 
 func (service *Service) checkNative(ctx context.Context) error {

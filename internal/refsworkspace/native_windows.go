@@ -46,6 +46,10 @@ func (pool *windowsMountedPool) Volume() VolumeInfo                 { return poo
 func (pool *windowsMountedPool) Metrics() NativeMountMetrics        { return pool.metrics }
 func (pool *windowsMountedPool) DevDriveEvidence() DevDriveEvidence { return pool.devDrive }
 
+func (pool *windowsMountedPool) WaitReady(ctx context.Context, paths Paths, expected PoolMetadata) (time.Duration, error) {
+	return waitForMountedPoolReady(ctx, paths, expected, pool.volume, osMountedPoolReadinessInspector{}, mountedPoolReadinessOptions{})
+}
+
 func (pool *windowsMountedPool) Close(ctx context.Context) error {
 	if pool.attachment == nil {
 		return nil

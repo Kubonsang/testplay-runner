@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakePoolNative struct {
@@ -29,6 +30,8 @@ type fakePoolNative struct {
 	hostFreeErr       error
 	hostFilesystem    string
 	emptyMountOnClose bool
+	waitReady         func(context.Context, Paths, PoolMetadata, VolumeInfo) (time.Duration, error)
+	events            *[]string
 }
 
 type fakeMountedPool struct {
@@ -49,6 +52,15 @@ func (pool *fakeMountedPool) DevDriveEvidence() DevDriveEvidence {
 		TemporaryDriveLetterAssigned: initialized, TemporaryDriveLetterRemoved: initialized,
 		PrivateMountVerified: true,
 	}
+}
+func (pool *fakeMountedPool) WaitReady(ctx context.Context, paths Paths, expected PoolMetadata) (time.Duration, error) {
+	if pool.native.events != nil {
+		*pool.native.events = append(*pool.native.events, "readiness-wait")
+	}
+	if pool.native.waitReady != nil {
+		return pool.native.waitReady(ctx, paths, expected, pool.volume)
+	}
+	return waitForMountedPoolReady(ctx, paths, expected, pool.volume, fakeMountedPoolReadinessInspector{mount: paths.Mount}, mountedPoolReadinessOptions{Timeout: 250 * time.Millisecond, PollInterval: time.Millisecond})
 }
 func (pool *fakeMountedPool) Close(context.Context) error {
 	pool.native.closeCount++
@@ -81,6 +93,9 @@ func (native *fakePoolNative) Mount(_ context.Context, vhdx, mount string, initi
 		return nil, native.mountErr
 	}
 	native.mountInitializes = append(native.mountInitializes, initialize)
+	if native.events != nil {
+		*native.events = append(*native.events, "mount-called", "mount-returned")
+	}
 	if _, err := os.Stat(vhdx); err != nil {
 		return nil, err
 	}
@@ -88,6 +103,18 @@ func (native *fakePoolNative) Mount(_ context.Context, vhdx, mount string, initi
 		return nil, err
 	}
 	return &fakeMountedPool{native: native, volume: native.volume, mount: mount}, nil
+}
+
+type fakeMountedPoolReadinessInspector struct{ mount string }
+
+func (inspector fakeMountedPoolReadinessInspector) Lstat(path string) (os.FileInfo, error) {
+	return os.Lstat(path)
+}
+func (inspector fakeMountedPoolReadinessInspector) ReadFile(path string) ([]byte, error) {
+	return os.ReadFile(path)
+}
+func (inspector fakeMountedPoolReadinessInspector) IsReparsePoint(path string) (bool, error) {
+	return strings.EqualFold(filepath.Clean(path), filepath.Clean(inspector.mount)), nil
 }
 func (native *fakePoolNative) FileIdentity(path string) (string, error) {
 	if _, err := os.Stat(path); err != nil {
@@ -239,6 +266,54 @@ func TestPoolSetupAndStatusStructuredEvidence(t *testing.T) {
 	}
 }
 
+func TestPersistentOperationsUseMountedPoolReadinessOrdering(t *testing.T) {
+	for _, operation := range []string{"status", "probe", "remove"} {
+		t.Run(operation, func(t *testing.T) {
+			native := newFakePoolNative()
+			service := NewService(native, copyClaimingCloner{})
+			config := Config{Root: filepath.Join(t.TempDir(), "storage")}
+			setup, err := service.Setup(context.Background(), config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var events []string
+			native.events = &events
+			readMetadata := service.readMetadata
+			service.readMetadata = func(path string) (PoolMetadata, error) {
+				if strings.EqualFold(filepath.Clean(path), filepath.Clean(setup.Paths.Owner)) {
+					events = append(events, "host-owner-read")
+				} else if strings.EqualFold(filepath.Clean(path), filepath.Clean(setup.Paths.PoolFile)) {
+					events = append(events, "pool-metadata-read")
+				}
+				return readMetadata(path)
+			}
+			compareIdentity := service.compareIdentity
+			service.compareIdentity = func(paths Paths, host, pool PoolMetadata, volume VolumeInfo) error {
+				events = append(events, "identity-comparison")
+				return compareIdentity(paths, host, pool, volume)
+			}
+			if operation == "remove" {
+				native.emptyMountOnClose = true
+			}
+			switch operation {
+			case "status":
+				_, err = service.Status(context.Background(), config)
+			case "probe":
+				_, err = service.Probe(context.Background(), config)
+			case "remove":
+				_, err = service.Remove(context.Background(), config)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []string{"host-owner-read", "mount-called", "mount-returned", "readiness-wait", "pool-metadata-read", "identity-comparison"}
+			if strings.Join(events[:min(len(events), len(want))], "|") != strings.Join(want, "|") {
+				t.Fatalf("events=%v want prefix=%v", events, want)
+			}
+		})
+	}
+}
+
 func TestPoolSetupRejectsNonNTFSHostBeforeWrites(t *testing.T) {
 	native := newFakePoolNative()
 	native.hostFilesystem = "exFAT"
@@ -329,6 +404,55 @@ func TestPoolPreMountFailureDoesNotInventNativeEvidence(t *testing.T) {
 	}
 	if probeErr.NativeEvidence != nil {
 		t.Fatalf("pre-mount evidence was invented: %+v", probeErr.NativeEvidence)
+	}
+}
+
+func TestProbeReadinessTimeoutDetachesAndPreservesPersistentPoolEvidence(t *testing.T) {
+	native := newFakePoolNative()
+	service := NewService(native, copyClaimingCloner{})
+	config := Config{Root: filepath.Join(t.TempDir(), "storage")}
+	setup, err := service.Setup(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	native.waitReady = func(_ context.Context, paths Paths, _ PoolMetadata, _ VolumeInfo) (time.Duration, error) {
+		return 20 * time.Second, newMountedPoolNotReadyError(paths, 20*time.Second, os.ErrNotExist)
+	}
+	closeBefore := native.closeCount
+	_, err = service.Probe(context.Background(), config)
+	var probeErr *Error
+	if !errors.As(err, &probeErr) || probeErr.Code != CodePoolMountNotReady {
+		t.Fatalf("err=%v", err)
+	}
+	if probeErr.CleanupState != "preserved" || !probeErr.OwnerMetadataCommitted || probeErr.OwnedVHDXPath != setup.Paths.VHDX || probeErr.ManualRecoveryRequired {
+		t.Fatalf("evidence=%+v", probeErr)
+	}
+	if native.closeCount != closeBefore+1 {
+		t.Fatalf("closeCount=%d before=%d", native.closeCount, closeBefore)
+	}
+	if _, statErr := os.Stat(setup.Paths.VHDX); statErr != nil {
+		t.Fatalf("persistent VHDX was not preserved: %v", statErr)
+	}
+	if probeErr.NativeEvidence == nil || probeErr.NativeEvidence.Milestones.MountedPoolReadiness != NativeMilestoneMeasuredFail || probeErr.NativeEvidence.Milestones.Cleanup != NativeMilestoneReleased {
+		t.Fatalf("nativeEvidence=%+v", probeErr.NativeEvidence)
+	}
+}
+
+func TestProbeReadinessTimeoutDetachFailureRequiresManualRecovery(t *testing.T) {
+	native := newFakePoolNative()
+	service := NewService(native, copyClaimingCloner{})
+	config := Config{Root: filepath.Join(t.TempDir(), "storage")}
+	if _, err := service.Setup(context.Background(), config); err != nil {
+		t.Fatal(err)
+	}
+	native.waitReady = func(_ context.Context, paths Paths, _ PoolMetadata, _ VolumeInfo) (time.Duration, error) {
+		return 20 * time.Second, newMountedPoolNotReadyError(paths, 20*time.Second, os.ErrNotExist)
+	}
+	native.closeErr = errors.New("detach visibility timeout")
+	_, err := service.Probe(context.Background(), config)
+	var probeErr *Error
+	if ErrorCode(err) != CodeCleanupFailed || !errors.As(err, &probeErr) || probeErr.CleanupState != "uncertain" || !probeErr.OwnerMetadataCommitted || !probeErr.ManualRecoveryRequired {
+		t.Fatalf("err=%v evidence=%+v", err, probeErr)
 	}
 }
 

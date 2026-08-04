@@ -123,20 +123,8 @@ func (cloner nativeTreeCloner) CloneTree(ctx context.Context, request CloneReque
 			metrics.MetadataOnlyFileCount++
 		case info.Mode().IsRegular():
 			fileMetrics, err := cloneFile(ctx, path, target, clusterSize)
-			metrics.ClonedFileCount += fileMetrics.ClonedFileCount
-			metrics.ClonedBytes += fileMetrics.ClonedBytes
-			metrics.PhysicalCopiedFileCount += fileMetrics.PhysicalCopiedFileCount
-			metrics.PhysicalCopiedBytes += fileMetrics.PhysicalCopiedBytes
-			metrics.TailCopiedBytes += fileMetrics.TailCopiedBytes
-			metrics.MetadataOnlyFileCount += fileMetrics.MetadataOnlyFileCount
-			metrics.SparseFileCount += fileMetrics.SparseFileCount
-			metrics.SparseLogicalBytes += fileMetrics.SparseLogicalBytes
-			metrics.SparseAllocatedSourceBytes += fileMetrics.SparseAllocatedSourceBytes
-			metrics.SparseClonedBytes += fileMetrics.SparseClonedBytes
-			metrics.SparseHoleBytes += fileMetrics.SparseHoleBytes
-			if err != nil {
-				metrics.FailedFileCount++
-				return err
+			if aggregateErr := aggregateCloneFileResult(&metrics, fileMetrics, err); aggregateErr != nil {
+				return aggregateErr
 			}
 		default:
 			return fmt.Errorf("unsupported Library entry type %s: %s", info.Mode(), path)

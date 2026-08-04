@@ -9,8 +9,13 @@ import (
 	"strings"
 )
 
-const devDriveCapabilityScript = `
+const powershellUTF8Prelude = `
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Console]::OutputEncoding
+`
+
+const devDriveCapabilityScript = powershellUTF8Prelude + `
 $minimumBuild = 22621
 $build = [Environment]::OSVersion.Version.Build
 if ($build -lt $minimumBuild) {
@@ -34,8 +39,7 @@ if ($devDriveExitCode -ne 0) {
 }
 `
 
-const initializeDevDriveDiskScript = `
-$ErrorActionPreference = 'Stop'
+const initializeDevDriveDiskScript = powershellUTF8Prelude + `
 $diskNumber = [int]$env:TESTPLAY_VHDX_DISK_NUMBER
 $mountPath = $env:TESTPLAY_VHDX_MOUNT_PATH.TrimEnd('\') + '\'
 
@@ -209,8 +213,7 @@ try {
 }
 `
 
-const inspectDevDriveVolumeScript = `
-$ErrorActionPreference = 'Stop'
+const inspectDevDriveVolumeScript = powershellUTF8Prelude + `
 $diskNumber = [int]$env:TESTPLAY_VHDX_DISK_NUMBER
 $partitionNumber = [int]$env:TESTPLAY_VHDX_PARTITION_NUMBER
 $mountPath = $env:TESTPLAY_VHDX_MOUNT_PATH.TrimEnd('\') + '\'

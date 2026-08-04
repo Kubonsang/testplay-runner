@@ -243,6 +243,31 @@ type CloneRequest struct {
 	ClusterSize int64
 }
 
+func aggregateCloneFileMetrics(metrics *CloneMetrics, fileMetrics CloneMetrics) {
+	metrics.ClonedFileCount += fileMetrics.ClonedFileCount
+	metrics.ClonedBytes += fileMetrics.ClonedBytes
+	metrics.PhysicalCopiedFileCount += fileMetrics.PhysicalCopiedFileCount
+	metrics.PhysicalCopiedBytes += fileMetrics.PhysicalCopiedBytes
+	metrics.TailCopiedBytes += fileMetrics.TailCopiedBytes
+	metrics.MetadataOnlyFileCount += fileMetrics.MetadataOnlyFileCount
+	metrics.SparseFileCount += fileMetrics.SparseFileCount
+	metrics.SparseLogicalBytes += fileMetrics.SparseLogicalBytes
+	metrics.SparseAllocatedSourceBytes += fileMetrics.SparseAllocatedSourceBytes
+	metrics.SparseClonedBytes += fileMetrics.SparseClonedBytes
+	metrics.SparseHoleBytes += fileMetrics.SparseHoleBytes
+	metrics.RegularBlockCloneIOCTLAttempted = metrics.RegularBlockCloneIOCTLAttempted || fileMetrics.RegularBlockCloneIOCTLAttempted
+	metrics.SparseBlockCloneIOCTLAttempted = metrics.SparseBlockCloneIOCTLAttempted || fileMetrics.SparseBlockCloneIOCTLAttempted
+}
+
+func aggregateCloneFileResult(metrics *CloneMetrics, fileMetrics CloneMetrics, fileErr error) error {
+	aggregateCloneFileMetrics(metrics, fileMetrics)
+	if fileErr != nil {
+		metrics.FailedFileCount++
+		return fileErr
+	}
+	return nil
+}
+
 func ValidateCloneMetrics(metrics CloneMetrics) error {
 	if metrics.FallbackUsed {
 		return newError(CodeBlockCloneUnavailable, "validate-clone-metrics", "", fmt.Errorf("silent physical fallback is forbidden"))

@@ -17,6 +17,7 @@ const (
 	CodeTemporaryDriveLetterCleanupFailed = "temporary-drive-letter-cleanup-failed"
 	CodeBlockCloneUnavailable             = "refs-block-clone-unavailable"
 	CodePoolNotFound                      = "pool-not-found"
+	CodePoolMountNotReady                 = "pool-mount-not-ready"
 	CodePoolCorrupt                       = "pool-corrupt"
 	CodePoolAlreadyMounted                = "pool-already-mounted"
 	CodePoolNotMounted                    = "pool-not-mounted"
@@ -47,6 +48,10 @@ type Error struct {
 	OwnedVHDXPath          string          `json:"ownedVhdxPath,omitempty"`
 	ManualRecoveryRequired bool            `json:"manualRecoveryRequired"`
 	NativeEvidence         *NativeEvidence `json:"nativeEvidence,omitempty"`
+	MountPath              string          `json:"mountPath,omitempty"`
+	PoolMetadataPath       string          `json:"poolMetadataPath,omitempty"`
+	MountReadyTimeoutMs    int64           `json:"mountReadyTimeoutMs,omitempty"`
+	LastObservedError      string          `json:"lastObservedFilesystemError,omitempty"`
 }
 
 func (e *Error) Error() string {
@@ -90,7 +95,14 @@ func errorWithCleanupEvidence(err error, state, ownedVHDX string, ownerCommitted
 	if existing != nil {
 		nativeEvidence = existing.NativeEvidence
 	}
-	return &Error{Code: code, Operation: operation, Path: path, Cause: err, CleanupState: state, OwnerMetadataCommitted: ownerCommitted, OwnedVHDXPath: ownedVHDX, ManualRecoveryRequired: state != "released", NativeEvidence: nativeEvidence}
+	wrapped := &Error{Code: code, Operation: operation, Path: path, Cause: err, CleanupState: state, OwnerMetadataCommitted: ownerCommitted, OwnedVHDXPath: ownedVHDX, ManualRecoveryRequired: state != "released" && state != "preserved", NativeEvidence: nativeEvidence}
+	if existing != nil {
+		wrapped.MountPath = existing.MountPath
+		wrapped.PoolMetadataPath = existing.PoolMetadataPath
+		wrapped.MountReadyTimeoutMs = existing.MountReadyTimeoutMs
+		wrapped.LastObservedError = existing.LastObservedError
+	}
+	return wrapped
 }
 
 func errorWithNativeEvidence(err error, evidence *NativeEvidence) error {
@@ -103,7 +115,8 @@ func errorWithNativeEvidence(err error, evidence *NativeEvidence) error {
 			Code: existing.Code, Operation: existing.Operation, Path: existing.Path, Cause: err,
 			CleanupState: existing.CleanupState, OwnerMetadataCommitted: existing.OwnerMetadataCommitted,
 			OwnedVHDXPath: existing.OwnedVHDXPath, ManualRecoveryRequired: existing.ManualRecoveryRequired,
-			NativeEvidence: evidence,
+			NativeEvidence: evidence, MountPath: existing.MountPath, PoolMetadataPath: existing.PoolMetadataPath,
+			MountReadyTimeoutMs: existing.MountReadyTimeoutMs, LastObservedError: existing.LastObservedError,
 		}
 	}
 	return &Error{Code: ErrorCode(err), Cause: err, NativeEvidence: evidence}

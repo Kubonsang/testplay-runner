@@ -217,9 +217,28 @@ Full baseline hashes remain the correctness gate. Record
 `baselineVerifyFileCount`, and `baselineVerifyLogicalBytes` before considering
 a generation-token, USN, or validated-cache optimization.
 
+## Native Windows phase history
+
+1. Generic ReFS format was `UNSUPPORTED` and left no owned storage.
+2. The first Dev Drive run failed when `filepath.EvalSymlinks` crossed the
+   volume mount; cleanup was released and no Block Clone IOCTL ran. Artifact
+   SHA-256: `047150F95E9B2FA772947D10E891C12B5BD236C86C488C8A9A3B10A55C988BC8`.
+3. Trusted-root path validation allowed setup, regular/sparse Block Clone, and
+   CoW isolation to pass. The following persistent probe failed because mount
+   access-path visibility did not yet provide content readiness. Artifact
+   SHA-256: `96FC061E9D8694D2FE25D5DBEDD5C50C6CA497235FC10A17DC03998196642554`.
+4. A bounded mounted-content readiness implementation re-opened the retained
+   pool. Private Dev Drive mount, ReFS, 4096-byte clusters, the Dev Drive query,
+   and Block Clone capability passed, but `pool.json` was still absent after
+   20 seconds. Status returned `pool-mount-not-ready` at
+   `wait-mounted-pool-metadata` with cleanup `preserved`. Ownership metadata and
+   VHDX were retained; attached disks, temporary drive letters, and probe
+   processes were zero. Remove and fresh Phase 1 were not run. Artifact
+   SHA-256: `500273C1A9B50C1589B24BA453ECF89037D6BA2ABD59F9D2EE4AA7B21FD71714`.
+
 ## Verdict
 
-`NOT MEASURED`
+`FAILED`
 
 The standalone source and cross-platform tests are implementation evidence;
 they are not native ReFS or Unity benchmark evidence.

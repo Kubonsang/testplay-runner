@@ -341,13 +341,28 @@ Block Clone IOCTLs were not executed. Its artifact ZIP SHA-256 is
 
 A follow-up run with trusted-root clone validation completed Dev Drive setup,
 regular/sparse Block Clone, and CoW isolation, then failed at the next detached
-`probe` with `pool-not-found` because it attempted to read the in-volume
-`pool.json` before attaching the VHDX. The persistent VHDX was preserved and no
-disk, temporary drive letter, or probe process remained attached. Follow-up
-artifact ZIP SHA-256:
+`probe` with `pool-not-found`. Inspection already attached the VHDX and
+registered the directory access path before reading metadata; the corrected
+cause is that access-path visibility did not guarantee immediate mounted
+filesystem content readiness. The persistent VHDX was preserved and no disk,
+temporary drive letter, or probe process remained attached. Follow-up artifact
+ZIP SHA-256:
 `96FC061E9D8694D2FE25D5DBEDD5C50C6CA497235FC10A17DC03998196642554`.
 
-Current repository status is `STATIC READY FOR DEV DRIVE VALIDATION`. This is
-a source/test readiness statement, not native evidence and not a release.
-Native Dev Drive setup, Unity correctness, and 1/2/4/8 workers remain
-`NOT MEASURED`.
+The next implementation added a bounded 20-second mounted-content readiness
+boundary, structural `pool-mount-not-ready` diagnostics, persistent-operation
+`preserved` cleanup evidence, IOCTL-attempt aggregation, staged summary
+retention, and explicit UTF-8 PowerShell output. Its ownership-safe status of
+the retained pool verified the private mount, ReFS, Dev Drive query, 4096-byte
+clusters, and Block Clone capability, but `pool.json` remained absent for the
+entire readiness window. The status failed with operation
+`wait-mounted-pool-metadata`; cleanup was `preserved`, owner metadata and VHDX
+were retained, and attached disks, temporary drive letters, and probe processes
+were zero. Per the ownership gate, remove and a fresh Phase 1 were not run.
+Artifact ZIP SHA-256:
+`500273C1A9B50C1589B24BA453ECF89037D6BA2ABD59F9D2EE4AA7B21FD71714`.
+
+Current native Phase 1 status is `FAILED`. The managed pool content-persistence
+failure requires investigation before another cleanup or fresh run. Unity
+correctness, canonical baseline ACL correctness, 1/2/4/8 workers, and release
+readiness remain `NOT MEASURED`.

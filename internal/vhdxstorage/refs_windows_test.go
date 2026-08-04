@@ -39,6 +39,18 @@ if ($parseErrors.Count -ne 0) {
 	}
 }
 
+func TestPowerShellUTF8PreludePreservesNativeEvidenceText(t *testing.T) {
+	want := "개발자 드라이브"
+	command := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", powershellUTF8Prelude+"[Console]::Out.Write('"+want+"')")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("UTF-8 probe failed: %v\n%s", err, output)
+	}
+	if string(output) != want {
+		t.Fatalf("decoded output=%q want=%q bytes=%x", output, want, output)
+	}
+}
+
 func TestDevDriveInitializerHasNoGenericReFSFallback(t *testing.T) {
 	if strings.Contains(initializeDevDriveDiskScript, "-FileSystem ReFS") {
 		t.Fatal("generic ReFS formatting remains in the Dev Drive initializer")

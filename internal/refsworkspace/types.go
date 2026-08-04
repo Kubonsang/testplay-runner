@@ -98,6 +98,7 @@ const (
 type NativeMilestones struct {
 	DevDriveFormat         string `json:"devDriveFormat"`
 	PrivateMount           string `json:"privateMount"`
+	MountedPoolReadiness   string `json:"mountedPoolReadiness"`
 	FilesystemValidation   string `json:"filesystemValidation"`
 	BlockCloneCapability   string `json:"blockCloneCapability"`
 	RegularBlockCloneIOCTL string `json:"regularBlockCloneIOCTL"`
@@ -137,6 +138,7 @@ type PoolMetrics struct {
 	PoolSetupMs                     int64 `json:"poolSetupMs,omitempty"`
 	PoolAttachMs                    int64 `json:"poolAttachMs,omitempty"`
 	PoolMountMs                     int64 `json:"poolMountMs,omitempty"`
+	PoolReadinessMs                 int64 `json:"poolReadinessMs,omitempty"`
 	ClonedFileCount                 int64 `json:"clonedFileCount,omitempty"`
 	ClonedBytes                     int64 `json:"clonedBytes,omitempty"`
 	PhysicalCopiedFileCount         int64 `json:"physicalCopiedFileCount,omitempty"`

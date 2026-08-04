@@ -3,6 +3,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Console]::OutputEncoding
+. (Join-Path $PSScriptRoot 'managed-refs-pool-probe-summary.ps1')
 if ([string]::IsNullOrWhiteSpace($env:TESTPLAY_REFS_MAX_BYTES)) {
   $env:TESTPLAY_REFS_MAX_BYTES = '68719476736'
 }
@@ -25,37 +28,8 @@ $mountRoot = [IO.Path]::GetFullPath($env:TESTPLAY_REFS_MOUNT_ROOT)
 $storageRoot = Split-Path -Parent $poolFile
 New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
 
-$summary = [ordered]@{
-  status = 'FAILED'
-  nativeWindowsStatus = 'NOT MEASURED'
-  windowsProvider = 'dev-drive-vhdx'
-  volumeKind = 'Dev Drive'
-  devDrive = $null
-  filesystem = $null
-  blockCloneSupported = $false
-  regularSyntheticClone = 'NOT MEASURED'
-  sparseSyntheticClone = 'NOT MEASURED'
-  allocateOnWriteIsolation = 'NOT MEASURED'
-  physicalImageCreated = $false
-  differencingChildCreated = $false
-  fallbackUsed = $false
-  sourceUnchanged = 'NOT MEASURED'
-  baselineUnchanged = 'NOT MEASURED'
-  residualStatus = 'NOT_MEASURED'
-  probeProcesses = [ordered]@{ measured = $false; count = $null }
-  setupResidual = $null
-  probeResidual = $null
-  statusResidual = $null
-  removeResidual = $null
-  unityCorrectness = 'NOT MEASURED'
-  parallelIsolation = [ordered]@{
-    workers1 = 'NOT MEASURED'
-    workers2 = 'NOT MEASURED'
-    workers4 = 'NOT MEASURED'
-    workers8 = 'NOT MEASURED'
-  }
-  failure = $null
-}
+$summary = New-ManagedRefsProbeSummary
+$currentStage = 'setup'
 
 $binary = Join-Path $artifactRoot 'testplay-refs-probe.exe'
 
@@ -129,6 +103,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw "probe build failed with exit code $LASTEXITCODE" }
 
   $setup = Invoke-ProbeCommand 'setup'
+  Update-ManagedRefsSummaryAfterSetup $summary $setup
   Assert-NoForbiddenPath $setup 'setup'
   if ($setup.windowsProvider -ne 'dev-drive-vhdx' -or $setup.volumeKind -ne 'Dev Drive') { throw 'setup did not use the Dev Drive VHDX provider' }
   if ($setup.devDrive.formatAttempted -ne $true -or $setup.devDrive.formatSucceeded -ne $true -or [int]$setup.devDrive.queryExitCode -ne 0 -or $setup.devDrive.temporaryDriveLetterAssigned -ne $true -or $setup.devDrive.temporaryDriveLetterRemoved -ne $true -or $setup.devDrive.privateMountVerified -ne $true) {
@@ -136,10 +111,14 @@ try {
   }
   if ($setup.status -ne 'PASS' -or $setup.volume.filesystem -ne 'ReFS') { throw 'setup did not produce a ready ReFS pool' }
   if ($setup.blockCloneSupported -ne $true) { throw 'setup did not prove Block Clone capability' }
+  if ($setup.metrics.regularBlockCloneIOCTLAttempted -ne $true -or $setup.metrics.sparseBlockCloneIOCTLAttempted -ne $true) {
+    throw 'setup did not preserve both Block Clone IOCTL attempt flags'
+  }
   Assert-BinaryZeroResidual $setup.residual 1 'setup'
-  $summary.setupResidual = $setup.residual
 
+  $currentStage = 'probe'
   $probe = Invoke-ProbeCommand 'probe'
+  Update-ManagedRefsSummaryAfterProbe $summary $probe
   Assert-NoForbiddenPath $probe 'probe'
   if ($probe.windowsProvider -ne 'dev-drive-vhdx' -or $probe.volumeKind -ne 'Dev Drive' -or [int]$probe.devDrive.queryExitCode -ne 0 -or $probe.devDrive.privateMountVerified -ne $true -or $probe.devDrive.formatAttempted -ne $false) {
     throw 'probe did not verify the persistent Dev Drive without reformatting'
@@ -152,24 +131,29 @@ try {
     throw 'sparse synthetic Block Clone evidence did not pass'
   }
   if ($probe.sourceUnchanged -ne $true) { throw 'allocate-on-write source isolation failed' }
+  if ($probe.metrics.regularBlockCloneIOCTLAttempted -ne $true -or $probe.metrics.sparseBlockCloneIOCTLAttempted -ne $true) {
+    throw 'probe did not preserve both Block Clone IOCTL attempt flags'
+  }
   Assert-BinaryZeroResidual $probe.residual 1 'probe'
-  $summary.probeResidual = $probe.residual
 
+  $currentStage = 'status'
   $status = Invoke-ProbeCommand 'status'
+  Update-ManagedRefsSummaryAfterStatus $summary $status
   Assert-NoForbiddenPath $status 'status'
   if ($status.windowsProvider -ne 'dev-drive-vhdx' -or $status.volumeKind -ne 'Dev Drive' -or [int]$status.devDrive.queryExitCode -ne 0 -or $status.devDrive.privateMountVerified -ne $true -or $status.devDrive.formatAttempted -ne $false) {
     throw 'status did not verify the persistent Dev Drive without reformatting'
   }
   if ($status.status -ne 'READY' -or $status.volume.filesystem -ne 'ReFS') { throw 'post-probe status is not ready' }
   Assert-BinaryZeroResidual $status.residual 1 'status'
-  $summary.statusResidual = $status.residual
 
   $probeProcesses = @(Get-Process -Name 'testplay-refs-probe' -ErrorAction SilentlyContinue)
   if ($probeProcesses.Count -ne 0) { throw "$($probeProcesses.Count) probe helper processes remain" }
   $summary.probeProcesses = [ordered]@{ measured = $true; count = 0 }
 
   if ($RemoveAfter) {
+    $currentStage = 'remove'
     $removed = Invoke-ProbeCommand 'remove'
+    Update-ManagedRefsSummaryAfterRemove $summary $removed
     Assert-NoForbiddenPath $removed 'remove'
     if ($removed.windowsProvider -ne 'dev-drive-vhdx' -or $removed.volumeKind -ne 'Dev Drive' -or [int]$removed.devDrive.queryExitCode -ne 0 -or $removed.devDrive.formatAttempted -ne $false) {
       throw 'remove did not verify the persistent Dev Drive before deletion'
@@ -177,7 +161,6 @@ try {
     Assert-BinaryZeroResidual $removed.residual 0 'remove'
     if (Test-Path -LiteralPath $poolFile) { throw 'VHDX remains after remove' }
     if (Test-Path -LiteralPath $mountRoot) { throw 'mount directory remains after remove' }
-    $summary.removeResidual = $removed.residual
     $probeProcesses = @(Get-Process -Name 'testplay-refs-probe' -ErrorAction SilentlyContinue)
     if ($probeProcesses.Count -ne 0) { throw "$($probeProcesses.Count) probe helper processes remain after remove" }
   }
@@ -199,7 +182,7 @@ try {
 }
 catch {
   $summary.residualStatus = 'FAILED'
-  $summary.failure = $_.Exception.Message
+  Set-ManagedRefsSummaryFailure $summary $currentStage $_.Exception.Message
   throw
 }
 finally {

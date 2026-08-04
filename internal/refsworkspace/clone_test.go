@@ -216,3 +216,36 @@ func TestPlanSparseCloneQueryFailureDoesNotFallback(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestAggregateCloneFileMetricsPreservesIOCTLAttempts(t *testing.T) {
+	tests := []struct {
+		name        string
+		files       []CloneMetrics
+		wantRegular bool
+		wantSparse  bool
+	}{
+		{name: "regular only", files: []CloneMetrics{{RegularBlockCloneIOCTLAttempted: true}}, wantRegular: true},
+		{name: "sparse only", files: []CloneMetrics{{SparseBlockCloneIOCTLAttempted: true}}, wantSparse: true},
+		{name: "mixed", files: []CloneMetrics{{RegularBlockCloneIOCTLAttempted: true}, {SparseBlockCloneIOCTLAttempted: true}}, wantRegular: true, wantSparse: true},
+		{name: "attempt retained after later file error", files: []CloneMetrics{{RegularBlockCloneIOCTLAttempted: true}, {}}, wantRegular: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var aggregate CloneMetrics
+			for _, file := range test.files {
+				aggregateCloneFileMetrics(&aggregate, file)
+			}
+			if aggregate.RegularBlockCloneIOCTLAttempted != test.wantRegular || aggregate.SparseBlockCloneIOCTLAttempted != test.wantSparse {
+				t.Fatalf("aggregate=%+v", aggregate)
+			}
+		})
+	}
+	fileErr := errors.New("IOCTL failed after attempt")
+	var failedAggregate CloneMetrics
+	if err := aggregateCloneFileResult(&failedAggregate, CloneMetrics{RegularBlockCloneIOCTLAttempted: true}, fileErr); !errors.Is(err, fileErr) {
+		t.Fatalf("returned error=%v", err)
+	}
+	if !failedAggregate.RegularBlockCloneIOCTLAttempted || failedAggregate.FailedFileCount != 1 {
+		t.Fatalf("failed aggregate=%+v", failedAggregate)
+	}
+}

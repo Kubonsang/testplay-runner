@@ -132,6 +132,10 @@ func errorPayload(err error) map[string]any {
 	ownerCommitted := false
 	ownedVHDX := ""
 	manualRecovery := false
+	mountPath := ""
+	poolMetadataPath := ""
+	var mountReadyTimeoutMs int64
+	lastObservedError := ""
 	var nativeEvidence *refsworkspace.NativeEvidence
 	var probeErr *refsworkspace.Error
 	if errors.As(err, &probeErr) {
@@ -142,25 +146,33 @@ func errorPayload(err error) map[string]any {
 		ownedVHDX = probeErr.OwnedVHDXPath
 		manualRecovery = probeErr.ManualRecoveryRequired
 		nativeEvidence = probeErr.NativeEvidence
+		mountPath = probeErr.MountPath
+		poolMetadataPath = probeErr.PoolMetadataPath
+		mountReadyTimeoutMs = probeErr.MountReadyTimeoutMs
+		lastObservedError = probeErr.LastObservedError
 	}
 	payload := map[string]any{
-		"schemaVersion":            "2",
-		"status":                   "FAILED",
-		"architecture":             "Managed ReFS Library Pool",
-		"windowsProvider":          refsworkspace.WindowsProviderDevDriveVHDX,
-		"volumeKind":               refsworkspace.VolumeKindDevDrive,
-		"code":                     refsworkspace.ErrorCode(err),
-		"operation":                operation,
-		"path":                     path,
-		"message":                  err.Error(),
-		"cleanupState":             cleanupState,
-		"ownerMetadataCommitted":   ownerCommitted,
-		"ownedVhdxPath":            ownedVHDX,
-		"manualRecoveryRequired":   manualRecovery,
-		"fallbackUsed":             false,
-		"physicalImageCreated":     false,
-		"differencingChildCreated": false,
-		"nativeWindowsStatus":      "NOT MEASURED",
+		"schemaVersion":               "2",
+		"status":                      "FAILED",
+		"architecture":                "Managed ReFS Library Pool",
+		"windowsProvider":             refsworkspace.WindowsProviderDevDriveVHDX,
+		"volumeKind":                  refsworkspace.VolumeKindDevDrive,
+		"code":                        refsworkspace.ErrorCode(err),
+		"operation":                   operation,
+		"path":                        path,
+		"message":                     err.Error(),
+		"cleanupState":                cleanupState,
+		"ownerMetadataCommitted":      ownerCommitted,
+		"ownedVhdxPath":               ownedVHDX,
+		"manualRecoveryRequired":      manualRecovery,
+		"mountPath":                   mountPath,
+		"poolMetadataPath":            poolMetadataPath,
+		"mountReadyTimeoutMs":         mountReadyTimeoutMs,
+		"lastObservedFilesystemError": lastObservedError,
+		"fallbackUsed":                false,
+		"physicalImageCreated":        false,
+		"differencingChildCreated":    false,
+		"nativeWindowsStatus":         "NOT MEASURED",
 	}
 	if nativeEvidence != nil {
 		payload["nativeWindowsStatus"] = "PARTIALLY_MEASURED"

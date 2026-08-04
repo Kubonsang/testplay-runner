@@ -61,3 +61,20 @@ func TestErrorPayloadDoesNotInventPreMountEvidence(t *testing.T) {
 		t.Fatalf("pre-mount native evidence was invented: %+v", payload)
 	}
 }
+
+func TestErrorPayloadIncludesMountedPoolReadinessAndPreservationEvidence(t *testing.T) {
+	err := &refsworkspace.Error{
+		Code: refsworkspace.CodePoolMountNotReady, Operation: "wait-mounted-pool-metadata",
+		Path: `C:\storage\mount\testplay\pool.json`, Cause: errors.New("file not found"),
+		CleanupState: "preserved", OwnerMetadataCommitted: true, OwnedVHDXPath: `C:\storage\pool.vhdx`,
+		MountPath: `C:\storage\mount`, PoolMetadataPath: `C:\storage\mount\testplay\pool.json`,
+		MountReadyTimeoutMs: 20000, LastObservedError: "The system cannot find the file specified.",
+	}
+	payload := errorPayload(err)
+	if payload["cleanupState"] != "preserved" || payload["ownerMetadataCommitted"] != true || payload["manualRecoveryRequired"] != false || payload["ownedVhdxPath"] != err.OwnedVHDXPath {
+		t.Fatalf("cleanup payload=%+v", payload)
+	}
+	if payload["mountPath"] != err.MountPath || payload["poolMetadataPath"] != err.PoolMetadataPath || payload["mountReadyTimeoutMs"] != int64(20000) || payload["lastObservedFilesystemError"] != err.LastObservedError {
+		t.Fatalf("readiness payload=%+v", payload)
+	}
+}

@@ -14,8 +14,9 @@ func newPostMountNativeEvidence(devDrive DevDriveEvidence, volume VolumeInfo) *N
 		BlockCloneSupported:    boolPointer(volume.SupportsBlockCloning),
 		LastCompletedMilestone: "private-mount-validation",
 		Milestones: NativeMilestones{
-			DevDriveFormat:         NativeMilestoneMeasuredFail,
+			DevDriveFormat:         NativeMilestoneNotAttempted,
 			PrivateMount:           NativeMilestoneMeasuredFail,
+			MountedPoolReadiness:   NativeMilestoneNotMeasured,
 			FilesystemValidation:   NativeMilestoneNotMeasured,
 			BlockCloneCapability:   NativeMilestoneNotMeasured,
 			RegularBlockCloneIOCTL: NativeMilestoneNotAttempted,
@@ -24,13 +25,27 @@ func newPostMountNativeEvidence(devDrive DevDriveEvidence, volume VolumeInfo) *N
 			Cleanup:                NativeMilestoneNotMeasured,
 		},
 	}
-	if devDrive.FormatAttempted && devDrive.FormatSucceeded && devDrive.QueryExitCode == 0 && devDrive.TemporaryDriveLetterAssigned && devDrive.TemporaryDriveLetterRemoved {
-		evidence.Milestones.DevDriveFormat = NativeMilestoneMeasuredPass
+	if devDrive.FormatAttempted {
+		evidence.Milestones.DevDriveFormat = NativeMilestoneMeasuredFail
+		if devDrive.FormatSucceeded && devDrive.QueryExitCode == 0 && devDrive.TemporaryDriveLetterAssigned && devDrive.TemporaryDriveLetterRemoved {
+			evidence.Milestones.DevDriveFormat = NativeMilestoneMeasuredPass
+		}
 	}
 	if devDrive.PrivateMountVerified {
 		evidence.Milestones.PrivateMount = NativeMilestoneMeasuredPass
 	}
 	return evidence
+}
+
+func (evidence *NativeEvidence) recordMountedPoolReadiness(ready bool) {
+	if evidence == nil {
+		return
+	}
+	evidence.Milestones.MountedPoolReadiness = NativeMilestoneMeasuredFail
+	if ready {
+		evidence.Milestones.MountedPoolReadiness = NativeMilestoneMeasuredPass
+		evidence.LastCompletedMilestone = "mounted-pool-readiness"
+	}
 }
 
 func (evidence *NativeEvidence) recordVolumeCapabilityValidation(volume VolumeInfo) {
@@ -82,7 +97,7 @@ func (evidence *NativeEvidence) recordCleanup(state string) {
 		return
 	}
 	switch state {
-	case "released":
+	case "released", "preserved":
 		evidence.Milestones.Cleanup = NativeMilestoneReleased
 	default:
 		evidence.Milestones.Cleanup = NativeMilestoneUncertain
