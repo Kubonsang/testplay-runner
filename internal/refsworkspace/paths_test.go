@@ -111,10 +111,27 @@ func TestPrepareOwnedRootUsesReparseInspectionSeam(t *testing.T) {
 func TestNewPathsRejectsBudgetWithoutEmergencyReserve(t *testing.T) {
 	_, _, err := NewPaths(Config{
 		Root:               filepath.Join(t.TempDir(), "storage"),
-		MaximumBytes:       8 << 30,
-		SoftBudgetBytes:    7 << 30,
+		MaximumBytes:       64 << 30,
+		SoftBudgetBytes:    63 << 30,
 		WorkerReserveBytes: 2 << 30,
 	})
+	if ErrorCode(err) != CodeInvalidConfiguration {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestNewPathsKeepsDefaultSoftBudgetIndependentFromMaximum(t *testing.T) {
+	config, _, err := NewPaths(Config{Root: filepath.Join(t.TempDir(), "storage"), MaximumBytes: 80 << 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.MaximumBytes != 80<<30 || config.SoftBudgetBytes != DefaultSoftBudget {
+		t.Fatalf("config=%+v", config)
+	}
+}
+
+func TestNewPathsRejectsDevDriveBelowFiftyGiB(t *testing.T) {
+	_, _, err := NewPaths(Config{Root: filepath.Join(t.TempDir(), "storage"), MaximumBytes: MinimumDevDriveVHDXBytes - 512})
 	if ErrorCode(err) != CodeInvalidConfiguration {
 		t.Fatalf("err=%v", err)
 	}

@@ -141,6 +141,8 @@ func writeError(err error) {
 		"schemaVersion":            "2",
 		"status":                   "FAILED",
 		"architecture":             "Managed ReFS Library Pool",
+		"windowsProvider":          refsworkspace.WindowsProviderDevDriveVHDX,
+		"volumeKind":               refsworkspace.VolumeKindDevDrive,
 		"code":                     refsworkspace.ErrorCode(err),
 		"operation":                operation,
 		"path":                     path,
@@ -159,7 +161,10 @@ func writeError(err error) {
 
 func exitCode(err error) int {
 	switch refsworkspace.ErrorCode(err) {
-	case refsworkspace.CodeUnsupportedPlatform, refsworkspace.CodeReFSFormatUnavailable, refsworkspace.CodeBlockCloneUnavailable:
+	case refsworkspace.CodeUnsupportedPlatform, refsworkspace.CodeReFSFormatUnavailable, refsworkspace.CodeBlockCloneUnavailable,
+		refsworkspace.CodeDevDriveUnavailable, refsworkspace.CodeDevDriveDisabled, refsworkspace.CodeDevDriveFormatFailed,
+		refsworkspace.CodeDevDriveVerificationFailed, refsworkspace.CodeTemporaryDriveLetterUnavailable,
+		refsworkspace.CodeTemporaryDriveLetterCleanupFailed:
 		return 6
 	case refsworkspace.CodeNotElevated:
 		return 7

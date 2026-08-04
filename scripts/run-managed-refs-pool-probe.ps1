@@ -3,6 +3,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($env:TESTPLAY_REFS_MAX_BYTES)) {
+  $env:TESTPLAY_REFS_MAX_BYTES = '68719476736'
+}
 $required = @(
   'TESTPLAY_REFS_POOL_FILE',
   'TESTPLAY_REFS_MOUNT_ROOT',
@@ -25,6 +28,9 @@ New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
 $summary = [ordered]@{
   status = 'FAILED'
   nativeWindowsStatus = 'NOT MEASURED'
+  windowsProvider = 'dev-drive-vhdx'
+  volumeKind = 'Dev Drive'
+  devDrive = $null
   filesystem = $null
   blockCloneSupported = $false
   regularSyntheticClone = 'NOT MEASURED'
@@ -65,7 +71,11 @@ function Invoke-ProbeCommand([string]$Operation) {
   if ($exit -ne 0) {
     throw "$Operation failed with exit code ${exit}: $output"
   }
-  return $output | ConvertFrom-Json
+  $result = $output | ConvertFrom-Json
+  if ($null -ne $result.devDrive -and $null -ne $result.devDrive.queryOutput) {
+    $result.devDrive.queryOutput | Set-Content -LiteralPath (Join-Path $artifactRoot "$Operation-dev-drive-query.txt") -Encoding utf8 -NoNewline
+  }
+  return $result
 }
 
 function Assert-NoForbiddenPath($Result, [string]$Operation) {
@@ -118,6 +128,10 @@ try {
 
   $setup = Invoke-ProbeCommand 'setup'
   Assert-NoForbiddenPath $setup 'setup'
+  if ($setup.windowsProvider -ne 'dev-drive-vhdx' -or $setup.volumeKind -ne 'Dev Drive') { throw 'setup did not use the Dev Drive VHDX provider' }
+  if ($setup.devDrive.formatAttempted -ne $true -or $setup.devDrive.formatSucceeded -ne $true -or [int]$setup.devDrive.queryExitCode -ne 0 -or $setup.devDrive.temporaryDriveLetterAssigned -ne $true -or $setup.devDrive.temporaryDriveLetterRemoved -ne $true -or $setup.devDrive.privateMountVerified -ne $true) {
+    throw 'setup Dev Drive evidence is incomplete'
+  }
   if ($setup.status -ne 'PASS' -or $setup.volume.filesystem -ne 'ReFS') { throw 'setup did not produce a ready ReFS pool' }
   if ($setup.blockCloneSupported -ne $true) { throw 'setup did not prove Block Clone capability' }
   Assert-BinaryZeroResidual $setup.residual 1 'setup'
@@ -125,6 +139,9 @@ try {
 
   $probe = Invoke-ProbeCommand 'probe'
   Assert-NoForbiddenPath $probe 'probe'
+  if ($probe.windowsProvider -ne 'dev-drive-vhdx' -or $probe.volumeKind -ne 'Dev Drive' -or [int]$probe.devDrive.queryExitCode -ne 0 -or $probe.devDrive.privateMountVerified -ne $true -or $probe.devDrive.formatAttempted -ne $false) {
+    throw 'probe did not verify the persistent Dev Drive without reformatting'
+  }
   if ($probe.status -ne 'PASS' -or $probe.volume.filesystem -ne 'ReFS' -or $probe.blockCloneSupported -ne $true) {
     throw 'native ReFS Block Clone probe did not pass'
   }
@@ -138,6 +155,9 @@ try {
 
   $status = Invoke-ProbeCommand 'status'
   Assert-NoForbiddenPath $status 'status'
+  if ($status.windowsProvider -ne 'dev-drive-vhdx' -or $status.volumeKind -ne 'Dev Drive' -or [int]$status.devDrive.queryExitCode -ne 0 -or $status.devDrive.privateMountVerified -ne $true -or $status.devDrive.formatAttempted -ne $false) {
+    throw 'status did not verify the persistent Dev Drive without reformatting'
+  }
   if ($status.status -ne 'READY' -or $status.volume.filesystem -ne 'ReFS') { throw 'post-probe status is not ready' }
   Assert-BinaryZeroResidual $status.residual 1 'status'
   $summary.statusResidual = $status.residual
@@ -149,6 +169,9 @@ try {
   if ($RemoveAfter) {
     $removed = Invoke-ProbeCommand 'remove'
     Assert-NoForbiddenPath $removed 'remove'
+    if ($removed.windowsProvider -ne 'dev-drive-vhdx' -or $removed.volumeKind -ne 'Dev Drive' -or [int]$removed.devDrive.queryExitCode -ne 0 -or $removed.devDrive.formatAttempted -ne $false) {
+      throw 'remove did not verify the persistent Dev Drive before deletion'
+    }
     Assert-BinaryZeroResidual $removed.residual 0 'remove'
     if (Test-Path -LiteralPath $poolFile) { throw 'VHDX remains after remove' }
     if (Test-Path -LiteralPath $mountRoot) { throw 'mount directory remains after remove' }
@@ -159,6 +182,7 @@ try {
 
   $summary.status = 'PROMISING'
   $summary.nativeWindowsStatus = 'MEASURED'
+  $summary.devDrive = $setup.devDrive
   $summary.filesystem = $probe.volume.filesystem
   $summary.blockCloneSupported = $probe.blockCloneSupported
   $summary.regularSyntheticClone = 'PASS'

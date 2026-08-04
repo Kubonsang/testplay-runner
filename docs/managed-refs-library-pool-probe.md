@@ -37,11 +37,15 @@ managed-library-pool.vhdx
       └─ quarantine/
 ```
 
-There is one dynamically expanding VHDX, one ReFS volume, one Library baseline
+There is one persistent dynamically expanding VHDX, one Dev Drive/ReFS volume, one Library baseline
 per compatibility key, and N worker Libraries. A worker is a directory tree of
 file-range Block Clones on the same ReFS volume. No worker VHDX, parent/child
 VHDX chain, Physical Directory Image, or silent whole-Library copy fallback is
 part of this data path.
+
+The installation remains one ordinary `.vhdx` file on the NTFS host while
+detached. When attached, Windows exposes that same file as an exact virtual
+disk with a GPT partition. Detach is not deletion.
 
 An external shadow workspace keeps `Assets`, `Packages`, and `ProjectSettings`
 outside the pool. Its `Library` path is a verified directory junction to
@@ -67,20 +71,28 @@ Run from an elevated terminal:
 The default host root is `%LOCALAPPDATA%\TestPlay\Storage`. `setup` performs:
 
 1. Windows and elevation checks.
-2. Dynamic VHDX creation through the existing v0.12 VirtDisk wrapper.
-3. attach without a drive letter.
-4. RAW disk identity and File Backed Virtual bus validation.
-5. GPT initialization and maximum-size basic partition creation.
-6. ReFS quick format with file integrity streams disabled by default.
-7. an NTFS-hosted private directory mount.
-8. filesystem, cluster size, volume GUID, and block-refcount capability checks.
-9. a synthetic Block Clone plus allocate-on-write isolation check.
-10. matching host and in-volume ownership metadata writes.
-11. clean unmount, detach, visibility wait, and handle close.
+2. read-only Dev Drive capability checks (Windows build, elevation,
+   `Format-Volume -DevDrive`, and `fsutil devdrv query`).
+3. Dynamic VHDX creation through the existing v0.12 VirtDisk wrapper.
+4. attach without a permanent drive letter.
+5. RAW disk identity and File Backed Virtual bus validation.
+6. GPT initialization and maximum-size basic partition creation.
+7. assignment of an unused temporary drive letter and Dev Drive formatting via
+   `Format-Volume -DriveLetter <letter> -DevDrive`.
+8. ReFS and `fsutil devdrv query` verification, with raw query output retained
+   as an artifact.
+9. an NTFS-hosted private directory mount followed by removal and verification
+   of the temporary drive letter.
+10. filesystem, cluster size, volume GUID, and block-refcount capability checks.
+11. a synthetic Block Clone plus allocate-on-write isolation check.
+12. matching host and in-volume ownership metadata writes.
+13. clean unmount, detach, visibility wait, and handle close.
 
-The command leaves the pool detached between invocations. This avoids a
+The command leaves the persistent pool detached between invocations. This avoids a
 long-lived helper process while preserving an installation represented by one
 VHDX file. `status` and `probe` attach temporarily and detach before returning.
+They inspect the existing Dev Drive and never format it again. Only `remove`
+deletes the owned VHDX and metadata; ordinary unmount/detach is not deletion.
 
 `remove` mounts the exact owned VHDX, compares the host token, in-volume token,
 VHDX file identity, volume GUID, filesystem, and cluster size, refuses active
@@ -210,15 +222,15 @@ and [`GetVolumeInformationByHandleW`](https://learn.microsoft.com/en-us/windows/
 The default is provisional until Windows hardware measurements exist:
 
 ```text
-VHDX guest virtual-size ceiling: 16 GiB
+VHDX guest virtual-size ceiling: 64 GiB
 testplay soft budget: 14 GiB
 per-worker reservation / emergency reserve: 2 GiB
 minimum host free-space floor: 30 GiB
 experimental VHDX overhead reserve: 2 GiB
 ```
 
-When the maximum is overridden, the default soft budget is the maximum minus
-the reserve. An acquire exceeding the soft budget fails before cloning with
+The 14 GiB default soft budget is independent of the VHDX maximum. An acquire
+exceeding the soft budget fails before cloning with
 `storage-budget-exceeded`; it does not wait for a real disk-full event.
 
 Metrics keep these layers separate:
@@ -250,8 +262,10 @@ context cancellation, is released before baseline verification or cloning,
 and is never deleted merely because it appears old. Caller-supplied current
 volume usage is not accepted.
 
-Setup requires the provisional 30 GiB host floor plus the full 16 GiB VHDX
-maximum and 2 GiB overhead reserve. The VHDX maximum is a guest-volume
+Setup requires the provisional 30 GiB host floor plus the full 64 GiB VHDX
+maximum and 2 GiB overhead reserve: 96 GiB free with defaults. VHDX sizes below
+50 GiB are rejected because Dev Drive formatting requires a suitably sized
+volume. The VHDX maximum is a guest-volume
 virtual-size ceiling; a separate testplay reservation policy protects the host
 disk floor. Worker acquire requires the floor plus its full worker reserve and
 fails closed on overflow or measurement failure. These values remain
@@ -311,5 +325,14 @@ bytes retain the cost of full hashes. A later latest-main design may evaluate a
 generation token, USN journal, or validated cache without weakening this
 correctness gate.
 
-Current repository status is `STATIC READY FOR WINDOWS VALIDATION`. This is a
-source/test readiness statement, not native evidence and not a release.
+The prior generic `Format-Volume -FileSystem ReFS` attempt on Windows 11 Pro
+25H2 build 26200.8875 is `UNSUPPORTED`; it failed with
+`refs-format-unavailable`. Cleanup state was `released` and
+the disk and left no owned VHDX or mount. That result is retained as evidence
+for the rejected generic provider; it is not evidence against the Dev Drive
+provider.
+
+Current repository status is `STATIC READY FOR DEV DRIVE VALIDATION`. This is
+a source/test readiness statement, not native evidence and not a release.
+Native Dev Drive setup, Unity correctness, and 1/2/4/8 workers remain
+`NOT MEASURED`.

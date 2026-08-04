@@ -13,53 +13,81 @@ import (
 )
 
 type fakePoolNative struct {
-	platform    string
-	elevated    bool
-	ensureErr   error
-	createErr   error
-	mountErr    error
-	removeErr   error
-	closeErr    error
-	volume      VolumeInfo
-	closeCount  int
-	hostFree    int64
-	hostFreeErr error
+	platform          string
+	elevated          bool
+	ensureErr         error
+	createErr         error
+	mountErr          error
+	removeErr         error
+	closeErr          error
+	volume            VolumeInfo
+	closeCount        int
+	createCount       int
+	removeCount       int
+	mountInitializes  []bool
+	hostFree          int64
+	hostFreeErr       error
+	hostFilesystem    string
+	emptyMountOnClose bool
 }
 
 type fakeMountedPool struct {
 	native *fakePoolNative
 	volume VolumeInfo
+	mount  string
 }
 
 func (pool *fakeMountedPool) Volume() VolumeInfo { return pool.volume }
 func (pool *fakeMountedPool) Metrics() NativeMountMetrics {
 	return NativeMountMetrics{AttachMs: 2, MountMs: 3}
 }
+func (pool *fakeMountedPool) DevDriveEvidence() DevDriveEvidence {
+	initialized := len(pool.native.mountInitializes) != 0 && pool.native.mountInitializes[len(pool.native.mountInitializes)-1]
+	return DevDriveEvidence{
+		FormatAttempted: initialized, FormatSucceeded: initialized, QueryExitCode: 0,
+		QueryOutput:                  "Developer volumes are enabled.",
+		TemporaryDriveLetterAssigned: initialized, TemporaryDriveLetterRemoved: initialized,
+		PrivateMountVerified: true,
+	}
+}
 func (pool *fakeMountedPool) Close(context.Context) error {
 	pool.native.closeCount++
+	if pool.native.emptyMountOnClose {
+		entries, err := os.ReadDir(pool.mount)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if err := os.RemoveAll(filepath.Join(pool.mount, entry.Name())); err != nil {
+				return err
+			}
+		}
+	}
 	return pool.native.closeErr
 }
 
 func (native *fakePoolNative) Platform() string                         { return native.platform }
-func (native *fakePoolNative) EnsureAvailable() error                   { return native.ensureErr }
+func (native *fakePoolNative) EnsureAvailable(context.Context) error    { return native.ensureErr }
 func (native *fakePoolNative) IsElevated(context.Context) (bool, error) { return native.elevated, nil }
 func (native *fakePoolNative) CreateDynamic(path string, _ int64) error {
 	if native.createErr != nil {
 		return native.createErr
 	}
+	native.createCount++
 	return os.WriteFile(path, []byte("dynamic-vhdx"), 0600)
 }
-func (native *fakePoolNative) Mount(_ context.Context, vhdx, mount string, _ bool) (MountedPool, error) {
+func (native *fakePoolNative) Mount(_ context.Context, vhdx, mount string, initialize bool) (MountedPool, error) {
 	if native.mountErr != nil {
 		return nil, native.mountErr
 	}
+	native.mountInitializes = append(native.mountInitializes, initialize)
 	if _, err := os.Stat(vhdx); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(mount, 0700); err != nil {
 		return nil, err
 	}
-	return &fakeMountedPool{native: native, volume: native.volume}, nil
+	return &fakeMountedPool{native: native, volume: native.volume, mount: mount}, nil
 }
 func (native *fakePoolNative) FileIdentity(path string) (string, error) {
 	if _, err := os.Stat(path); err != nil {
@@ -80,24 +108,29 @@ func (native *fakePoolNative) HostFreeBytes(string) (int64, error) {
 	}
 	return native.hostFree, nil
 }
+func (native *fakePoolNative) HostFilesystem(string) (string, error) {
+	return native.hostFilesystem, nil
+}
 func (native *fakePoolNative) RemoveVHDX(path string) error {
 	if native.removeErr != nil {
 		return native.removeErr
 	}
+	native.removeCount++
 	return os.Remove(path)
 }
 
 func newFakePoolNative() *fakePoolNative {
 	return &fakePoolNative{
-		platform: "windows",
-		elevated: true,
-		hostFree: 100 << 30,
+		platform:       "windows",
+		elevated:       true,
+		hostFree:       128 << 30,
+		hostFilesystem: "NTFS",
 		volume: VolumeInfo{
 			VolumeGUIDPath:       `\\?\Volume{test}\`,
 			Filesystem:           "ReFS",
 			ClusterSize:          4096,
-			TotalBytes:           16 << 30,
-			FreeBytes:            15 << 30,
+			TotalBytes:           64 << 30,
+			FreeBytes:            63 << 30,
 			UsedBytes:            1 << 30,
 			SupportsBlockCloning: true,
 		},
@@ -178,8 +211,11 @@ func TestPoolSetupAndStatusStructuredEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != "PASS" || result.Architecture != "Managed ReFS Library Pool" || result.ReleasedVersionModified || result.PhysicalImageCreated || result.DifferencingChildCreated || result.FallbackUsed || !result.BlockCloneSupported || !result.SourceUnchanged {
+	if result.Status != "PASS" || result.Architecture != "Managed ReFS Library Pool" || result.WindowsProvider != WindowsProviderDevDriveVHDX || result.VolumeKind != VolumeKindDevDrive || result.ReleasedVersionModified || result.PhysicalImageCreated || result.DifferencingChildCreated || result.FallbackUsed || !result.BlockCloneSupported || !result.SourceUnchanged {
 		t.Fatalf("result=%+v", result)
+	}
+	if !result.DevDrive.FormatAttempted || !result.DevDrive.FormatSucceeded || !result.DevDrive.TemporaryDriveLetterAssigned || !result.DevDrive.TemporaryDriveLetterRemoved || !result.DevDrive.PrivateMountVerified || result.DevDrive.QueryExitCode != 0 {
+		t.Fatalf("devDrive=%+v", result.DevDrive)
 	}
 	if result.Metrics.ClonedBytes <= 8192 || result.Metrics.TailCopiedBytes < 137 {
 		t.Fatalf("metrics=%+v", result.Metrics)
@@ -191,12 +227,79 @@ func TestPoolSetupAndStatusStructuredEvidence(t *testing.T) {
 	if status.Status != "READY" || status.Pool == nil || status.Pool.OwnershipToken == "" || status.Volume.Filesystem != "ReFS" {
 		t.Fatalf("status=%+v", status)
 	}
+	if status.DevDrive.FormatAttempted || !status.DevDrive.PrivateMountVerified || status.DevDrive.QueryExitCode != 0 {
+		t.Fatalf("status devDrive=%+v", status.DevDrive)
+	}
 	probe, err := service.Probe(context.Background(), config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if probe.Metrics.PoolAttachMs != 2 || probe.Metrics.PoolMountMs != 3 || probe.Metrics.ClonedBytes <= 8192 {
 		t.Fatalf("probe metrics=%+v", probe.Metrics)
+	}
+}
+
+func TestPoolSetupRejectsNonNTFSHostBeforeWrites(t *testing.T) {
+	native := newFakePoolNative()
+	native.hostFilesystem = "exFAT"
+	root := filepath.Join(t.TempDir(), "storage")
+	if _, err := NewService(native, copyClaimingCloner{}).Setup(context.Background(), Config{Root: root}); ErrorCode(err) != CodeDevDriveUnavailable {
+		t.Fatalf("err=%v", err)
+	}
+	if native.createCount != 0 {
+		t.Fatalf("non-NTFS host created %d VHDX files", native.createCount)
+	}
+}
+
+func TestPoolSetupPersistsVHDXAndStatusDoesNotReformat(t *testing.T) {
+	native := newFakePoolNative()
+	service := NewService(native, copyClaimingCloner{})
+	config := Config{Root: filepath.Join(t.TempDir(), "storage")}
+	setup, err := service.Setup(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(setup.Paths.VHDX); err != nil {
+		t.Fatalf("setup did not preserve VHDX: %v", err)
+	}
+	if native.createCount != 1 || native.removeCount != 0 || len(native.mountInitializes) != 1 || !native.mountInitializes[0] {
+		t.Fatalf("after setup create=%d remove=%d mounts=%v", native.createCount, native.removeCount, native.mountInitializes)
+	}
+	if _, err := service.Status(context.Background(), config); err != nil {
+		t.Fatal(err)
+	}
+	if native.createCount != 1 || native.removeCount != 0 || len(native.mountInitializes) != 2 || native.mountInitializes[1] {
+		t.Fatalf("status recreated, reformatted, or removed the pool: create=%d remove=%d mounts=%v", native.createCount, native.removeCount, native.mountInitializes)
+	}
+}
+
+func TestPoolRemoveIsTheOnlyLifecycleThatDeletesPersistentVHDX(t *testing.T) {
+	native := newFakePoolNative()
+	service := NewService(native, copyClaimingCloner{})
+	config := Config{Root: filepath.Join(t.TempDir(), "storage")}
+	setup, err := service.Setup(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Probe(context.Background(), config); err != nil {
+		t.Fatal(err)
+	}
+	if native.removeCount != 0 {
+		t.Fatalf("setup/probe deleted the persistent VHDX %d times", native.removeCount)
+	}
+	native.emptyMountOnClose = true
+	removed, err := service.Remove(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if native.removeCount != 1 {
+		t.Fatalf("remove count=%d, want 1", native.removeCount)
+	}
+	if _, err := os.Stat(setup.Paths.VHDX); !os.IsNotExist(err) {
+		t.Fatalf("explicit remove left VHDX: %v", err)
+	}
+	if removed.Residual.OwnedVHDXFiles.Measured != true || removed.Residual.OwnedVHDXFiles.Count != 0 {
+		t.Fatalf("remove residual=%+v", removed.Residual.OwnedVHDXFiles)
 	}
 }
 
@@ -210,7 +313,7 @@ func TestPoolSetupNativeSeamsReturnStableCodes(t *testing.T) {
 		{name: "not elevated", mutate: func(native *fakePoolNative) { native.elevated = false }, cloner: copyClaimingCloner{}, want: CodeNotElevated},
 		{name: "create failure", mutate: func(native *fakePoolNative) { native.createErr = errors.New("CreateVirtualDisk failed") }, cloner: copyClaimingCloner{}, want: CodePoolCorrupt},
 		{name: "attach failure", mutate: func(native *fakePoolNative) { native.mountErr = errors.New("AttachVirtualDisk failed") }, cloner: copyClaimingCloner{}, want: CodePoolCorrupt},
-		{name: "format failure", mutate: func(native *fakePoolNative) { native.mountErr = errors.New("ReFS format unavailable") }, cloner: copyClaimingCloner{}, want: CodeReFSFormatUnavailable},
+		{name: "format failure", mutate: func(native *fakePoolNative) { native.mountErr = errors.New("dev-drive-format-failed") }, cloner: copyClaimingCloner{}, want: CodeDevDriveFormatFailed},
 		{name: "block clone unsupported", mutate: func(*fakePoolNative) {}, cloner: copyClaimingCloner{fail: newError(CodeBlockCloneUnavailable, "FSCTL_DUPLICATE_EXTENTS_TO_FILE", "", nil)}, want: CodeBlockCloneUnavailable},
 		{name: "filesystem mismatch", mutate: func(native *fakePoolNative) { native.volume.Filesystem = "NTFS" }, cloner: copyClaimingCloner{}, want: CodePoolCorrupt},
 	}

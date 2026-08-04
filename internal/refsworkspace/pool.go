@@ -15,6 +15,7 @@ import (
 type MountedPool interface {
 	Volume() VolumeInfo
 	Metrics() NativeMountMetrics
+	DevDriveEvidence() DevDriveEvidence
 	Close(context.Context) error
 }
 
@@ -25,12 +26,13 @@ type NativeMountMetrics struct {
 
 type PoolNative interface {
 	Platform() string
-	EnsureAvailable() error
+	EnsureAvailable(context.Context) error
 	IsElevated(context.Context) (bool, error)
 	CreateDynamic(path string, maximumBytes int64) error
 	Mount(context.Context, string, string, bool) (MountedPool, error)
 	FileIdentity(path string) (string, error)
 	FileUsage(path string) (FileUsage, error)
+	HostFilesystem(path string) (string, error)
 	HostFreeBytes(path string) (int64, error)
 	RemoveVHDX(path string) error
 }
@@ -76,6 +78,13 @@ func (service *Service) Setup(ctx context.Context, config Config) (returnResult 
 	}
 	if hostFreeBefore < requiredHostFree {
 		return nil, newError(CodeHostFreeSpaceFloor, "validate-host-free-before-setup", hostMeasurementPath, fmt.Errorf("hostFree=%d required=%d", hostFreeBefore, requiredHostFree))
+	}
+	hostFilesystem, err := service.native.HostFilesystem(hostMeasurementPath)
+	if err != nil {
+		return nil, newError(CodeDevDriveUnavailable, "measure-host-filesystem-before-setup", hostMeasurementPath, err)
+	}
+	if !strings.EqualFold(hostFilesystem, "NTFS") {
+		return nil, newError(CodeDevDriveUnavailable, "validate-host-filesystem-before-setup", hostMeasurementPath, fmt.Errorf("filesystem=%q, expected NTFS", hostFilesystem))
 	}
 	if err := prepareSetupRoot(paths); err != nil {
 		return nil, err
@@ -153,6 +162,8 @@ func (service *Service) Setup(ctx context.Context, config Config) (returnResult 
 	metadata := PoolMetadata{
 		SchemaVersion:            PoolSchemaVersion,
 		Architecture:             "Managed ReFS Library Pool",
+		WindowsProvider:          WindowsProviderDevDriveVHDX,
+		VolumeKind:               VolumeKindDevDrive,
 		CreatedAt:                service.now().UTC(),
 		OwnershipToken:           token,
 		VHDXPath:                 paths.VHDX,
@@ -187,6 +198,7 @@ func (service *Service) Setup(ctx context.Context, config Config) (returnResult 
 	usage, _ := service.native.FileUsage(paths.VHDX)
 	hostFree, _ := service.native.HostFreeBytes(paths.Root)
 	result := baseResult("setup", paths, volume)
+	result.DevDrive = mounted.DevDriveEvidence()
 	result.Status = "PASS"
 	result.Pool = &metadata
 	result.BlockCloneSupported = true
@@ -259,6 +271,7 @@ func (service *Service) inspect(ctx context.Context, config Config, runProbe boo
 		return nil, err
 	}
 	result := baseResult("status", paths, volume)
+	result.DevDrive = mounted.DevDriveEvidence()
 	result.Status = "READY"
 	result.Pool = &poolMetadata
 	result.BlockCloneSupported = volume.SupportsBlockCloning
@@ -410,6 +423,7 @@ func (service *Service) Remove(ctx context.Context, config Config) (returnResult
 		return nil, newError(CodeCleanupFailed, "remove-storage-root", paths.Root, err)
 	}
 	result := baseResult("remove", paths, volume)
+	result.DevDrive = mounted.DevDriveEvidence()
 	result.Status = "PASS"
 	result.BlockCloneSupported = volume.SupportsBlockCloning
 	result.Metrics.CleanupMs = time.Since(started).Milliseconds()
@@ -447,7 +461,7 @@ func (service *Service) checkNative(ctx context.Context) error {
 	if service.native.Platform() != "windows" {
 		return newError(CodeUnsupportedPlatform, "native-check", service.native.Platform(), nil)
 	}
-	if err := service.native.EnsureAvailable(); err != nil {
+	if err := service.native.EnsureAvailable(ctx); err != nil {
 		return mapNativeError("native-check", "", err)
 	}
 	elevated, err := service.native.IsElevated(ctx)
@@ -601,7 +615,7 @@ func (service *Service) validateHostOwnership(paths Paths, metadata PoolMetadata
 	if err := validateOwnedPaths(paths); err != nil {
 		return err
 	}
-	if metadata.SchemaVersion != PoolSchemaVersion || metadata.Architecture != managedReFSArchitecture || metadata.OwnershipToken == "" || filepath.Clean(metadata.VHDXPath) != paths.VHDX || metadata.MinimumHostFreeBytes <= 0 || metadata.VHDXOverheadReserveBytes < 0 || metadata.MaximumBytes <= 0 || metadata.SoftBudgetBytes <= 0 || metadata.WorkerReserveBytes <= 0 || metadata.ClusterSize <= 0 || !strings.EqualFold(metadata.Filesystem, "ReFS") {
+	if metadata.SchemaVersion != PoolSchemaVersion || metadata.Architecture != managedReFSArchitecture || metadata.WindowsProvider != WindowsProviderDevDriveVHDX || metadata.VolumeKind != VolumeKindDevDrive || metadata.OwnershipToken == "" || filepath.Clean(metadata.VHDXPath) != paths.VHDX || metadata.MinimumHostFreeBytes <= 0 || metadata.VHDXOverheadReserveBytes < 0 || metadata.MaximumBytes < MinimumDevDriveVHDXBytes || metadata.SoftBudgetBytes <= 0 || metadata.WorkerReserveBytes <= 0 || metadata.ClusterSize <= 0 || !strings.EqualFold(metadata.Filesystem, "ReFS") {
 		return newError(CodePoolCorrupt, "validate-owner-metadata", paths.Owner, fmt.Errorf("owner metadata does not match requested pool"))
 	}
 	identity, err := service.native.FileIdentity(paths.VHDX)
@@ -660,6 +674,8 @@ func baseResult(operation string, paths Paths, volume VolumeInfo) *Result {
 		SchemaVersion:            "2",
 		Operation:                operation,
 		Architecture:             managedReFSArchitecture,
+		WindowsProvider:          WindowsProviderDevDriveVHDX,
+		VolumeKind:               VolumeKindDevDrive,
 		ReleasedVersionModified:  false,
 		PhysicalImageCreated:     false,
 		DifferencingChildCreated: false,
@@ -731,6 +747,18 @@ func mapNativeError(operation, path string, err error) error {
 	}
 	lower := strings.ToLower(err.Error())
 	switch {
+	case strings.Contains(lower, CodeTemporaryDriveLetterCleanupFailed):
+		code = CodeTemporaryDriveLetterCleanupFailed
+	case strings.Contains(lower, CodeTemporaryDriveLetterUnavailable):
+		code = CodeTemporaryDriveLetterUnavailable
+	case strings.Contains(lower, CodeDevDriveVerificationFailed):
+		code = CodeDevDriveVerificationFailed
+	case strings.Contains(lower, CodeDevDriveFormatFailed):
+		code = CodeDevDriveFormatFailed
+	case strings.Contains(lower, CodeDevDriveDisabled):
+		code = CodeDevDriveDisabled
+	case strings.Contains(lower, CodeDevDriveUnavailable):
+		code = CodeDevDriveUnavailable
 	case strings.Contains(lower, "refs") && strings.Contains(lower, "format"):
 		code = CodeReFSFormatUnavailable
 	case strings.Contains(lower, "already attached") || strings.Contains(lower, "already mounted"):

@@ -14,9 +14,10 @@ func validPolicyEvidence(t *testing.T) (Paths, PoolMetadata, PoolMetadata, Volum
 	}
 	host := PoolMetadata{
 		SchemaVersion: PoolSchemaVersion, Architecture: managedReFSArchitecture,
+		WindowsProvider: WindowsProviderDevDriveVHDX, VolumeKind: VolumeKindDevDrive,
 		OwnershipToken: "owner", VHDXPath: paths.VHDX, VHDXIdentity: "disk:file",
 		VolumeGUIDPath: `\\?\Volume{verified}\`, Filesystem: "ReFS", ClusterSize: 4096,
-		MaximumBytes: 16 << 30, SoftBudgetBytes: 14 << 30, WorkerReserveBytes: 2 << 30,
+		MaximumBytes: 64 << 30, SoftBudgetBytes: 14 << 30, WorkerReserveBytes: 2 << 30,
 		MinimumHostFreeBytes: 30 << 30, VHDXOverheadReserveBytes: 2 << 30,
 	}
 	volume := VolumeInfo{VolumeGUIDPath: host.VolumeGUIDPath, Filesystem: "ReFS", ClusterSize: 4096, SupportsBlockCloning: true}
@@ -26,6 +27,8 @@ func validPolicyEvidence(t *testing.T) (Paths, PoolMetadata, PoolMetadata, Volum
 func TestBuildVerifiedPoolPolicyRejectsEveryMetadataMismatch(t *testing.T) {
 	mutations := map[string]func(*PoolMetadata){
 		"schema":       func(value *PoolMetadata) { value.SchemaVersion++ },
+		"provider":     func(value *PoolMetadata) { value.WindowsProvider = "generic-refs" },
+		"volume kind":  func(value *PoolMetadata) { value.VolumeKind = "ReFS" },
 		"architecture": func(value *PoolMetadata) { value.Architecture = "other" },
 		"owner":        func(value *PoolMetadata) { value.OwnershipToken = "other" },
 		"vhdx path":    func(value *PoolMetadata) { value.VHDXPath += ".other" },

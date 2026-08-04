@@ -11,7 +11,9 @@ change or invalidate the released v0.13 Image + native CoW benchmark history.
 | Field | Result |
 |---|---|
 | Windows edition/build | NOT MEASURED |
-| ReFS format support | NOT MEASURED |
+| Windows provider | `dev-drive-vhdx` (static configuration) |
+| volume kind | `Dev Drive` (native verification NOT MEASURED) |
+| Dev Drive format/query evidence | NOT MEASURED |
 | Unity Editor | NOT MEASURED |
 | Project identity | NOT MEASURED |
 | VHDX maximum | NOT MEASURED |
@@ -23,6 +25,17 @@ change or invalidate the released v0.13 Image + native CoW benchmark history.
 The VHDX maximum is the guest volume's virtual-size ceiling. Before setup,
 testplay's separate host reservation gate requires minimum host free space plus
 the full VHDX maximum plus overhead; each worker gate includes its reserve.
+The defaults are 64 GiB maximum, 14 GiB independent soft budget, 2 GiB worker
+reserve, 30 GiB host floor, and 2 GiB overhead, so setup requires 96 GiB free.
+Maximums below 50 GiB are rejected.
+
+## Prior generic-provider evidence
+
+The earlier generic ReFS formatter is not a fallback and is no longer used.
+Its retained native result was Windows 11 Pro 25H2 build 26200.8875,
+`refs-format-unavailable`, cleanup released, with the VHDX and mount absent.
+This is evidence about the rejected generic provider only. The Dev Drive VHDX
+provider has not yet been run on native hardware.
 
 Required variables:
 
@@ -127,6 +140,17 @@ recorded Windows machine.
 ```json
 {
   "status": "NOT MEASURED",
+  "windowsProvider": "dev-drive-vhdx",
+  "volumeKind": "Dev Drive",
+  "devDrive": {
+    "formatAttempted": false,
+    "formatSucceeded": false,
+    "queryExitCode": null,
+    "queryOutput": "NOT MEASURED",
+    "temporaryDriveLetterAssigned": false,
+    "temporaryDriveLetterRemoved": false,
+    "privateMountVerified": false
+  },
   "filesystem": "NOT MEASURED",
   "blockCloneSupported": false,
   "physicalImageCreated": false,

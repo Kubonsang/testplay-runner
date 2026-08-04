@@ -20,9 +20,14 @@ const fileSupportsBlockRefcounting = 0x08000000
 
 type windowsPoolNative struct{}
 
-func newPoolNative() PoolNative                  { return windowsPoolNative{} }
-func (windowsPoolNative) Platform() string       { return runtime.GOOS }
-func (windowsPoolNative) EnsureAvailable() error { return vhdxstorage.EnsureAvailable() }
+func newPoolNative() PoolNative            { return windowsPoolNative{} }
+func (windowsPoolNative) Platform() string { return runtime.GOOS }
+func (windowsPoolNative) EnsureAvailable(ctx context.Context) error {
+	if err := vhdxstorage.EnsureAvailable(); err != nil {
+		return err
+	}
+	return vhdxstorage.EnsureDevDriveAvailable(ctx)
+}
 func (windowsPoolNative) IsElevated(ctx context.Context) (bool, error) {
 	return vhdxstorage.IsElevated(ctx)
 }
@@ -34,10 +39,12 @@ type windowsMountedPool struct {
 	attachment *vhdxstorage.Attachment
 	volume     VolumeInfo
 	metrics    NativeMountMetrics
+	devDrive   DevDriveEvidence
 }
 
-func (pool *windowsMountedPool) Volume() VolumeInfo          { return pool.volume }
-func (pool *windowsMountedPool) Metrics() NativeMountMetrics { return pool.metrics }
+func (pool *windowsMountedPool) Volume() VolumeInfo                 { return pool.volume }
+func (pool *windowsMountedPool) Metrics() NativeMountMetrics        { return pool.metrics }
+func (pool *windowsMountedPool) DevDriveEvidence() DevDriveEvidence { return pool.devDrive }
 
 func (pool *windowsMountedPool) Close(ctx context.Context) error {
 	if pool.attachment == nil {
@@ -86,10 +93,10 @@ func (windowsPoolNative) Mount(ctx context.Context, vhdxPath, mountPath string, 
 	var refsInfo vhdxstorage.ReFSVolumeInfo
 	mountStarted := time.Now()
 	if initialize {
-		refsInfo, err = attachment.InitializeReFSAndMount(ctx, mountPath)
+		refsInfo, err = attachment.InitializeDevDriveAndMount(ctx, mountPath)
 	} else {
 		if err = attachment.MountExisting(ctx, mountPath, false); err == nil {
-			refsInfo, err = attachment.InspectReFSVolume(ctx)
+			refsInfo, err = attachment.InspectDevDriveVolume(ctx)
 		}
 	}
 	if err != nil {
@@ -102,7 +109,20 @@ func (windowsPoolNative) Mount(ctx context.Context, vhdxPath, mountPath string, 
 	if err != nil {
 		return fail(err)
 	}
-	return &windowsMountedPool{attachment: attachment, volume: volume, metrics: NativeMountMetrics{AttachMs: attachMs, MountMs: time.Since(mountStarted).Milliseconds()}}, nil
+	return &windowsMountedPool{
+		attachment: attachment,
+		volume:     volume,
+		metrics:    NativeMountMetrics{AttachMs: attachMs, MountMs: time.Since(mountStarted).Milliseconds()},
+		devDrive: DevDriveEvidence{
+			FormatAttempted:              refsInfo.DevDrive.FormatAttempted,
+			FormatSucceeded:              refsInfo.DevDrive.FormatSucceeded,
+			QueryExitCode:                refsInfo.DevDrive.QueryExitCode,
+			QueryOutput:                  refsInfo.DevDrive.QueryOutput,
+			TemporaryDriveLetterAssigned: refsInfo.DevDrive.TemporaryDriveLetterAssigned,
+			TemporaryDriveLetterRemoved:  refsInfo.DevDrive.TemporaryDriveLetterRemoved,
+			PrivateMountVerified:         refsInfo.DevDrive.PrivateMountVerified,
+		},
+	}, nil
 }
 
 func validateUnmountedMountDirectory(path string) error {
@@ -221,6 +241,24 @@ func (windowsPoolNative) FileUsage(path string) (FileUsage, error) {
 		return FileUsage{}, err
 	}
 	return FileUsage{LogicalBytes: info.EndOfFile, AllocatedBytes: info.AllocationSize}, nil
+}
+
+func (windowsPoolNative) HostFilesystem(path string) (string, error) {
+	ptr, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return "", err
+	}
+	handle, err := windows.CreateFile(ptr, windows.FILE_READ_ATTRIBUTES, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	if err != nil {
+		return "", err
+	}
+	defer windows.CloseHandle(handle)
+	filesystem := make([]uint16, 64)
+	var serial, maxComponent, flags uint32
+	if err := windows.GetVolumeInformationByHandle(handle, nil, 0, &serial, &maxComponent, &flags, &filesystem[0], uint32(len(filesystem))); err != nil {
+		return "", err
+	}
+	return windows.UTF16ToString(filesystem), nil
 }
 
 func (windowsPoolNative) HostFreeBytes(path string) (int64, error) {

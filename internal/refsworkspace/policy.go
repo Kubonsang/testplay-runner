@@ -14,6 +14,8 @@ const managedReFSArchitecture = "Managed ReFS Library Pool"
 func BuildVerifiedPoolPolicy(host, pool PoolMetadata, volume VolumeInfo) (PoolPolicy, error) {
 	if host.SchemaVersion != PoolSchemaVersion || pool.SchemaVersion != PoolSchemaVersion ||
 		host.Architecture != managedReFSArchitecture || pool.Architecture != managedReFSArchitecture ||
+		host.WindowsProvider != WindowsProviderDevDriveVHDX || pool.WindowsProvider != WindowsProviderDevDriveVHDX ||
+		host.VolumeKind != VolumeKindDevDrive || pool.VolumeKind != VolumeKindDevDrive ||
 		host.OwnershipToken == "" || host.OwnershipToken != pool.OwnershipToken ||
 		host.VHDXPath == "" || pool.VHDXPath == "" ||
 		filepath.Clean(host.VHDXPath) != filepath.Clean(pool.VHDXPath) ||
@@ -34,7 +36,7 @@ func BuildVerifiedPoolPolicy(host, pool PoolMetadata, volume VolumeInfo) (PoolPo
 	}
 	if !strings.EqualFold(volume.Filesystem, "ReFS") || !volume.SupportsBlockCloning ||
 		pool.ClusterSize <= 0 || pool.ClusterSize&(pool.ClusterSize-1) != 0 ||
-		pool.MaximumBytes < 8<<30 || pool.MaximumBytes%512 != 0 || pool.SoftBudgetBytes <= 0 || pool.WorkerReserveBytes <= 0 ||
+		pool.MaximumBytes < MinimumDevDriveVHDXBytes || pool.MaximumBytes%512 != 0 || pool.SoftBudgetBytes <= 0 || pool.WorkerReserveBytes <= 0 ||
 		pool.MinimumHostFreeBytes <= 0 || pool.VHDXOverheadReserveBytes < 0 {
 		return PoolPolicy{}, newError(CodePoolCorrupt, "verify-pool-policy", pool.VHDXPath, fmt.Errorf("invalid verified pool capability or policy"))
 	}

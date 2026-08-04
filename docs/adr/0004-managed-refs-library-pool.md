@@ -25,8 +25,10 @@ post-v0.13 changes, and developed as a future v0.14.0 candidate.
 ## Decision
 
 Implement a standalone `cmd/testplay-refs-probe` and
-`internal/refsworkspace` package with one dynamically expanding VHDX containing
-one ReFS volume. Store each canonical baseline at
+`internal/refsworkspace` package with one persistent dynamically expanding VHDX
+containing one Windows Dev Drive (ReFS) volume. Provision it only through
+`Format-Volume -DevDrive`, verify it with `fsutil devdrv query`, and retain the
+raw query evidence. Store each canonical baseline at
 `baselines/<compatibility-key>/Library`. Store every worker at
 `workers/<lease>/Library` on the same volume.
 
@@ -40,6 +42,10 @@ Use the VHDX for:
 - host filesystem isolation;
 - attach/detach lifecycle; and
 - a maximum guest-volume virtual-size ceiling.
+
+Normal commands attach the exact VHDX temporarily and detach it on completion;
+detach does not delete the installation. `status` and `probe` must not format.
+Only the ownership-checked `remove` lifecycle deletes the VHDX and metadata.
 
 Use ReFS for:
 
@@ -148,7 +154,7 @@ Benefits:
 
 Costs and risks:
 
-- ReFS format support depends on Windows edition and policy;
+- Dev Drive creation depends on Windows build, edition, and policy;
 - directory mounts require a suitable NTFS host path;
 - native Block Clone has strict alignment, integrity, sparse, and same-volume
   requirements;

@@ -24,7 +24,7 @@ func NewPaths(config Config) (Config, Paths, error) {
 		config.WorkerReserveBytes = DefaultReserveBytes
 	}
 	if config.SoftBudgetBytes == 0 {
-		config.SoftBudgetBytes = config.MaximumBytes - config.WorkerReserveBytes
+		config.SoftBudgetBytes = DefaultSoftBudget
 	}
 	if config.MinimumHostFreeBytes == 0 {
 		config.MinimumHostFreeBytes = DefaultMinimumHostFreeBytes
@@ -33,8 +33,8 @@ func NewPaths(config Config) (Config, Paths, error) {
 		config.VHDXOverheadReserveBytes = DefaultVHDXOverheadReserveBytes
 	}
 	budgetAndReserve, budgetOK := checkedAddInt64(config.SoftBudgetBytes, config.WorkerReserveBytes)
-	if config.MaximumBytes < 8<<30 || config.MaximumBytes%512 != 0 || config.SoftBudgetBytes <= 0 || config.WorkerReserveBytes <= 0 || !budgetOK || budgetAndReserve > config.MaximumBytes {
-		return Config{}, Paths{}, newError(CodeInvalidConfiguration, "validate-storage-ceiling", root, fmt.Errorf("require maximum >= 8 GiB and soft budget + reserve <= maximum"))
+	if config.MaximumBytes < MinimumDevDriveVHDXBytes || config.MaximumBytes%512 != 0 || config.SoftBudgetBytes <= 0 || config.WorkerReserveBytes <= 0 || !budgetOK || budgetAndReserve > config.MaximumBytes {
+		return Config{}, Paths{}, newError(CodeInvalidConfiguration, "validate-storage-ceiling", root, fmt.Errorf("require Dev Drive maximum >= 50 GiB and soft budget + reserve <= maximum"))
 	}
 	if config.MinimumHostFreeBytes < 0 || config.VHDXOverheadReserveBytes < 0 {
 		return Config{}, Paths{}, newError(CodeInvalidConfiguration, "validate-host-free-floor", root, fmt.Errorf("host free floor and VHDX overhead reserve must not be negative"))

@@ -6,11 +6,14 @@ const (
 	PoolSchemaVersion               = 2
 	BaselineSchemaVersion           = 2
 	LeaseSchemaVersion              = 2
-	DefaultMaximumBytes             = int64(16 << 30)
+	DefaultMaximumBytes             = int64(64 << 30)
 	DefaultSoftBudget               = int64(14 << 30)
 	DefaultReserveBytes             = int64(2 << 30)
 	DefaultMinimumHostFreeBytes     = int64(30 << 30)
 	DefaultVHDXOverheadReserveBytes = int64(2 << 30)
+	MinimumDevDriveVHDXBytes        = int64(50 << 30)
+	WindowsProviderDevDriveVHDX     = "dev-drive-vhdx"
+	VolumeKindDevDrive              = "Dev Drive"
 )
 
 type Config struct {
@@ -55,6 +58,8 @@ type FileUsage struct {
 type PoolMetadata struct {
 	SchemaVersion            int       `json:"schemaVersion"`
 	Architecture             string    `json:"architecture"`
+	WindowsProvider          string    `json:"windowsProvider"`
+	VolumeKind               string    `json:"volumeKind"`
 	CreatedAt                time.Time `json:"createdAt"`
 	OwnershipToken           string    `json:"ownershipToken"`
 	VHDXPath                 string    `json:"vhdxPath"`
@@ -67,6 +72,18 @@ type PoolMetadata struct {
 	WorkerReserveBytes       int64     `json:"workerReserveBytes"`
 	MinimumHostFreeBytes     int64     `json:"minimumHostFreeBytes"`
 	VHDXOverheadReserveBytes int64     `json:"vhdxOverheadReserveBytes"`
+}
+
+// DevDriveEvidence records only structural observations made by the Windows
+// provider. QueryOutput is the unmodified fsutil payload returned by Windows.
+type DevDriveEvidence struct {
+	FormatAttempted              bool   `json:"formatAttempted"`
+	FormatSucceeded              bool   `json:"formatSucceeded"`
+	QueryExitCode                int    `json:"queryExitCode"`
+	QueryOutput                  string `json:"queryOutput"`
+	TemporaryDriveLetterAssigned bool   `json:"temporaryDriveLetterAssigned"`
+	TemporaryDriveLetterRemoved  bool   `json:"temporaryDriveLetterRemoved"`
+	PrivateMountVerified         bool   `json:"privateMountVerified"`
 }
 
 // PoolPolicy is the storage policy accepted only after the host metadata,
@@ -110,23 +127,26 @@ type PoolMetrics struct {
 }
 
 type Result struct {
-	SchemaVersion            string        `json:"schemaVersion"`
-	Status                   string        `json:"status"`
-	Operation                string        `json:"operation"`
-	Architecture             string        `json:"architecture"`
-	ReleasedVersionModified  bool          `json:"releasedVersionModified"`
-	PhysicalImageCreated     bool          `json:"physicalImageCreated"`
-	DifferencingChildCreated bool          `json:"differencingChildCreated"`
-	FallbackUsed             bool          `json:"fallbackUsed"`
-	BlockCloneSupported      bool          `json:"blockCloneSupported"`
-	SourceUnchanged          bool          `json:"sourceUnchanged,omitempty"`
-	BaselineUnchanged        bool          `json:"baselineUnchanged,omitempty"`
-	Paths                    Paths         `json:"paths"`
-	Volume                   VolumeInfo    `json:"volume"`
-	Pool                     *PoolMetadata `json:"pool,omitempty"`
-	Metrics                  PoolMetrics   `json:"metrics"`
-	NativeWindowsStatus      string        `json:"nativeWindowsStatus"`
-	Residual                 Residual      `json:"residual"`
+	SchemaVersion            string           `json:"schemaVersion"`
+	Status                   string           `json:"status"`
+	Operation                string           `json:"operation"`
+	Architecture             string           `json:"architecture"`
+	WindowsProvider          string           `json:"windowsProvider"`
+	VolumeKind               string           `json:"volumeKind"`
+	DevDrive                 DevDriveEvidence `json:"devDrive"`
+	ReleasedVersionModified  bool             `json:"releasedVersionModified"`
+	PhysicalImageCreated     bool             `json:"physicalImageCreated"`
+	DifferencingChildCreated bool             `json:"differencingChildCreated"`
+	FallbackUsed             bool             `json:"fallbackUsed"`
+	BlockCloneSupported      bool             `json:"blockCloneSupported"`
+	SourceUnchanged          bool             `json:"sourceUnchanged,omitempty"`
+	BaselineUnchanged        bool             `json:"baselineUnchanged,omitempty"`
+	Paths                    Paths            `json:"paths"`
+	Volume                   VolumeInfo       `json:"volume"`
+	Pool                     *PoolMetadata    `json:"pool,omitempty"`
+	Metrics                  PoolMetrics      `json:"metrics"`
+	NativeWindowsStatus      string           `json:"nativeWindowsStatus"`
+	Residual                 Residual         `json:"residual"`
 }
 
 type ResidualMetric struct {
