@@ -522,3 +522,21 @@ gate verifies every worker B resource and its remaining 2 GiB reservation.
 Worker B then uses the established flush/detach/status/remove durability
 sequence. This probe does not change default budgets, the public backend, or
 the single-worker Phase 2A contract.
+
+The native Phase 2B run at implementation commit
+`1e8beee294163814adbcb80ba4b81b9d6297f709` is
+`UNITY_PHASE2_TWO_WORKERS_COMPATIBLE`. The two distinct 2 GiB reservations
+were simultaneously active under the unchanged 14 GiB soft budget. Both clone
+intervals overlapped; each worker issued the ReFS Block Clone IOCTL, cloned
+9,859,072 bytes, copied 906,996 physical tail bytes, and used no fallback.
+Concurrent EditMode runs passed 2/2 and concurrent PlayMode runs passed 1/1
+for both workers. Reference/A/B semantic digests and exact test sets matched,
+both unique Library markers remained mutually isolated, and the fixture and
+canonical baseline were unchanged. After worker A release, the expected
+intermediate state retained exactly worker B's one journal, active marker,
+worker directory, junction, and 2 GiB reservation. Worker B then released;
+mounted residual was `MOUNTED_MEASURED_ZERO`, volume flush passed, detached
+status reattached with `MEASURED_ZERO`, pool removal passed, and the outer
+disk, drive-letter, Unity/probe/parallel-process, storage-root, VHDX, mount,
+and owner residuals were all zero. Artifact ZIP SHA-256:
+`2B651FF8F6D96F1704668A39374A05EC099F6D5D66AF1EC44EBC2430A04611AE`.
