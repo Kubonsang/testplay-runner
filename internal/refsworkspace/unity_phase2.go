@@ -101,29 +101,32 @@ type UnityPhase2Parity struct {
 }
 
 type UnityPhase2Summary struct {
-	SchemaVersion     int                          `json:"schemaVersion"`
-	Status            string                       `json:"status"`
-	Verdict           string                       `json:"verdict"`
-	StartedAt         time.Time                    `json:"startedAt"`
-	CompletedAt       time.Time                    `json:"completedAt"`
-	DurationMs        int64                        `json:"durationMs"`
-	Config            UnityPhase2Config            `json:"config"`
-	SourceBefore      *UnityPhase2SourceSnapshot   `json:"sourceBefore,omitempty"`
-	SourceAfter       *UnityPhase2SourceSnapshot   `json:"sourceAfter,omitempty"`
-	Setup             *Result                      `json:"setup,omitempty"`
-	Baseline          *UnityPhase2BaselineBuild    `json:"baseline,omitempty"`
-	Worker            *UnityPhase2WorkerEvidence   `json:"worker,omitempty"`
-	Parity            *UnityPhase2Parity           `json:"parity,omitempty"`
-	Storage           []UnityPhase2StorageSnapshot `json:"storage"`
-	StorageDeltas     *UnityPhase2StorageDeltas    `json:"storageDeltas,omitempty"`
-	Release           *WorkerMetrics               `json:"release,omitempty"`
-	ReleaseResidual   *Residual                    `json:"releaseResidual,omitempty"`
-	PoolStatus        *Result                      `json:"poolStatus,omitempty"`
-	PoolRemove        *Result                      `json:"poolRemove,omitempty"`
-	SourceUnchanged   *bool                        `json:"sourceUnchanged,omitempty"`
-	BaselineUnchanged *bool                        `json:"baselineUnchanged,omitempty"`
-	CleanupState      string                       `json:"cleanupState"`
-	Error             string                       `json:"error,omitempty"`
+	SchemaVersion          int                              `json:"schemaVersion"`
+	Status                 string                           `json:"status"`
+	Verdict                string                           `json:"verdict"`
+	StartedAt              time.Time                        `json:"startedAt"`
+	CompletedAt            time.Time                        `json:"completedAt"`
+	DurationMs             int64                            `json:"durationMs"`
+	Config                 UnityPhase2Config                `json:"config"`
+	SourceBefore           *UnityPhase2SourceSnapshot       `json:"sourceBefore,omitempty"`
+	SourceAfter            *UnityPhase2SourceSnapshot       `json:"sourceAfter,omitempty"`
+	Setup                  *Result                          `json:"setup,omitempty"`
+	Baseline               *UnityPhase2BaselineBuild        `json:"baseline,omitempty"`
+	Worker                 *UnityPhase2WorkerEvidence       `json:"worker,omitempty"`
+	Parity                 *UnityPhase2Parity               `json:"parity,omitempty"`
+	Storage                []UnityPhase2StorageSnapshot     `json:"storage"`
+	StorageDeltas          *UnityPhase2StorageDeltas        `json:"storageDeltas,omitempty"`
+	Release                *WorkerMetrics                   `json:"release,omitempty"`
+	ReleaseResidual        *Residual                        `json:"releaseResidual,omitempty"`
+	ReleaseMountedResidual *Residual                        `json:"releaseMountedResidual,omitempty"`
+	ReleaseDurableResidual *Residual                        `json:"releaseDurableResidual,omitempty"`
+	ReleaseDurability      *WorkerReleaseDurabilityEvidence `json:"releaseDurability,omitempty"`
+	PoolStatus             *Result                          `json:"poolStatus,omitempty"`
+	PoolRemove             *Result                          `json:"poolRemove,omitempty"`
+	SourceUnchanged        *bool                            `json:"sourceUnchanged,omitempty"`
+	BaselineUnchanged      *bool                            `json:"baselineUnchanged,omitempty"`
+	CleanupState           string                           `json:"cleanupState"`
+	Error                  string                           `json:"error,omitempty"`
 }
 
 type phase2Entry struct {
@@ -210,22 +213,32 @@ func RunUnityPhase2(ctx context.Context, requested UnityPhase2Config) (summary *
 	var mounted MountedPool
 	var lease *WorkerLease
 	workerReleased := false
+	preservePool := false
 	defer func() {
 		var cleanupErr error
+		detachedCleanly := true
 		if lease != nil && !workerReleased {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
 			_, releaseErr := lease.Release(cleanupCtx)
 			cancel()
 			if releaseErr == nil {
 				workerReleased = true
+				if mounted != nil {
+					flushCtx, flushCancel := context.WithTimeout(context.Background(), cleanupTimeout)
+					flushErr := mounted.Flush(flushCtx)
+					flushCancel()
+					cleanupErr = errors.Join(cleanupErr, flushErr)
+				}
 			}
 			cleanupErr = errors.Join(cleanupErr, releaseErr)
 		}
 		if mounted != nil {
-			cleanupErr = errors.Join(cleanupErr, closeMountedBounded(mounted))
+			closeErr := closeMountedBounded(mounted)
+			cleanupErr = errors.Join(cleanupErr, closeErr)
+			detachedCleanly = closeErr == nil
 			mounted = nil
 		}
-		if poolExists && (lease == nil || workerReleased) {
+		if poolExists && !preservePool && (lease == nil || workerReleased) {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*cleanupTimeout)
 			removed, removeErr := service.Remove(cleanupCtx, requested.Pool)
 			cancel()
@@ -236,8 +249,10 @@ func RunUnityPhase2(ctx context.Context, requested UnityPhase2Config) (summary *
 			}
 			cleanupErr = errors.Join(cleanupErr, removeErr)
 		}
-		if cleanupErr == nil && !poolExists {
+		if !poolExists && cleanupErr == nil {
 			summary.CleanupState = "released"
+		} else if poolExists && detachedCleanly && cleanupWasPreserved(cleanupErr) {
+			summary.CleanupState = "preserved"
 		} else {
 			summary.CleanupState = "uncertain"
 		}
@@ -407,59 +422,92 @@ func RunUnityPhase2(ctx context.Context, requested UnityPhase2Config) (summary *
 	summary.BaselineUnchanged = &baselineUnchanged
 	_ = writePhase2JSON(requested.ArtifactRoot, "baseline-after-worker.json", map[string]any{"baseline": baselineAfter, "tree": baselineTreeAfter, "unchanged": true})
 
-	releaseMetrics, err := lease.Release(ctx)
+	releaseResult, err := runWorkerReleaseDurability(workerReleaseDurabilityOps{
+		release: func() (WorkerMetrics, error) {
+			return lease.Release(ctx)
+		},
+		measure: func() (Residual, error) {
+			residual, residualErr := measureMountedResidual(paths)
+			if residualErr != nil {
+				return residual, newError(CodeCleanupFailed, "measure-worker-release-mounted-residual", paths.PoolRoot, residualErr)
+			}
+			return residual, nil
+		},
+		writeArtifact: func(artifact workerReleaseArtifact) error {
+			if writeErr := writePhase2JSON(requested.ArtifactRoot, "worker-release.json", artifact); writeErr != nil {
+				return newError(CodeCleanupFailed, "write-worker-release-artifact", requested.ArtifactRoot, writeErr)
+			}
+			return nil
+		},
+		flush: func() error {
+			if flushErr := mounted.Flush(ctx); flushErr != nil {
+				return newError(CodeCleanupFailed, "flush-worker-release", volume.VolumeGUIDPath, flushErr)
+			}
+			return nil
+		},
+		beforeDetach: func() error {
+			summary.Storage = append(summary.Storage, measureUnityPhase2Storage(ctx, "after-worker-release", service, paths, baseline.LibraryPath, ""))
+			after, snapshotErr := captureUnityPhase2Source(ctx, requested.FixturePath)
+			if snapshotErr != nil {
+				return snapshotErr
+			}
+			summary.SourceAfter = &after
+			sourceUnchanged := before == after
+			summary.SourceUnchanged = &sourceUnchanged
+			if !sourceUnchanged {
+				return newError(CodeOwnershipMismatch, "verify-fixture-source-isolation", requested.FixturePath, nil)
+			}
+			return nil
+		},
+		detach: func() error {
+			if closeErr := closeMountedBounded(mounted); closeErr != nil {
+				return cleanupFailure("detach-pool-after-worker-release", paths.VHDX, closeErr, true)
+			}
+			mounted = nil
+			return nil
+		},
+		status: func() (*Result, error) {
+			status, statusErr := service.Status(ctx, requested.Pool)
+			_ = writePhase2JSON(requested.ArtifactRoot, "pool-status.json", phase2ResultOrError(status, statusErr))
+			return status, statusErr
+		},
+		remove: func() (*Result, error) {
+			removed, removeErr := service.Remove(ctx, requested.Pool)
+			_ = writePhase2JSON(requested.ArtifactRoot, "pool-remove.json", phase2ResultOrError(removed, removeErr))
+			return removed, removeErr
+		},
+	})
+	workerReleased = releaseResult.Durability.ReleaseSucceeded
+	summary.Release = &releaseResult.Metrics
+	summary.ReleaseResidual = &releaseResult.MountedResidual
+	summary.ReleaseMountedResidual = &releaseResult.MountedResidual
+	summary.ReleaseDurability = &releaseResult.Durability
+	if releaseResult.Durability.DurableResidual != nil {
+		summary.ReleaseDurableResidual = releaseResult.Durability.DurableResidual
+	}
+	summary.PoolStatus = releaseResult.PoolStatus
+	summary.PoolRemove = releaseResult.PoolRemove
+	if releaseResult.Durability.PoolRemoveSucceeded {
+		poolExists = false
+	}
 	if err != nil {
+		preservePool = poolExists
 		return summary, err
 	}
-	workerReleased = true
-	summary.Release = &releaseMetrics
-	residual, err := measureMountedResidual(paths)
-	if err != nil {
-		return summary, err
-	}
-	summary.ReleaseResidual = &residual
-	if residual.Status != "MEASURED_ZERO" {
-		return summary, newError(CodeCleanupFailed, "verify-worker-release-residual", paths.PoolRoot, fmt.Errorf("status=%s", residual.Status))
-	}
-	summary.Storage = append(summary.Storage, measureUnityPhase2Storage(ctx, "after-worker-release", service, paths, baseline.LibraryPath, ""))
-	_ = writePhase2JSON(requested.ArtifactRoot, "worker-release.json", map[string]any{"metrics": releaseMetrics, "residual": residual})
-
-	after, err := captureUnityPhase2Source(ctx, requested.FixturePath)
-	if err != nil {
-		return summary, err
-	}
-	summary.SourceAfter = &after
-	sourceUnchanged := before == after
-	summary.SourceUnchanged = &sourceUnchanged
-	if !sourceUnchanged {
-		return summary, newError(CodeOwnershipMismatch, "verify-fixture-source-isolation", requested.FixturePath, nil)
-	}
-	if err := mounted.Flush(ctx); err != nil {
-		return summary, err
-	}
-	if err := closeMountedBounded(mounted); err != nil {
-		return summary, err
-	}
-	mounted = nil
-	status, err := service.Status(ctx, requested.Pool)
-	summary.PoolStatus = status
-	_ = writePhase2JSON(requested.ArtifactRoot, "pool-status.json", phase2ResultOrError(status, err))
-	if err != nil {
-		return summary, err
-	}
-	removed, err := service.Remove(ctx, requested.Pool)
-	summary.PoolRemove = removed
-	_ = writePhase2JSON(requested.ArtifactRoot, "pool-remove.json", phase2ResultOrError(removed, err))
-	if err != nil {
-		return summary, err
-	}
-	poolExists = false
 	summary.Storage = append(summary.Storage, measureUnityPhase2Storage(ctx, "after-pool-remove", service, paths, "", ""))
 	summary.StorageDeltas = calculateUnityPhase2StorageDeltas(summary.Storage)
 	summary.Status = "PASS"
 	summary.Verdict = "UNITY_PHASE2_SINGLE_WORKER_COMPATIBLE"
 	summary.CleanupState = "released"
 	return summary, nil
+}
+
+func cleanupWasPreserved(err error) bool {
+	if err == nil {
+		return true
+	}
+	var evidence *Error
+	return errors.As(err, &evidence) && evidence.CleanupState == "preserved"
 }
 
 func validateUnityPhase2Config(requested UnityPhase2Config) (UnityPhase2Config, Paths, error) {

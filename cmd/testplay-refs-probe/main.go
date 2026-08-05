@@ -21,6 +21,8 @@ var (
 	workerReserve       int64
 	minimumHostFree     int64
 	vhdxOverheadReserve int64
+	recoveryKeyDigest   string
+	recoveryLeaseID     string
 )
 
 func main() {
@@ -42,7 +44,7 @@ func newRootCommand() *cobra.Command {
 		Short: "Standalone Managed ReFS Library Pool architecture probe",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
-			return errors.New("one command is required: setup, status, probe, remove, or recover-incomplete-setup")
+			return errors.New("one command is required: setup, status, probe, remove, recover-incomplete-setup, or recover-released-worker-residual")
 		},
 	}
 	root.PersistentFlags().StringVar(&rootPath, "root", "", "absolute host storage root (defaults to %LOCALAPPDATA%\\TestPlay\\Storage)")
@@ -53,9 +55,9 @@ func newRootCommand() *cobra.Command {
 	root.PersistentFlags().Int64Var(&workerReserve, "worker-reserve-bytes", 0, "reservation required before each worker")
 	root.PersistentFlags().Int64Var(&minimumHostFree, "minimum-host-free-bytes", 0, "minimum host free-space floor")
 	root.PersistentFlags().Int64Var(&vhdxOverheadReserve, "vhdx-overhead-reserve-bytes", 0, "experimental VHDX metadata/allocation overhead reserve")
-	for _, operation := range []string{"setup", "status", "probe", "remove", "recover-incomplete-setup"} {
+	for _, operation := range []string{"setup", "status", "probe", "remove", "recover-incomplete-setup", "recover-released-worker-residual"} {
 		op := operation
-		root.AddCommand(&cobra.Command{
+		command := &cobra.Command{
 			Use:   op,
 			Short: op + " the standalone Managed ReFS Library Pool",
 			Args:  cobra.NoArgs,
@@ -77,13 +79,22 @@ func newRootCommand() *cobra.Command {
 					result, err = service.Remove(cmd.Context(), config)
 				case "recover-incomplete-setup":
 					result, err = service.RecoverIncompleteSetup(cmd.Context(), config)
+				case "recover-released-worker-residual":
+					result, err = service.RecoverReleasedWorkerResidual(cmd.Context(), config, recoveryKeyDigest, recoveryLeaseID)
 				}
 				if err != nil {
 					return err
 				}
 				return json.NewEncoder(os.Stdout).Encode(result)
 			},
-		})
+		}
+		if op == "recover-released-worker-residual" {
+			command.Flags().StringVar(&recoveryKeyDigest, "key-digest", "", "exact canonical baseline compatibility-key digest")
+			command.Flags().StringVar(&recoveryLeaseID, "lease-id", "", "exact released worker lease id")
+			_ = command.MarkFlagRequired("key-digest")
+			_ = command.MarkFlagRequired("lease-id")
+		}
+		root.AddCommand(command)
 	}
 	return root
 }

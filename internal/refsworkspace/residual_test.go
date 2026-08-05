@@ -109,6 +109,39 @@ func TestResidualStatusZeroNonzeroAndUnmeasured(t *testing.T) {
 	}
 }
 
+func TestMountedResidualStatusUsesOnlyMountedMetrics(t *testing.T) {
+	zero := fullyMeasuredResidual()
+	zero.MountReparsePoints = ResidualMetric{}
+	zero.MountDirectoryEntries = ResidualMetric{}
+	zero.AttachedDisks = ResidualMetric{}
+	zero.ProbeProcesses = ResidualMetric{}
+	zero.OwnedVHDXFiles = ResidualMetric{}
+	if got := mountedResidualStatus(zero); got != "MOUNTED_MEASURED_ZERO" {
+		t.Fatalf("mounted zero=%s", got)
+	}
+	nonzero := zero
+	nonzero.ActiveBaselineUses.Count = 1
+	if got := mountedResidualStatus(nonzero); got != "MOUNTED_MEASURED_NONZERO" {
+		t.Fatalf("mounted nonzero=%s", got)
+	}
+	unmeasured := zero
+	unmeasured.WorkerLeaseJournals.Measured = false
+	if got := mountedResidualStatus(unmeasured); got != "NOT_MEASURED" {
+		t.Fatalf("mounted unmeasured=%s", got)
+	}
+}
+
+func TestMeasureMountedResidualSetsMountedStatus(t *testing.T) {
+	paths := testPoolPaths(t)
+	residual, err := measureMountedResidual(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if residual.Status != "MOUNTED_MEASURED_ZERO" {
+		t.Fatalf("status=%q residual=%+v", residual.Status, residual)
+	}
+}
+
 func fullyMeasuredResidual() Residual {
 	zero := measured(0)
 	return Residual{

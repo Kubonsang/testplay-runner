@@ -70,11 +70,41 @@ func measureMountedResidual(paths Paths) (Residual, error) {
 	// A running binary cannot independently prove that no peer probe process
 	// exists. The outer PowerShell harness owns this measurement.
 	residual.ProbeProcesses = ResidualMetric{Measured: false}
+	residual.Status = mountedResidualStatus(residual)
 	return residual, nil
 }
 
-func completePostDetachResidual(paths Paths, residual *Residual, waitDetachedSucceeded bool) error {
-	reparse, entries, err := inspectUnmountedMountPath(paths.Mount)
+func mountedResidualStatus(residual Residual) string {
+	metrics := []ResidualMetric{
+		residual.ActiveBaselineUses, residual.WorkerLeaseJournals, residual.WorkerDirectories,
+		residual.BaselineCreationLocks, residual.BaselineStagingDirs, residual.WorkerStagingDirs,
+		residual.UnknownLeaseArtifacts, residual.UnknownBaselineEntries, residual.UnknownWorkerArtifacts,
+		residual.QuarantineEntries, residual.ReservationLocks, residual.BaselineCoordinationLocks,
+		residual.BaselineMutationMarkers, residual.CoordinationArtifacts, residual.SyntheticProbeDirectories,
+		residual.Junctions,
+	}
+	for _, metric := range metrics {
+		if metric.Count != 0 {
+			return "MOUNTED_MEASURED_NONZERO"
+		}
+	}
+	for _, metric := range metrics {
+		if !metric.Measured {
+			return "NOT_MEASURED"
+		}
+	}
+	return "MOUNTED_MEASURED_ZERO"
+}
+
+func validateMountedReleaseResidual(residual Residual) error {
+	if status := mountedResidualStatus(residual); status != "MOUNTED_MEASURED_ZERO" {
+		return fmt.Errorf("status=%s", status)
+	}
+	return nil
+}
+
+func completePostDetachResidual(paths Paths, residual *Residual, waitDetachedSucceeded bool, inspect func(string) (int, int, error)) error {
+	reparse, entries, err := inspect(paths.Mount)
 	if err != nil {
 		return err
 	}

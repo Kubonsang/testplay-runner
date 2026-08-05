@@ -199,28 +199,44 @@ type PoolMetrics struct {
 }
 
 type Result struct {
-	SchemaVersion            string                    `json:"schemaVersion"`
-	Status                   string                    `json:"status"`
-	Operation                string                    `json:"operation"`
-	Architecture             string                    `json:"architecture"`
-	WindowsProvider          string                    `json:"windowsProvider"`
-	VolumeKind               string                    `json:"volumeKind"`
-	DevDrive                 DevDriveEvidence          `json:"devDrive"`
-	NativeEvidence           *NativeEvidence           `json:"nativeEvidence,omitempty"`
-	SetupTransaction         *SetupTransactionEvidence `json:"setupTransaction,omitempty"`
-	ReleasedVersionModified  bool                      `json:"releasedVersionModified"`
-	PhysicalImageCreated     bool                      `json:"physicalImageCreated"`
-	DifferencingChildCreated bool                      `json:"differencingChildCreated"`
-	FallbackUsed             bool                      `json:"fallbackUsed"`
-	BlockCloneSupported      bool                      `json:"blockCloneSupported"`
-	SourceUnchanged          bool                      `json:"sourceUnchanged,omitempty"`
-	BaselineUnchanged        bool                      `json:"baselineUnchanged,omitempty"`
-	Paths                    Paths                     `json:"paths"`
-	Volume                   VolumeInfo                `json:"volume"`
-	Pool                     *PoolMetadata             `json:"pool,omitempty"`
-	Metrics                  PoolMetrics               `json:"metrics"`
-	NativeWindowsStatus      string                    `json:"nativeWindowsStatus"`
-	Residual                 Residual                  `json:"residual"`
+	SchemaVersion            string                          `json:"schemaVersion"`
+	Status                   string                          `json:"status"`
+	Operation                string                          `json:"operation"`
+	Architecture             string                          `json:"architecture"`
+	WindowsProvider          string                          `json:"windowsProvider"`
+	VolumeKind               string                          `json:"volumeKind"`
+	DevDrive                 DevDriveEvidence                `json:"devDrive"`
+	NativeEvidence           *NativeEvidence                 `json:"nativeEvidence,omitempty"`
+	SetupTransaction         *SetupTransactionEvidence       `json:"setupTransaction,omitempty"`
+	ReleasedWorkerRecovery   *ReleasedWorkerRecoveryEvidence `json:"releasedWorkerRecovery,omitempty"`
+	ReleasedVersionModified  bool                            `json:"releasedVersionModified"`
+	PhysicalImageCreated     bool                            `json:"physicalImageCreated"`
+	DifferencingChildCreated bool                            `json:"differencingChildCreated"`
+	FallbackUsed             bool                            `json:"fallbackUsed"`
+	BlockCloneSupported      bool                            `json:"blockCloneSupported"`
+	SourceUnchanged          bool                            `json:"sourceUnchanged,omitempty"`
+	BaselineUnchanged        bool                            `json:"baselineUnchanged,omitempty"`
+	Paths                    Paths                           `json:"paths"`
+	Volume                   VolumeInfo                      `json:"volume"`
+	Pool                     *PoolMetadata                   `json:"pool,omitempty"`
+	Metrics                  PoolMetrics                     `json:"metrics"`
+	NativeWindowsStatus      string                          `json:"nativeWindowsStatus"`
+	Residual                 Residual                        `json:"residual"`
+}
+
+type ReleasedWorkerRecoveryEvidence struct {
+	KeyDigest                string    `json:"keyDigest"`
+	LeaseID                  string    `json:"leaseId"`
+	MarkerPath               string    `json:"markerPath"`
+	PreconditionResidual     Residual  `json:"preconditionResidual"`
+	MarkerRemoved            bool      `json:"markerRemoved"`
+	FlushAttempted           bool      `json:"flushAttempted"`
+	FlushSucceeded           bool      `json:"flushSucceeded"`
+	FirstDetachSucceeded     bool      `json:"firstDetachSucceeded"`
+	DurableReattachAttempted bool      `json:"durableReattachAttempted"`
+	DurableResidual          *Residual `json:"durableResidual,omitempty"`
+	DurableAbsenceVerified   bool      `json:"durableAbsenceVerified"`
+	PoolRemoved              bool      `json:"poolRemoved"`
 }
 
 type ResidualMetric struct {

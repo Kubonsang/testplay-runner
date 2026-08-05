@@ -20,6 +20,7 @@ const (
 	CodeIncompleteSetup                   = "incomplete-setup"
 	CodePoolMountNotReady                 = "pool-mount-not-ready"
 	CodePoolPersistenceVerificationFailed = "pool-persistence-verification-failed"
+	CodeWorkerReleasePersistenceFailed    = "worker-release-persistence-failed"
 	CodePoolCorrupt                       = "pool-corrupt"
 	CodePoolAlreadyMounted                = "pool-already-mounted"
 	CodePoolNotMounted                    = "pool-not-mounted"

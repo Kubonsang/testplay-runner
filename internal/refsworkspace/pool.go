@@ -40,17 +40,19 @@ type PoolNative interface {
 }
 
 type Service struct {
-	native          PoolNative
-	cloner          TreeCloner
-	now             func() time.Time
-	removeAll       func(string) error
-	readMetadata    func(string) (PoolMetadata, error)
-	compareIdentity func(Paths, PoolMetadata, PoolMetadata, VolumeInfo) error
-	recordEvent     func(string)
+	native           PoolNative
+	cloner           TreeCloner
+	now              func() time.Time
+	removeAll        func(string) error
+	readMetadata     func(string) (PoolMetadata, error)
+	compareIdentity  func(Paths, PoolMetadata, PoolMetadata, VolumeInfo) error
+	runningProcesses func([]string) ([]string, error)
+	inspectUnmounted func(string) (int, int, error)
+	recordEvent      func(string)
 }
 
 func NewService(native PoolNative, cloner TreeCloner) *Service {
-	return &Service{native: native, cloner: cloner, now: time.Now, removeAll: os.RemoveAll, readMetadata: readPoolMetadata, compareIdentity: comparePoolIdentity}
+	return &Service{native: native, cloner: cloner, now: time.Now, removeAll: os.RemoveAll, readMetadata: readPoolMetadata, compareIdentity: comparePoolIdentity, runningProcesses: namedRunningProcesses, inspectUnmounted: inspectUnmountedMountPath}
 }
 
 func NewNativeService() *Service {
@@ -372,7 +374,7 @@ func (service *Service) Setup(ctx context.Context, config Config) (returnResult 
 	result.Metrics.HostFreeBytes = hostFree
 	result.Metrics.CleanupMs = time.Since(closeStarted).Milliseconds()
 	result.NativeWindowsStatus = "MEASURED"
-	if err := completePostDetachResidual(paths, &residual, true); err != nil {
+	if err := completePostDetachResidual(paths, &residual, true, service.inspectUnmounted); err != nil {
 		return nil, newError(CodeCleanupFailed, "measure-post-detach-residual", paths.Mount, err)
 	}
 	result.Residual = residual
@@ -505,7 +507,7 @@ func (service *Service) inspect(ctx context.Context, config Config, runProbe boo
 	result.Metrics.CleanupMs = time.Since(closeStarted).Milliseconds()
 	result.NativeWindowsStatus = "MEASURED"
 	result.NativeEvidence = nativeEvidence
-	if err := completePostDetachResidual(paths, &residual, true); err != nil {
+	if err := completePostDetachResidual(paths, &residual, true, service.inspectUnmounted); err != nil {
 		return nil, newError(CodeCleanupFailed, "measure-post-detach-residual", paths.Mount, err)
 	}
 	result.Residual = residual
@@ -659,7 +661,7 @@ func (service *Service) Remove(ctx context.Context, config Config) (returnResult
 	result.NativeWindowsStatus = "MEASURED"
 	nativeEvidence.recordCleanup("released")
 	result.NativeEvidence = nativeEvidence
-	if err := completePostDetachResidual(paths, &residual, true); err != nil {
+	if err := completePostDetachResidual(paths, &residual, true, service.inspectUnmounted); err != nil {
 		return nil, newError(CodeCleanupFailed, "measure-post-remove-residual", paths.Root, err)
 	}
 	result.Residual = residual

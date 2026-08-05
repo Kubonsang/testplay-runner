@@ -5,6 +5,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $OutputEncoding = [Console]::OutputEncoding
+. (Join-Path $PSScriptRoot 'managed-refs-unity-phase2-snapshot.ps1')
 
 function Test-Administrator {
   ([Security.Principal.WindowsPrincipal]::new(
@@ -56,22 +57,6 @@ function Get-PathState([string]$Path) {
     directory = [bool]$item.PSIsContainer
     reparsePoint = [bool](($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)
   }
-}
-
-function Compare-IDs($Before, $After, [string]$Property) {
-  $beforeValues = @(
-    $Before |
-      Where-Object { $null -ne $_ -and $_.PSObject.Properties.Name -contains $Property } |
-      ForEach-Object { [string]$_.$Property }
-  )
-  @(
-    $After |
-      Where-Object {
-        $null -ne $_ -and
-        $_.PSObject.Properties.Name -contains $Property -and
-        $beforeValues -notcontains [string]$_.$Property
-      }
-  )
 }
 
 if (-not (Test-Administrator)) { throw 'Administrator PowerShell is required; this script does not request or bypass UAC.' }
@@ -152,11 +137,11 @@ $postLetters = @(Get-DriveLetterSnapshot)
 $postUnity = @(Get-ProcessSnapshot 'Unity')
 $postProbe = @(Get-ProcessSnapshot 'testplay-refs-probe')
 $postPhase2 = @(Get-ProcessSnapshot 'testplay-refs-unity-phase2')
-$newDisks = Compare-IDs $preDisks $postDisks 'Number'
+$newDisks = @(Compare-IDs $preDisks $postDisks 'Number')
 $newLetters = @($postLetters | Where-Object { $preLetters -notcontains $_ })
-$newUnity = Compare-IDs $preUnity $postUnity 'Id'
-$newProbe = Compare-IDs $preProbe $postProbe 'Id'
-$newPhase2 = Compare-IDs $prePhase2 $postPhase2 'Id'
+$newUnity = @(Compare-IDs $preUnity $postUnity 'Id')
+$newProbe = @(Compare-IDs $preProbe $postProbe 'Id')
+$newPhase2 = @(Compare-IDs $prePhase2 $postPhase2 'Id')
 $postState = [ordered]@{
   measuredAt = [DateTime]::UtcNow
   storageRoot = Get-PathState $storageRoot
@@ -165,15 +150,15 @@ $postState = [ordered]@{
   pendingOwner = Get-PathState (Join-Path $storageRoot 'pool-owner.pending.json')
   mount = Get-PathState $mountRoot
   fileBackedDisks = $postDisks
-  newFileBackedDisks = $newDisks
+  newFileBackedDisks = @($newDisks)
   driveLetters = $postLetters
   newDriveLetters = $newLetters
   unityProcesses = $postUnity
-  newUnityProcesses = $newUnity
+  newUnityProcesses = @($newUnity)
   probeProcesses = $postProbe
-  newProbeProcesses = $newProbe
+  newProbeProcesses = @($newProbe)
   phase2Processes = $postPhase2
-  newPhase2Processes = $newPhase2
+  newPhase2Processes = @($newPhase2)
 }
 $postState | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $artifactRoot 'post-state.json') -Encoding utf8
 

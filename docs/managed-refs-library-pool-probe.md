@@ -313,6 +313,24 @@ same-process call on the same object resumes safely; post-crash journal resume
 is not implemented. Path absence is accepted only with prior ownership
 evidence.
 
+Unity Phase 2 distinguishes `MOUNTED_MEASURED_ZERO` from the final
+`MEASURED_ZERO`. After worker release it writes the mounted residual artifact,
+flushes the exact ReFS volume, validates only metrics observable while mounted,
+detaches, and calls persistent `status` to prove that marker, journal, worker,
+staging, quarantine, coordination, and junction absence survived reattach.
+Normal pool removal is allowed only after that durable proof. A clean detach
+that intentionally retains the authoritative pool reports `cleanupState:
+preserved`; detach or identity uncertainty reports `uncertain`.
+
+`recover-released-worker-residual --key-digest ... --lease-id ...` is a narrow,
+explicit recovery for one observed stale active-use marker after an otherwise
+complete worker release. It requires an authoritative owner, exact VHDX and
+volume identity, a valid protected baseline, exactly one matching regular
+marker, and no journal, worker, staging, quarantine, unknown artifact, junction,
+or related Unity/probe/Phase 2 process. It deletes only that marker, flushes,
+detaches and reattaches to prove durable absence, then delegates to normal
+ownership-safe remove. It is not forced-termination or reboot recovery.
+
 Sparse files are cloned from their allocated ranges. The destination is marked
 sparse before sizing; only aligned allocated extents are block-cloned; holes
 remain holes; and unaligned allocated fragments are physically copied and
@@ -416,3 +434,27 @@ executed. Cleanup was `released`; the VHDX, owner records, mount, storage root,
 related attached disk, temporary drive letter, and owned processes had zero
 residuals. Artifact ZIP SHA-256:
 `242F3365EFA1BF1B359D5D913640ECC1045649EFD9D4D0BE57DAA36D69DD304A`.
+
+The follow-up at commit `a0fdcbe301f483bba503077361072eaaab3a08f2`
+proved the staging fix: worker ReFS Block Clone cloned 9,875,456 bytes without
+fallback, worker EditMode 2/2 and PlayMode 1/1 passed, semantic parity matched,
+the fixture and canonical baseline were unchanged, and worker release removed
+the junction, worker, lease journal, and active use in the current mount. The
+run then failed because the mounted residual status was empty and was
+incorrectly required to equal final `MEASURED_ZERO`. That early gate skipped
+the volume flush, and one active-use marker reappeared after detach/reattach.
+The pool was detached and retained; attached disks, drive letters, and owned
+processes were zero. Artifact ZIP SHA-256:
+`1A38BA0485DE5B436D3FF7451399EE4DF6AEE2F3598BD0B10F737929B4EAF01F`.
+
+The retained-pool diagnosis after the release-durability implementation did
+not match the deliberately narrow single-marker recovery contract. Persistent
+`status` reattached the same Dev Drive and verified ReFS, 4096-byte clusters,
+Block Clone capability, pool metadata readiness, and clean detach, but mounted
+residual enumeration found that
+`worker-unity-phase2-6219554f92640198.json` had also reappeared and began with a
+NUL byte rather than valid JSON. Recovery therefore refused before deleting the
+active-use marker or any owned data. The authoritative owner and VHDX remain
+detached and preserved; pending owner, attached disk, extra drive letter, Unity,
+probe, and Phase 2 process counts are zero. Diagnosis artifact ZIP SHA-256:
+`953D1FBE965F71E1D7920EDCA3A23E82965BCB4CA23DAB50E55629E5310CA542`.
