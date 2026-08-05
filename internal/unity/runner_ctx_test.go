@@ -48,6 +48,25 @@ func TestProcessRunner_Run_SurfacesDeadlineExceeded(t *testing.T) {
 	}
 }
 
+func TestProcessRunnerReportsStartedProcess(t *testing.T) {
+	runner := sleepRunner()
+	started := make(chan struct{}, 1)
+	runner.OnStart = func(pid int, at time.Time) {
+		if pid <= 0 || at.IsZero() {
+			t.Errorf("invalid process observation pid=%d at=%v", pid, at)
+		}
+		started <- struct{}{}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	_, _ = runner.Run(ctx, nil, io.Discard, io.Discard)
+	select {
+	case <-started:
+	default:
+		t.Fatal("process start was not observed")
+	}
+}
+
 func TestProcessRunner_Run_SurfacesCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

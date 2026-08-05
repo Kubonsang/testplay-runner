@@ -19,6 +19,7 @@ type UnityExecutor struct {
 	EditorPath string
 	Version    string
 	Marker     string
+	OnStart    func(pid int, startedAt time.Time)
 }
 
 type synchronizedBuffer struct {
@@ -82,7 +83,7 @@ func (e UnityExecutor) RunCompile(ctx context.Context, projectPath, logPath stri
 	}
 	args := append(unity.BuildCompileArgs(projectPath), "-logFile", logPath)
 	started := time.Now()
-	runner := &unity.ProcessRunner{UnityPath: e.EditorPath, Env: map[string]string{MarkerEnv: e.Marker}}
+	runner := &unity.ProcessRunner{UnityPath: e.EditorPath, Env: map[string]string{MarkerEnv: e.Marker}, OnStart: e.OnStart}
 	var output synchronizedBuffer
 	exitCode, runErr := runner.Run(ctx, args, &output, &output)
 	wall := time.Since(started).Milliseconds()
@@ -104,7 +105,7 @@ func (e UnityExecutor) RunTests(ctx context.Context, projectPath, platform, resu
 	}
 	args := unity.BuildRunArgs(projectPath, &unity.RunOptions{ResultsFilePath: resultsPath, TestPlatform: platform})
 	args = append(args, "-logFile", logPath)
-	runner := &unity.ProcessRunner{UnityPath: e.EditorPath, Env: map[string]string{MarkerEnv: e.Marker}}
+	runner := &unity.ProcessRunner{UnityPath: e.EditorPath, Env: map[string]string{MarkerEnv: e.Marker}, OnStart: e.OnStart}
 	started := time.Now()
 	var output synchronizedBuffer
 	exitCode, runErr := runner.Run(ctx, args, &output, &output)

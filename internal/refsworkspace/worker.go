@@ -95,6 +95,7 @@ type WorkerManager struct {
 	storage         WorkerStorageMeter
 	policy          PoolPolicy
 	releaseHook     func(string) error
+	acquireHook     func(string, string)
 	removeLease     func(string) error
 	updateLeaseHook func(*WorkerMetadata) error
 	mkdir           func(string, os.FileMode) error
@@ -153,6 +154,8 @@ type WorkerLease struct {
 func (lease *WorkerLease) Metadata() WorkerMetadata { return lease.metadata }
 
 func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest) (resultLease *WorkerLease, metrics WorkerMetrics, returnErr error) {
+	manager.observeAcquire(request.LeaseID, "acquire-start")
+	defer manager.observeAcquire(request.LeaseID, "acquire-end")
 	if manager == nil || manager.baselines == nil || manager.cloner == nil || manager.junctions == nil || manager.storage == nil || manager.mkdir == nil || manager.writeFile == nil || manager.makeWritable == nil || manager.rename == nil || manager.resolveBaseline == nil {
 		return nil, metrics, newError(CodeInvalidConfiguration, "worker-acquire", request.LeaseID, fmt.Errorf("worker dependencies are incomplete"))
 	}
@@ -186,6 +189,7 @@ func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest
 	if err != nil {
 		return nil, metrics, err
 	}
+	manager.observeAcquire(request.LeaseID, "reservation-committed")
 	cleanupLease := true
 	defer func() {
 		if cleanupLease {
@@ -206,12 +210,14 @@ func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest
 	if resolution.State != BaselineValid || resolution.Baseline == nil {
 		return nil, metrics, newError(CodeBaselineCorrupt, "resolve-worker-baseline", request.Key.Digest, fmt.Errorf("%s", resolution.Reason))
 	}
+	manager.observeAcquire(request.LeaseID, "baseline-verified")
 	metrics.BaselineVerifyFileCount = resolution.Baseline.Metadata.Library.FileCount
 	metrics.BaselineVerifyLogicalBytes = resolution.Baseline.Metadata.Library.LogicalBytes
 	releaseActive, err := manager.baselines.AcquireUse(ctx, request.Key, request.LeaseID)
 	if err != nil {
 		return nil, metrics, err
 	}
+	manager.observeAcquire(request.LeaseID, "active-use-acquired")
 	releaseOnFailure := true
 	defer func() {
 		if releaseOnFailure {
@@ -250,6 +256,7 @@ func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest
 	if err := manager.updateLease(leaseFile, &metadata); err != nil {
 		return nil, metrics, err
 	}
+	manager.observeAcquire(request.LeaseID, "cloning-journal-committed")
 	if err := manager.mkdir(staging, 0700); err != nil {
 		code := CodeCloneFailed
 		if os.IsExist(err) {
@@ -258,14 +265,17 @@ func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest
 		return nil, metrics, newError(code, "create-worker-staging", staging, err)
 	}
 	stagingCreated = true
+	manager.observeAcquire(request.LeaseID, "staging-created")
 	if err := verifyCreatedWorkerStaging(manager.paths, staging); err != nil {
 		return nil, metrics, err
 	}
+	manager.observeAcquire(request.LeaseID, "clone-start")
 	cloneMetrics, err := manager.cloner.CloneTree(ctx, CloneRequest{
 		TrustedRoot: manager.paths.PoolRoot,
 		Source:      resolution.Baseline.LibraryPath, Destination: filepath.Join(staging, "Library"),
 		ClusterSize: manager.policy.ClusterSize,
 	})
+	manager.observeAcquire(request.LeaseID, "clone-end")
 	metadata.Clone = cloneMetrics
 	cloneWorkerMetrics := workerMetricsFromClone(cloneMetrics)
 	cloneWorkerMetrics.BaselinePreCloneVerifyMs = metrics.BaselinePreCloneVerifyMs
@@ -290,6 +300,7 @@ func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest
 	if err := manager.rename(staging, workerPath); err != nil {
 		return nil, metrics, newError(CodeCloneFailed, "commit-worker", workerPath, err)
 	}
+	manager.observeAcquire(request.LeaseID, "worker-committed")
 	stagingCommitted = true
 	workerCommitted := true
 	defer func() {
@@ -328,6 +339,7 @@ func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest
 	if err := manager.junctions.Create(filepath.Join(workerPath, "Library"), metadata.JunctionPath); err != nil {
 		return nil, metrics, newError(CodeJunctionFailed, "create-library-junction", metadata.JunctionPath, err)
 	}
+	manager.observeAcquire(request.LeaseID, "junction-created")
 	metadata.State = LeaseReady
 	if err := manager.updateLease(leaseFile, &metadata); err != nil {
 		if cleanupErr := manager.junctions.Remove(filepath.Join(workerPath, "Library"), metadata.JunctionPath); cleanupErr != nil {
@@ -335,6 +347,7 @@ func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest
 		}
 		return nil, metrics, err
 	}
+	manager.observeAcquire(request.LeaseID, "ready-journal-committed")
 	releaseOnFailure = false
 	cleanupLease = false
 	return &WorkerLease{
@@ -344,6 +357,12 @@ func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest
 		releaseActive: releaseActive,
 		metrics:       metrics,
 	}, metrics, nil
+}
+
+func (manager *WorkerManager) observeAcquire(leaseID, stage string) {
+	if manager != nil && manager.acquireHook != nil {
+		manager.acquireHook(leaseID, stage)
+	}
 }
 
 func requireExistingWorkerLayoutDirectory(path string) error {

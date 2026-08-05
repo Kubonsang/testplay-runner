@@ -39,6 +39,7 @@ type Runner interface {
 type ProcessRunner struct {
 	UnityPath string
 	Env       map[string]string // extra env vars merged with os.Environ(); nil = inherit
+	OnStart   func(pid int, startedAt time.Time)
 }
 
 // Run executes the Unity binary with the provided args, streaming output to
@@ -51,7 +52,16 @@ func (r *ProcessRunner) Run(ctx context.Context, args []string, stdout, stderr i
 		cmd.Env = MergeEnv(os.Environ(), r.Env)
 	}
 	setSysProcAttr(cmd)
-	if err := cmd.Run(); err != nil {
+	if err := cmd.Start(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return -1, ctxErr
+		}
+		return -1, err
+	}
+	if r.OnStart != nil {
+		r.OnStart(cmd.Process.Pid, time.Now().UTC())
+	}
+	if err := cmd.Wait(); err != nil {
 		// cmd.Wait prefers the killed process's own error ("signal: killed")
 		// over the context error, which would swallow the cancellation and
 		// leave timeouts/signals unclassifiable (exit 4/8 unreachable).

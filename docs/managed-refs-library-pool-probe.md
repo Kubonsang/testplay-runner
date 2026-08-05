@@ -484,3 +484,41 @@ active-use marker or any owned data. The authoritative owner and VHDX remain
 detached and preserved; pending owner, attached disk, extra drive letter, Unity,
 probe, and Phase 2 process counts are zero. Diagnosis artifact ZIP SHA-256:
 `953D1FBE965F71E1D7920EDCA3A23E82965BCB4CA23DAB50E55629E5310CA542`.
+
+Read-only byte forensics at commit
+`a4ab70a5a578e6ba3ca6c4f73c6baeaca2b49e64` classified the retained namespace
+as `RELEASE_NAMESPACE_RESURRECTED_WITH_CORRUPT_JOURNAL`. The exact 1,589-byte
+journal began with 64 NUL bytes and had SHA-256
+`DF327D32674AC715A44EF16B5E6A7B551A3249BBAB3FB5EE3D269EEF6ED6E763`;
+the exact valid active-use marker had SHA-256
+`6845D7ABB365D794027F01A982762B4C989AB3778305BC49AA840000BA26C948`.
+After external durable backups reproduced both hashes, the explicit corrupt
+release recovery deleted only those exact entries, flushed the volume,
+detached/reattached to prove their durable absence, and completed the normal
+ownership-safe pool remove. Final host residuals were zero. Recovery artifact
+ZIP SHA-256:
+`5193532ADD5DBF7049D6F36EBE2F8D5AF8F2D2DAFA5C34635D1158AA939A3859`.
+
+The following fresh Phase 2A run is
+`UNITY_PHASE2_SINGLE_WORKER_COMPATIBLE`. It repeated canonical baseline and
+reference validation, cloned 9,850,880 worker bytes using the ReFS Block Clone
+IOCTL without fallback, passed worker EditMode 2/2 and PlayMode 1/1 with exact
+semantic parity, and preserved fixture/baseline isolation. Worker release was
+`MOUNTED_MEASURED_ZERO`, the exact volume flush passed, detached status
+reattached with `MEASURED_ZERO`, and pool removal plus the outer disk, letter,
+process, mount, VHDX, and owner checks were all measured zero. Artifact ZIP
+SHA-256:
+`B048DAE2C2C5782CB3D6A062B6EB23F4002A4BB5388670C66CE0CC842388FC28`.
+
+Phase 2B uses the separate experimental `testplay-refs-unity-parallel` harness;
+it is not connected to the public `testplay run` CLI. Exactly two distinct
+leases share one canonical baseline. A start gate launches both acquires, a
+deterministic clone boundary proves overlapping Block Clone intervals, and the
+reservation lock serializes accounting only. EditMode runs concurrently for
+both workers, followed by concurrent PlayMode runs, with independent process,
+result, log, marker, workspace, journal, and clone evidence. Worker A is
+released and flushed first while an explicit `EXPECTED_ONE_WORKER_REMAINING`
+gate verifies every worker B resource and its remaining 2 GiB reservation.
+Worker B then uses the established flush/detach/status/remove durability
+sequence. This probe does not change default budgets, the public backend, or
+the single-worker Phase 2A contract.
