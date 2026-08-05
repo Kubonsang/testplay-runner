@@ -28,11 +28,73 @@ func protectBaselineTree(root string) (ProtectionEvidence, error) {
 	}); err != nil {
 		return ProtectionEvidence{}, err
 	}
-	command := exec.Command("icacls.exe", root, "/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)(F)", "/grant:r", "*S-1-5-32-544:(OI)(CI)(F)", "/grant:r", "*S-1-5-32-545:(OI)(CI)(RX)", "/T", "/C", "/Q")
-	if output, err := command.CombinedOutput(); err != nil {
-		return ProtectionEvidence{}, fmt.Errorf("icacls protect: %w: %s", err, strings.TrimSpace(string(output)))
+	acl, err := protectedBaselineACL()
+	if err != nil {
+		return ProtectionEvidence{}, err
+	}
+	// Every entry receives a direct, protected DACL. Applying only inheritable
+	// (OI)(CI) ACEs recursively leaves regular files with an empty DACL after
+	// inheritance is removed, which also makes the baseline unreadable to the
+	// testplay identity. Direct ACEs preserve read/execute access without
+	// granting write, delete, or delete-child rights.
+	if err := filepath.WalkDir(root, func(path string, _ fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := windows.SetNamedSecurityInfo(
+			path,
+			windows.SE_FILE_OBJECT,
+			windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+			nil,
+			nil,
+			acl,
+			nil,
+		); err != nil {
+			return fmt.Errorf("protect DACL %s: %w", path, err)
+		}
+		return nil
+	}); err != nil {
+		return ProtectionEvidence{}, err
 	}
 	return inspectWindowsProtection(root)
+}
+
+func protectedBaselineACL() (*windows.ACL, error) {
+	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
+	if err != nil {
+		return nil, fmt.Errorf("create SYSTEM SID: %w", err)
+	}
+	administrators, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
+	if err != nil {
+		return nil, fmt.Errorf("create Administrators SID: %w", err)
+	}
+	users, err := windows.CreateWellKnownSid(windows.WinBuiltinUsersSid)
+	if err != nil {
+		return nil, fmt.Errorf("create Users SID: %w", err)
+	}
+	entries := []windows.EXPLICIT_ACCESS{
+		protectedBaselineAccess(system, windows.GENERIC_ALL, windows.TRUSTEE_IS_USER),
+		protectedBaselineAccess(administrators, windows.GENERIC_ALL, windows.TRUSTEE_IS_GROUP),
+		protectedBaselineAccess(users, windows.FILE_GENERIC_READ|windows.FILE_GENERIC_EXECUTE, windows.TRUSTEE_IS_GROUP),
+	}
+	acl, err := windows.ACLFromEntries(entries, nil)
+	if err != nil {
+		return nil, fmt.Errorf("build protected baseline DACL: %w", err)
+	}
+	return acl, nil
+}
+
+func protectedBaselineAccess(sid *windows.SID, permissions windows.ACCESS_MASK, trusteeType windows.TRUSTEE_TYPE) windows.EXPLICIT_ACCESS {
+	return windows.EXPLICIT_ACCESS{
+		AccessPermissions: permissions,
+		AccessMode:        windows.SET_ACCESS,
+		Inheritance:       windows.NO_INHERITANCE,
+		Trustee: windows.TRUSTEE{
+			TrusteeForm:  windows.TRUSTEE_IS_SID,
+			TrusteeType:  trusteeType,
+			TrusteeValue: windows.TrusteeValueFromSID(sid),
+		},
+	}
 }
 
 func verifyBaselineProtection(root string, expected ProtectionEvidence) error {
@@ -112,7 +174,10 @@ func inspectWindowsProtection(root string) (ProtectionEvidence, error) {
 }
 
 func makeWritableTree(root string) error {
-	command := exec.Command("icacls.exe", root, "/inheritance:e", "/reset", "/T", "/C", "/Q")
+	// /reset already replaces each DACL with the inherited parent policy and
+	// clears DACL protection. Combining /reset and /inheritance:e in one icacls
+	// invocation is rejected by Windows with ERROR_INVALID_PARAMETER.
+	command := exec.Command("icacls.exe", root, "/reset", "/T", "/C", "/Q")
 	if output, err := command.CombinedOutput(); err != nil {
 		return fmt.Errorf("icacls reset: %w: %s", err, strings.TrimSpace(string(output)))
 	}

@@ -50,24 +50,6 @@ func (cloner copyClaimingCloner) CloneTree(ctx context.Context, request CloneReq
 	}, nil
 }
 
-type symlinkJunctioner struct{}
-
-func (symlinkJunctioner) Create(target, junction string) error { return os.Symlink(target, junction) }
-func (symlinkJunctioner) Remove(target, junction string) error {
-	resolved, err := filepath.EvalSymlinks(junction)
-	if err != nil {
-		return err
-	}
-	expected, err := filepath.EvalSymlinks(target)
-	if err != nil {
-		return err
-	}
-	if resolved != expected {
-		return fmt.Errorf("target changed")
-	}
-	return os.Remove(junction)
-}
-
 type failingJunctioner struct{ err error }
 
 func (junctions failingJunctioner) Create(string, string) error { return junctions.err }
@@ -100,7 +82,7 @@ func TestWorkerReservationIsAtomicAcrossConcurrentAcquires(t *testing.T) {
 	meter := &fakeWorkerStorageMeter{used: 80, hostFree: 100 << 30}
 	policy := testWorkerPolicy()
 	policy.MaximumBytes, policy.SoftBudgetBytes, policy.WorkerReserveBytes = 130, 110, 20
-	manager := newWorkerManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{}, policy, meter)
+	manager := newWorkerManager(paths, store, copyClaimingCloner{}, testJunctioner{}, policy, meter)
 	start := make(chan struct{})
 	type outcome struct {
 		id    string
@@ -162,15 +144,15 @@ func TestWorkerHostFreeFloor(t *testing.T) {
 	request := WorkerRequest{Key: testCompatibilityKey("3"), LeaseID: "lease-host1", JunctionPath: filepath.Join(t.TempDir(), "Library")}
 	policy := testWorkerPolicy()
 	policy.MaximumBytes, policy.SoftBudgetBytes, policy.WorkerReserveBytes, policy.MinimumHostFreeBytes = 110, 100, 10, 50
-	manager := newWorkerManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{}, policy, &fakeWorkerStorageMeter{hostFree: 59})
+	manager := newWorkerManager(paths, store, copyClaimingCloner{}, testJunctioner{}, policy, &fakeWorkerStorageMeter{hostFree: 59})
 	if _, _, err := manager.Acquire(context.Background(), request); ErrorCode(err) != CodeHostFreeSpaceFloor {
 		t.Fatalf("err=%v", err)
 	}
-	manager = newWorkerManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{}, policy, &fakeWorkerStorageMeter{hostFree: 60, hostErr: errors.New("measurement failed")})
+	manager = newWorkerManager(paths, store, copyClaimingCloner{}, testJunctioner{}, policy, &fakeWorkerStorageMeter{hostFree: 60, hostErr: errors.New("measurement failed")})
 	if _, _, err := manager.Acquire(context.Background(), request); ErrorCode(err) != CodeHostFreeSpaceFloor {
 		t.Fatalf("err=%v", err)
 	}
-	manager = newWorkerManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{}, policy, &fakeWorkerStorageMeter{hostFree: 60})
+	manager = newWorkerManager(paths, store, copyClaimingCloner{}, testJunctioner{}, policy, &fakeWorkerStorageMeter{hostFree: 60})
 	if _, _, err := manager.Acquire(context.Background(), request); ErrorCode(err) != CodeBaselineMissing {
 		t.Fatalf("exact floor was not accepted: %v", err)
 	}
@@ -198,7 +180,7 @@ func TestParallelReservationsRemeasureDecreasingHostFree(t *testing.T) {
 	meter := &decreasingHostMeter{host: []int64{51, 50}}
 	policy := testWorkerPolicy()
 	policy.MaximumBytes, policy.SoftBudgetBytes, policy.WorkerReserveBytes, policy.MinimumHostFreeBytes = 101, 100, 1, 50
-	manager := newWorkerManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{}, policy, meter)
+	manager := newWorkerManager(paths, store, copyClaimingCloner{}, testJunctioner{}, policy, meter)
 	start := make(chan struct{})
 	results := make(chan error, 2)
 	for index := 0; index < 2; index++ {
@@ -237,7 +219,7 @@ func TestParallelReservationsRemeasureDecreasingHostFree(t *testing.T) {
 func TestReservationLockCancellationPreservesLockEvidence(t *testing.T) {
 	paths := testPoolPaths(t)
 	store := NewLibraryBaselineStore(paths)
-	manager := newWorkerTestManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{})
+	manager := newWorkerTestManager(paths, store, copyClaimingCloner{}, testJunctioner{})
 	lockPath := filepath.Join(paths.Leases, ".reservation.lock")
 	if err := os.Mkdir(lockPath, 0700); err != nil {
 		t.Fatal(err)
@@ -271,7 +253,7 @@ func TestWorkerReleaseResumesAfterEveryPersistedMilestone(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			manager := newWorkerTestManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{})
+			manager := newWorkerTestManager(paths, store, copyClaimingCloner{}, testJunctioner{})
 			lease, _, err := manager.Acquire(context.Background(), WorkerRequest{Key: key, LeaseID: fmt.Sprintf("lease-idem%d", index), JunctionPath: filepath.Join(t.TempDir(), "Library")})
 			if err != nil {
 				t.Fatal(err)
@@ -317,7 +299,7 @@ func TestWorkerReleaseRetriesReleasedJournalWriteAndLeaseDelete(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			manager := newWorkerTestManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{})
+			manager := newWorkerTestManager(paths, store, copyClaimingCloner{}, testJunctioner{})
 			lease, _, err := manager.Acquire(context.Background(), WorkerRequest{Key: key, LeaseID: "lease-write1", JunctionPath: filepath.Join(t.TempDir(), "Library")})
 			if err != nil {
 				t.Fatal(err)
@@ -384,7 +366,7 @@ func TestWorkerAcquireIsolationReleaseAndResidual(t *testing.T) {
 	if err := os.MkdirAll(workspace, 0700); err != nil {
 		t.Fatal(err)
 	}
-	manager := newWorkerTestManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{})
+	manager := newWorkerTestManager(paths, store, copyClaimingCloner{}, testJunctioner{})
 	request := func(id string) WorkerRequest {
 		return WorkerRequest{
 			Key:          key,
@@ -449,7 +431,7 @@ func TestWorkerBudgetFailsBeforeClone(t *testing.T) {
 	meter := &fakeWorkerStorageMeter{used: 90, hostFree: 100 << 30}
 	policy := testWorkerPolicy()
 	policy.MaximumBytes, policy.SoftBudgetBytes, policy.WorkerReserveBytes = 120, 100, 20
-	manager := newWorkerManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{}, policy, meter)
+	manager := newWorkerManager(paths, store, copyClaimingCloner{}, testJunctioner{}, policy, meter)
 	_, _, err := manager.Acquire(context.Background(), WorkerRequest{
 		Key:          testCompatibilityKey("e"),
 		LeaseID:      "lease-0003",
@@ -470,7 +452,7 @@ func TestWorkerRejectsSilentPhysicalFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := newWorkerTestManager(paths, store, copyClaimingCloner{fallback: true}, symlinkJunctioner{})
+	manager := newWorkerTestManager(paths, store, copyClaimingCloner{fallback: true}, testJunctioner{})
 	_, _, err = manager.Acquire(context.Background(), WorkerRequest{
 		Key:          key,
 		LeaseID:      "lease-0004",
@@ -520,7 +502,7 @@ func TestWorkerJunctionFailureCleansOwnedWorkerAndReferences(t *testing.T) {
 func TestWorkerDetectsOrphanLease(t *testing.T) {
 	paths := testPoolPaths(t)
 	store := NewLibraryBaselineStore(paths)
-	manager := newWorkerTestManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{})
+	manager := newWorkerTestManager(paths, store, copyClaimingCloner{}, testJunctioner{})
 	manager.processAlive = func(int) bool { return false }
 	orphan := WorkerMetadata{SchemaVersion: LeaseSchemaVersion, LeaseID: "lease-dead", State: LeaseRunning, PID: 999, OwnershipToken: strings.Repeat("0", 64), ReservedBytes: 10}
 	if err := writeJSONAtomic(filepath.Join(paths.Leases, "worker-lease-dead.json"), orphan, 0600); err != nil {

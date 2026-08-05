@@ -68,7 +68,7 @@ func TestNewVerifiedWorkerManagerOwnsPolicyForAcquire(t *testing.T) {
 		}
 	}
 	store := NewLibraryBaselineStore(paths)
-	manager, err := NewVerifiedWorkerManager(paths, store, copyClaimingCloner{}, symlinkJunctioner{}, host, pool, volume)
+	manager, err := NewVerifiedWorkerManager(paths, store, copyClaimingCloner{}, testJunctioner{}, host, pool, volume)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestWorkerHostFloorPolicyOverflowFailsClosed(t *testing.T) {
 	paths := testPoolPaths(t)
 	policy := testWorkerPolicy()
 	policy.MinimumHostFreeBytes = int64(^uint64(0) >> 1)
-	manager := newWorkerManager(paths, NewLibraryBaselineStore(paths), copyClaimingCloner{}, symlinkJunctioner{}, policy, &fakeWorkerStorageMeter{hostFree: policy.MinimumHostFreeBytes})
+	manager := newWorkerManager(paths, NewLibraryBaselineStore(paths), copyClaimingCloner{}, testJunctioner{}, policy, &fakeWorkerStorageMeter{hostFree: policy.MinimumHostFreeBytes})
 	_, _, err := manager.Acquire(context.Background(), WorkerRequest{Key: testCompatibilityKey("b"), LeaseID: "lease-overflow", JunctionPath: filepath.Join(t.TempDir(), "Library")})
 	if ErrorCode(err) != CodeHostFreeSpaceFloor {
 		t.Fatalf("err=%v", err)

@@ -150,6 +150,9 @@ func (s *LibraryBaselineStore) Ensure(ctx context.Context, key CompatibilityKey,
 	committed := false
 	defer func() {
 		if !committed {
+			if cleanupErr := makeWritableTree(staging); cleanupErr != nil && !os.IsNotExist(cleanupErr) {
+				returnErr = errors.Join(returnErr, newError(CodeCleanupFailed, "restore-baseline-staging-access", staging, cleanupErr))
+			}
 			if cleanupErr := os.RemoveAll(staging); cleanupErr != nil {
 				returnErr = errors.Join(returnErr, newError(CodeCleanupFailed, "cleanup-baseline-staging", staging, cleanupErr))
 			}

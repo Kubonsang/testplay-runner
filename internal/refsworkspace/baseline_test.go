@@ -195,7 +195,7 @@ func TestBaselineProtectionDamageIsCorruptionEvenWhenContentMatches(t *testing.T
 		damage func(*testing.T, *Baseline)
 	}{
 		{name: "file writable", damage: func(t *testing.T, baseline *Baseline) {
-			if err := os.Chmod(filepath.Join(baseline.LibraryPath, "artifact.bin"), 0600); err != nil {
+			if err := damageFileWritableForTest(filepath.Join(baseline.LibraryPath, "artifact.bin")); err != nil {
 				t.Fatal(err)
 			}
 		}},
@@ -315,10 +315,7 @@ func TestLibraryBaselineStoreDetectsAndQuarantinesCorruption(t *testing.T) {
 		t.Fatal(err)
 	}
 	artifact := filepath.Join(baseline.LibraryPath, "artifact.bin")
-	if err := os.Chmod(artifact, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(artifact, []byte("corrupt"), 0600); err != nil {
+	if err := damageFileContentForTest(artifact, []byte("corrupt")); err != nil {
 		t.Fatal(err)
 	}
 	resolution, _, err := store.Resolve(context.Background(), key)

@@ -49,8 +49,25 @@ func TestNewPathsRejectsIntermediateSymlink(t *testing.T) {
 	}
 	link := filepath.Join(base, "link")
 	if err := os.Symlink(target, link); err != nil {
+		if reason := symlinkFixtureUnavailableReason(err); reason != "" {
+			t.Skip(reason)
+		}
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = os.Remove(link) })
+	if _, _, err := NewPaths(Config{Root: filepath.Join(link, "Storage")}); ErrorCode(err) != CodeOwnershipMismatch {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestNewPathsRejectsIntermediateReparsePoint(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "real")
+	if err := os.Mkdir(target, 0700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "reparse")
+	createPathReparseFixture(t, target, link)
 	if _, _, err := NewPaths(Config{Root: filepath.Join(link, "Storage")}); ErrorCode(err) != CodeOwnershipMismatch {
 		t.Fatalf("err=%v", err)
 	}
