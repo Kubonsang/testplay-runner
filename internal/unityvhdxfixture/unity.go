@@ -3,6 +3,7 @@ package unityvhdxfixture
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -109,15 +110,15 @@ func (e UnityExecutor) RunTests(ctx context.Context, projectPath, platform, resu
 	exitCode, runErr := runner.Run(ctx, args, &output, &output)
 	wall := time.Since(started).Milliseconds()
 	ensureUnityLog(logPath, output.String())
+	result, resultErr := ParsePlatformResult(platform, exitCode, resultsPath, logPath, wall)
 	if runErr != nil {
-		return PlatformResult{}, fixtureError(CodeUnityRunFailed, "run-tests", projectPath, runErr)
+		return result, errors.Join(fixtureError(CodeUnityRunFailed, "run-tests", projectPath, runErr), resultErr)
 	}
 	if exitCode != 0 {
-		return PlatformResult{}, classifyUnityFailure("run-tests", projectPath, logPath, exitCode)
+		return result, errors.Join(classifyUnityFailure("run-tests", projectPath, logPath, exitCode), resultErr)
 	}
-	result, err := ParsePlatformResult(platform, exitCode, resultsPath, logPath, wall)
-	if err != nil {
-		return PlatformResult{}, err
+	if resultErr != nil {
+		return PlatformResult{}, resultErr
 	}
 	return result, nil
 }

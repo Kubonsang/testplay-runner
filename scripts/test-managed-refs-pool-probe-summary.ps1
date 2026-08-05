@@ -25,6 +25,21 @@ $setup = [pscustomobject]@{
 
 $summary = New-ManagedRefsProbeSummary
 Update-ManagedRefsSummaryAfterSetup $summary $setup
+$probe = [pscustomobject]@{
+  volume = [pscustomobject]@{ filesystem = 'ReFS'; clusterSize = 4096 }
+  blockCloneSupported = $true
+  metrics = [pscustomobject]@{
+    clonedBytes = 131072
+    sparseClonedBytes = 122880
+    sparseHoleBytes = 8192
+    regularBlockCloneIOCTLAttempted = $true
+    sparseBlockCloneIOCTLAttempted = $true
+  }
+  sourceUnchanged = $true
+  baselineUnchanged = $true
+  residual = $zeroResidual
+}
+Update-ManagedRefsSummaryAfterProbe $summary $probe
 Set-ManagedRefsSummaryFailure $summary 'probe' 'injected probe failure'
 $roundTrip = $summary | ConvertTo-Json -Depth 12 | ConvertFrom-Json
 
@@ -39,6 +54,9 @@ if ($roundTrip.regularBlockCloneIOCTLAttempted -ne $true -or $roundTrip.sparseBl
 }
 if ([int64]$roundTrip.setupMetrics.clonedBytes -ne 69632 -or [int64]$roundTrip.setupMetrics.sparseHoleBytes -ne 4096) {
   throw 'setup clone metrics were not retained'
+}
+if ([int64]$roundTrip.probeMetrics.clonedBytes -ne 131072 -or [int64]$roundTrip.probeMetrics.sparseHoleBytes -ne 8192) {
+  throw 'probe clone metrics were not retained separately'
 }
 if ($roundTrip.devDrive.queryOutput -ne '개발자 드라이브' -or $roundTrip.failure -ne 'injected probe failure') {
   throw 'raw evidence or failure was not retained'

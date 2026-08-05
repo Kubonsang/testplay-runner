@@ -23,6 +23,7 @@ function New-ManagedRefsProbeSummary {
     sourceUnchanged = 'NOT MEASURED'
     baselineUnchanged = 'NOT MEASURED'
     setupMetrics = $null
+    probeMetrics = $null
     residualStatus = 'NOT_MEASURED'
     probeProcesses = [ordered]@{ measured = $false; count = $null }
     setupResidual = $null
@@ -75,6 +76,7 @@ function Update-ManagedRefsSummaryAfterProbe($Summary, $Probe) {
   $Summary.sourceUnchanged = $Probe.sourceUnchanged
   $Summary.baselineUnchanged = $Probe.baselineUnchanged
   $Summary.probeResidual = $Probe.residual
+  $Summary.probeMetrics = $Probe.metrics
 }
 
 function Update-ManagedRefsSummaryAfterStatus($Summary, $StatusResult) {

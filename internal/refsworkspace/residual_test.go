@@ -89,7 +89,7 @@ func TestResidualStatusZeroNonzeroAndUnmeasured(t *testing.T) {
 		t.Fatalf("nonzero=%s", got)
 	}
 	unmeasured := zero
-	unmeasured.ProbeProcesses.Measured = false
+	unmeasured.AttachedDisks.Measured = false
 	if got := residualStatus(unmeasured); got != "NOT_MEASURED" {
 		t.Fatalf("unmeasured=%s", got)
 	}
@@ -101,6 +101,11 @@ func TestResidualStatusZeroNonzeroAndUnmeasured(t *testing.T) {
 	ownedUnmeasured.OwnedVHDXFiles.Measured = false
 	if got := residualStatus(ownedUnmeasured); got != "NOT_MEASURED" {
 		t.Fatalf("owned VHDX unmeasured=%s", got)
+	}
+	outerProcessUnmeasured := zero
+	outerProcessUnmeasured.ProbeProcesses.Measured = false
+	if got := residualStatus(outerProcessUnmeasured); got != "MEASURED_ZERO" {
+		t.Fatalf("outer-only process metric changed binary status=%s", got)
 	}
 }
 

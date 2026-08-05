@@ -104,7 +104,7 @@ func residualStatus(residual Residual) string {
 		residual.QuarantineEntries, residual.ReservationLocks, residual.BaselineCoordinationLocks,
 		residual.BaselineMutationMarkers, residual.CoordinationArtifacts, residual.SyntheticProbeDirectories,
 		residual.MountReparsePoints, residual.MountDirectoryEntries, residual.Junctions,
-		residual.AttachedDisks, residual.ProbeProcesses,
+		residual.AttachedDisks,
 	}
 	for _, metric := range metrics {
 		if metric.Count != 0 {
