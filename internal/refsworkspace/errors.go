@@ -17,7 +17,9 @@ const (
 	CodeTemporaryDriveLetterCleanupFailed = "temporary-drive-letter-cleanup-failed"
 	CodeBlockCloneUnavailable             = "refs-block-clone-unavailable"
 	CodePoolNotFound                      = "pool-not-found"
+	CodeIncompleteSetup                   = "incomplete-setup"
 	CodePoolMountNotReady                 = "pool-mount-not-ready"
+	CodePoolPersistenceVerificationFailed = "pool-persistence-verification-failed"
 	CodePoolCorrupt                       = "pool-corrupt"
 	CodePoolAlreadyMounted                = "pool-already-mounted"
 	CodePoolNotMounted                    = "pool-not-mounted"
@@ -39,19 +41,20 @@ const (
 
 // Error is the stable machine-readable error boundary for the probe.
 type Error struct {
-	Code                   string          `json:"code"`
-	Operation              string          `json:"operation,omitempty"`
-	Path                   string          `json:"path,omitempty"`
-	Cause                  error           `json:"-"`
-	CleanupState           string          `json:"cleanupState,omitempty"`
-	OwnerMetadataCommitted bool            `json:"ownerMetadataCommitted"`
-	OwnedVHDXPath          string          `json:"ownedVhdxPath,omitempty"`
-	ManualRecoveryRequired bool            `json:"manualRecoveryRequired"`
-	NativeEvidence         *NativeEvidence `json:"nativeEvidence,omitempty"`
-	MountPath              string          `json:"mountPath,omitempty"`
-	PoolMetadataPath       string          `json:"poolMetadataPath,omitempty"`
-	MountReadyTimeoutMs    int64           `json:"mountReadyTimeoutMs,omitempty"`
-	LastObservedError      string          `json:"lastObservedFilesystemError,omitempty"`
+	Code                   string                    `json:"code"`
+	Operation              string                    `json:"operation,omitempty"`
+	Path                   string                    `json:"path,omitempty"`
+	Cause                  error                     `json:"-"`
+	CleanupState           string                    `json:"cleanupState,omitempty"`
+	OwnerMetadataCommitted bool                      `json:"ownerMetadataCommitted"`
+	OwnedVHDXPath          string                    `json:"ownedVhdxPath,omitempty"`
+	ManualRecoveryRequired bool                      `json:"manualRecoveryRequired"`
+	NativeEvidence         *NativeEvidence           `json:"nativeEvidence,omitempty"`
+	SetupTransaction       *SetupTransactionEvidence `json:"setupTransaction,omitempty"`
+	MountPath              string                    `json:"mountPath,omitempty"`
+	PoolMetadataPath       string                    `json:"poolMetadataPath,omitempty"`
+	MountReadyTimeoutMs    int64                     `json:"mountReadyTimeoutMs,omitempty"`
+	LastObservedError      string                    `json:"lastObservedFilesystemError,omitempty"`
 }
 
 func (e *Error) Error() string {
@@ -97,6 +100,7 @@ func errorWithCleanupEvidence(err error, state, ownedVHDX string, ownerCommitted
 	}
 	wrapped := &Error{Code: code, Operation: operation, Path: path, Cause: err, CleanupState: state, OwnerMetadataCommitted: ownerCommitted, OwnedVHDXPath: ownedVHDX, ManualRecoveryRequired: state != "released" && state != "preserved", NativeEvidence: nativeEvidence}
 	if existing != nil {
+		wrapped.SetupTransaction = existing.SetupTransaction
 		wrapped.MountPath = existing.MountPath
 		wrapped.PoolMetadataPath = existing.PoolMetadataPath
 		wrapped.MountReadyTimeoutMs = existing.MountReadyTimeoutMs
@@ -115,11 +119,29 @@ func errorWithNativeEvidence(err error, evidence *NativeEvidence) error {
 			Code: existing.Code, Operation: existing.Operation, Path: existing.Path, Cause: err,
 			CleanupState: existing.CleanupState, OwnerMetadataCommitted: existing.OwnerMetadataCommitted,
 			OwnedVHDXPath: existing.OwnedVHDXPath, ManualRecoveryRequired: existing.ManualRecoveryRequired,
-			NativeEvidence: evidence, MountPath: existing.MountPath, PoolMetadataPath: existing.PoolMetadataPath,
+			NativeEvidence: evidence, SetupTransaction: existing.SetupTransaction, MountPath: existing.MountPath, PoolMetadataPath: existing.PoolMetadataPath,
 			MountReadyTimeoutMs: existing.MountReadyTimeoutMs, LastObservedError: existing.LastObservedError,
 		}
 	}
 	return &Error{Code: ErrorCode(err), Cause: err, NativeEvidence: evidence}
+}
+
+func errorWithSetupTransactionEvidence(err error, evidence *SetupTransactionEvidence) error {
+	if err == nil || evidence == nil {
+		return err
+	}
+	var existing *Error
+	if errors.As(err, &existing) {
+		return &Error{
+			Code: existing.Code, Operation: existing.Operation, Path: existing.Path, Cause: err,
+			CleanupState: existing.CleanupState, OwnerMetadataCommitted: existing.OwnerMetadataCommitted,
+			OwnedVHDXPath: existing.OwnedVHDXPath, ManualRecoveryRequired: existing.ManualRecoveryRequired,
+			NativeEvidence: existing.NativeEvidence, SetupTransaction: evidence,
+			MountPath: existing.MountPath, PoolMetadataPath: existing.PoolMetadataPath,
+			MountReadyTimeoutMs: existing.MountReadyTimeoutMs, LastObservedError: existing.LastObservedError,
+		}
+	}
+	return &Error{Code: ErrorCode(err), Cause: err, SetupTransaction: evidence}
 }
 
 func ErrorCode(err error) string {

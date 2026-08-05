@@ -17,6 +17,7 @@ type MountedPool interface {
 	Metrics() NativeMountMetrics
 	DevDriveEvidence() DevDriveEvidence
 	WaitReady(context.Context, Paths, PoolMetadata) (time.Duration, error)
+	Flush(context.Context) error
 	Close(context.Context) error
 }
 
@@ -45,6 +46,7 @@ type Service struct {
 	removeAll       func(string) error
 	readMetadata    func(string) (PoolMetadata, error)
 	compareIdentity func(Paths, PoolMetadata, PoolMetadata, VolumeInfo) error
+	recordEvent     func(string)
 }
 
 func NewService(native PoolNative, cloner TreeCloner) *Service {
@@ -55,9 +57,16 @@ func NewNativeService() *Service {
 	return NewService(newPoolNative(), NewNativeTreeCloner())
 }
 
+func (service *Service) setupEvent(event string) {
+	if service != nil && service.recordEvent != nil {
+		service.recordEvent(event)
+	}
+}
+
 func (service *Service) Setup(ctx context.Context, config Config) (returnResult *Result, returnErr error) {
 	started := time.Now()
 	var nativeEvidence *NativeEvidence
+	transaction := &SetupTransactionEvidence{}
 	config, paths, err := NewPaths(config)
 	if err != nil {
 		return nil, err
@@ -66,6 +75,9 @@ func (service *Service) Setup(ctx context.Context, config Config) (returnResult 
 		return nil, err
 	}
 	if err := service.checkNative(ctx); err != nil {
+		return nil, err
+	}
+	if err := rejectPendingOwner(paths); err != nil {
 		return nil, err
 	}
 	hostMeasurementPath, _, err := nearestExistingAncestor(paths.Root)
@@ -93,24 +105,75 @@ func (service *Service) Setup(ctx context.Context, config Config) (returnResult 
 	if err := prepareSetupRoot(paths); err != nil {
 		return nil, err
 	}
+	token, err := randomToken()
+	if err != nil {
+		return nil, newError(CodePoolCorrupt, "pool-token", paths.Root, err)
+	}
+	metadata := PoolMetadata{
+		SchemaVersion:            PoolSchemaVersion,
+		Architecture:             "Managed ReFS Library Pool",
+		WindowsProvider:          WindowsProviderDevDriveVHDX,
+		VolumeKind:               VolumeKindDevDrive,
+		CreatedAt:                service.now().UTC(),
+		OwnershipToken:           token,
+		VHDXPath:                 paths.VHDX,
+		MaximumBytes:             config.MaximumBytes,
+		SoftBudgetBytes:          config.SoftBudgetBytes,
+		WorkerReserveBytes:       config.WorkerReserveBytes,
+		MinimumHostFreeBytes:     config.MinimumHostFreeBytes,
+		VHDXOverheadReserveBytes: config.VHDXOverheadReserveBytes,
+	}
+	if err := createPendingJSONExclusive(paths.PendingOwner, metadata, 0600); err != nil {
+		return nil, newError(CodeIncompleteSetup, "create-pending-owner", paths.PendingOwner, err)
+	}
+	transaction.PendingOwnerCreated = true
+	service.setupEvent("pending-owner-create")
 	createdVHDX := false
 	committedOwner := false
 	cleanupSafe := true
+	cleanupUncertain := false
+	vhdxIdentity := ""
+	var mounted MountedPool
 	defer func() {
-		if !committedOwner && cleanupSafe {
+		if mounted != nil {
+			if closeErr := closeMountedBounded(mounted); closeErr == nil {
+				mounted = nil
+				if !cleanupUncertain {
+					cleanupSafe = true
+				}
+			} else {
+				cleanupSafe = false
+				returnErr = errors.Join(returnErr, cleanupFailure("cleanup-mounted-setup", paths.VHDX, closeErr, false))
+			}
+		}
+		if returnErr != nil && !committedOwner && cleanupSafe {
 			if createdVHDX {
-				if cleanupErr := service.native.RemoveVHDX(paths.VHDX); cleanupErr != nil && !os.IsNotExist(cleanupErr) {
-					returnErr = errors.Join(returnErr, cleanupFailureState("remove-partial-vhdx", paths.VHDX, paths.VHDX, cleanupErr, false, "failed"))
+				actualIdentity, identityErr := service.native.FileIdentity(paths.VHDX)
+				if identityErr != nil || vhdxIdentity == "" || actualIdentity != vhdxIdentity {
+					cleanupSafe = false
+					returnErr = errors.Join(returnErr, cleanupFailure("revalidate-partial-vhdx-before-remove", paths.VHDX, errors.Join(identityErr, fmt.Errorf("identity=%q expected=%q", actualIdentity, vhdxIdentity)), false))
+				} else if cleanupErr := service.native.RemoveVHDX(paths.VHDX); cleanupErr != nil && !os.IsNotExist(cleanupErr) {
+					cleanupSafe = false
+					returnErr = errors.Join(returnErr, cleanupFailure("remove-partial-vhdx", paths.VHDX, cleanupErr, false))
 				}
 			}
-			for _, cleanupPath := range []string{paths.Mount, paths.Root} {
-				if cleanupErr := os.Remove(cleanupPath); cleanupErr != nil && !os.IsNotExist(cleanupErr) {
-					returnErr = errors.Join(returnErr, cleanupFailureState("remove-partial-setup-path", cleanupPath, paths.VHDX, cleanupErr, false, "failed"))
+			if cleanupSafe {
+				if cleanupErr := removeExactPendingOwner(paths.PendingOwner, token, paths.VHDX); cleanupErr != nil {
+					cleanupSafe = false
+					returnErr = errors.Join(returnErr, cleanupFailure("remove-pending-owner", paths.PendingOwner, cleanupErr, false))
+				}
+			}
+			if cleanupSafe {
+				for _, cleanupPath := range []string{paths.Mount, paths.Root} {
+					if cleanupErr := os.Remove(cleanupPath); cleanupErr != nil && !os.IsNotExist(cleanupErr) {
+						cleanupSafe = false
+						returnErr = errors.Join(returnErr, cleanupFailure("remove-partial-setup-path", cleanupPath, cleanupErr, false))
+					}
 				}
 			}
 		}
-		if returnErr != nil && ErrorCode(returnErr) != CodeCleanupFailed {
-			state := "preserved"
+		if returnErr != nil {
+			state := "uncertain"
 			if cleanupSafe {
 				state = "released"
 			}
@@ -125,13 +188,29 @@ func (service *Service) Setup(ctx context.Context, config Config) (returnResult 
 			nativeEvidence.recordCleanup(cleanupState)
 			returnErr = errorWithNativeEvidence(returnErr, nativeEvidence)
 		}
+		if returnErr != nil {
+			returnErr = errorWithSetupTransactionEvidence(returnErr, transaction)
+		}
 	}()
 	if err := service.native.CreateDynamic(paths.VHDX, config.MaximumBytes); err != nil {
 		return nil, mapNativeError("create-dynamic-vhdx", paths.VHDX, err)
 	}
 	createdVHDX = true
+	transaction.VHDXCreated = true
+	service.setupEvent("vhdx-create")
 	cleanupSafe = false
-	mounted, err := service.native.Mount(ctx, paths.VHDX, paths.Mount, true)
+	vhdxIdentity, err = service.native.FileIdentity(paths.VHDX)
+	if err != nil {
+		return nil, newError(CodePoolCorrupt, "identify-created-vhdx", paths.VHDX, err)
+	}
+	metadata.VHDXIdentity = vhdxIdentity
+	cleanupSafe = true
+	if err := writeJSONDurableAtomic(paths.PendingOwner, metadata, 0600); err != nil {
+		return nil, newError(CodePoolCorrupt, "update-pending-owner-vhdx-identity", paths.PendingOwner, err)
+	}
+	cleanupSafe = false
+	transaction.InitialMount.Attempted = true
+	mounted, err = service.native.Mount(ctx, paths.VHDX, paths.Mount, true)
 	if err != nil {
 		mapped := mapNativeError("initialize-refs-volume", paths.VHDX, err)
 		var evidence *Error
@@ -141,17 +220,12 @@ func (service *Service) Setup(ctx context.Context, config Config) (returnResult 
 		return nil, mapped
 	}
 	mountMetrics := mounted.Metrics()
-	closed := false
-	defer func() {
-		if !closed {
-			if closeErr := closeMountedBounded(mounted); closeErr == nil {
-				cleanupSafe = true
-			} else {
-				returnErr = cleanupFailure("cleanup-mounted-setup", paths.VHDX, errors.Join(returnErr, closeErr), committedOwner)
-			}
-		}
-	}()
 	volume := mounted.Volume()
+	transaction.InitialMount.Mounted = true
+	service.setupEvent("initial-mount")
+	transaction.InitialMount.Metrics = mountMetrics
+	transaction.InitialMount.DevDrive = devDrivePointer(mounted.DevDriveEvidence())
+	transaction.InitialMount.Volume = volumePointer(volume)
 	nativeEvidence = newPostMountNativeEvidence(mounted.DevDriveEvidence(), volume)
 	if err := validateVolume(volume); err != nil {
 		return nil, err
@@ -167,39 +241,18 @@ func (service *Service) Setup(ctx context.Context, config Config) (returnResult 
 	if err != nil {
 		return nil, err
 	}
-	identity, err := service.native.FileIdentity(paths.VHDX)
-	if err != nil {
-		return nil, newError(CodePoolCorrupt, "identify-vhdx", paths.VHDX, err)
+	metadata.VolumeGUIDPath = volume.VolumeGUIDPath
+	metadata.Filesystem = volume.Filesystem
+	metadata.ClusterSize = volume.ClusterSize
+	if err := writeJSONDurableAtomic(paths.PendingOwner, metadata, 0600); err != nil {
+		return nil, newError(CodePoolCorrupt, "update-pending-owner-volume-identity", paths.PendingOwner, err)
 	}
-	token, err := randomToken()
-	if err != nil {
-		return nil, newError(CodePoolCorrupt, "pool-token", paths.Root, err)
-	}
-	metadata := PoolMetadata{
-		SchemaVersion:            PoolSchemaVersion,
-		Architecture:             "Managed ReFS Library Pool",
-		WindowsProvider:          WindowsProviderDevDriveVHDX,
-		VolumeKind:               VolumeKindDevDrive,
-		CreatedAt:                service.now().UTC(),
-		OwnershipToken:           token,
-		VHDXPath:                 paths.VHDX,
-		VHDXIdentity:             identity,
-		VolumeGUIDPath:           volume.VolumeGUIDPath,
-		Filesystem:               volume.Filesystem,
-		ClusterSize:              volume.ClusterSize,
-		MaximumBytes:             config.MaximumBytes,
-		SoftBudgetBytes:          config.SoftBudgetBytes,
-		WorkerReserveBytes:       config.WorkerReserveBytes,
-		MinimumHostFreeBytes:     config.MinimumHostFreeBytes,
-		VHDXOverheadReserveBytes: config.VHDXOverheadReserveBytes,
-	}
-	if err := writeJSONAtomic(paths.PoolFile, metadata, 0600); err != nil {
+	if err := writeJSONDurableAtomic(paths.PoolFile, metadata, 0600); err != nil {
 		return nil, newError(CodePoolCorrupt, "write-pool-metadata", paths.PoolFile, err)
 	}
-	if err := writeJSONAtomic(paths.Owner, metadata, 0600); err != nil {
-		return nil, newError(CodePoolCorrupt, "write-owner-metadata", paths.Owner, err)
-	}
-	committedOwner = true
+	transaction.PoolMetadataWritten = true
+	transaction.PoolMetadataFlushed = true
+	service.setupEvent("pool-metadata-write")
 	readBack, err := service.readMetadata(paths.PoolFile)
 	if err != nil {
 		return nil, err
@@ -207,23 +260,103 @@ func (service *Service) Setup(ctx context.Context, config Config) (returnResult 
 	if err := service.compareIdentity(paths, metadata, readBack, volume); err != nil {
 		return nil, err
 	}
+	if readBack != metadata {
+		return nil, newError(CodePoolCorrupt, "read-back-pool-metadata", paths.PoolFile, fmt.Errorf("decoded metadata differs"))
+	}
+	transaction.PoolMetadataReadBack = true
+	service.setupEvent("pool-metadata-flush-read-back")
+	transaction.InitialMount.MetadataVisible = true
+	if err := verifyRequiredPoolLayout(paths); err != nil {
+		return nil, newError(CodePoolCorrupt, "read-back-pool-layout", paths.PoolRoot, err)
+	}
+	transaction.InitialMount.LayoutVerified = true
+	if err := mounted.Flush(ctx); err != nil {
+		return nil, newError(CodePoolCorrupt, "flush-mounted-pool-volume", volume.VolumeGUIDPath, err)
+	}
+	transaction.VolumeFlushed = true
+	closeStarted := time.Now()
+	closeErr := closeMountedBounded(mounted)
+	if closeErr != nil {
+		cleanupUncertain = true
+		return nil, cleanupFailure("detach-pool-before-persistence-verification", paths.VHDX, closeErr, false)
+	}
+	mounted = nil
+	transaction.InitialMount.Detached = true
+	service.setupEvent("first-detach")
+	cleanupSafe = true
+	actualIdentity, err := service.native.FileIdentity(paths.VHDX)
+	if err != nil || actualIdentity != vhdxIdentity {
+		return nil, newError(CodePoolPersistenceVerificationFailed, "verify-persistent-pool-after-reattach", paths.VHDX, errors.Join(err, fmt.Errorf("identity=%q expected=%q", actualIdentity, vhdxIdentity)))
+	}
+	transaction.VHDXIdentityRevalidated = true
+
+	transaction.DurabilityReattach.Attempted = true
+	cleanupSafe = false
+	mounted, err = service.native.Mount(ctx, paths.VHDX, paths.Mount, false)
+	if err != nil {
+		var evidence *Error
+		if errors.As(err, &evidence) && evidence.CleanupState == "released" {
+			cleanupSafe = true
+		}
+		return nil, newError(CodePoolPersistenceVerificationFailed, "verify-persistent-pool-after-reattach", paths.VHDX, err)
+	}
+	reattachVolume := mounted.Volume()
+	transaction.DurabilityReattach.Mounted = true
+	service.setupEvent("second-attach")
+	transaction.DurabilityReattach.Metrics = mounted.Metrics()
+	transaction.DurabilityReattach.DevDrive = devDrivePointer(mounted.DevDriveEvidence())
+	transaction.DurabilityReattach.Volume = volumePointer(reattachVolume)
+	if err := validateVolume(reattachVolume); err != nil || !samePersistentVolume(volume, reattachVolume) {
+		return nil, newError(CodePoolPersistenceVerificationFailed, "verify-persistent-pool-after-reattach", paths.Mount, errors.Join(err, fmt.Errorf("mounted volume identity changed")))
+	}
+	readyDuration, err := mounted.WaitReady(ctx, paths, metadata)
+	transaction.DurabilityReattach.ReadinessMs = readyDuration.Milliseconds()
+	if err != nil {
+		return nil, newError(CodePoolPersistenceVerificationFailed, "verify-persistent-pool-after-reattach", paths.PoolFile, err)
+	}
+	transaction.DurabilityReattach.MetadataVisible = true
+	durableMetadata, err := service.readMetadata(paths.PoolFile)
+	if err != nil || durableMetadata != metadata {
+		return nil, newError(CodePoolPersistenceVerificationFailed, "verify-persistent-pool-after-reattach", paths.PoolFile, errors.Join(err, fmt.Errorf("durable metadata differs")))
+	}
+	if err := service.compareIdentity(paths, metadata, durableMetadata, reattachVolume); err != nil {
+		return nil, newError(CodePoolPersistenceVerificationFailed, "verify-persistent-pool-after-reattach", paths.PoolFile, err)
+	}
+	if err := verifyRequiredPoolLayout(paths); err != nil {
+		return nil, newError(CodePoolPersistenceVerificationFailed, "verify-persistent-pool-after-reattach", paths.PoolRoot, err)
+	}
+	transaction.DurabilityReattach.LayoutVerified = true
+	service.setupEvent("durable-pool-verification")
 	residual, err := measureMountedResidual(paths)
 	if err != nil {
 		return nil, newError(CodeCleanupFailed, "measure-mounted-residual", paths.PoolRoot, err)
 	}
-	closeStarted := time.Now()
-	closeErr := closeMountedBounded(mounted)
-	closed = true
+	closeErr = closeMountedBounded(mounted)
 	if closeErr != nil {
-		return nil, cleanupFailure("detach-pool-after-setup", paths.VHDX, closeErr, true)
+		cleanupUncertain = true
+		return nil, cleanupFailure("detach-pool-after-persistence-verification", paths.VHDX, closeErr, false)
 	}
+	mounted = nil
+	transaction.DurabilityReattach.Detached = true
+	service.setupEvent("second-detach")
+	transaction.DurabilityVerified = true
 	cleanupSafe = true
+	ownerLinked, err := commitPendingOwner(paths)
+	if ownerLinked {
+		committedOwner = true
+		transaction.AuthoritativeOwnerCommitted = true
+	}
+	if err != nil {
+		return nil, newError(CodePoolCorrupt, "commit-authoritative-owner", paths.Owner, err)
+	}
+	service.setupEvent("authoritative-owner-commit")
 	nativeEvidence.recordCleanup("released")
 	usage, _ := service.native.FileUsage(paths.VHDX)
 	hostFree, _ := service.native.HostFreeBytes(paths.Root)
 	result := baseResult("setup", paths, volume)
-	result.DevDrive = mounted.DevDriveEvidence()
+	result.DevDrive = *transaction.InitialMount.DevDrive
 	result.NativeEvidence = nativeEvidence
+	result.SetupTransaction = transaction
 	result.Status = "PASS"
 	result.Pool = &metadata
 	result.BlockCloneSupported = true
@@ -243,6 +376,7 @@ func (service *Service) Setup(ctx context.Context, config Config) (returnResult 
 		return nil, newError(CodeCleanupFailed, "measure-post-detach-residual", paths.Mount, err)
 	}
 	result.Residual = residual
+	service.setupEvent("setup-pass")
 	return result, nil
 }
 
@@ -260,6 +394,9 @@ func (service *Service) inspect(ctx context.Context, config Config, runProbe boo
 		return nil, err
 	}
 	if err := service.checkNative(ctx); err != nil {
+		return nil, err
+	}
+	if err := rejectPendingOwner(paths); err != nil {
 		return nil, err
 	}
 	if err := validateExistingPoolPaths(paths); err != nil {
@@ -348,6 +485,11 @@ func (service *Service) inspect(ctx context.Context, config Config, runProbe boo
 	if err != nil {
 		return nil, newError(CodeCleanupFailed, "measure-mounted-residual", paths.PoolRoot, err)
 	}
+	if runProbe {
+		if err := mounted.Flush(ctx); err != nil {
+			return nil, newError(CodePoolCorrupt, "flush-mounted-pool-after-probe", volume.VolumeGUIDPath, err)
+		}
+	}
 	closeStarted := time.Now()
 	closeErr := closeMountedBounded(mounted)
 	closed = true
@@ -376,6 +518,9 @@ func (service *Service) Remove(ctx context.Context, config Config) (returnResult
 		return nil, err
 	}
 	if err := service.checkNative(ctx); err != nil {
+		return nil, err
+	}
+	if err := rejectPendingOwner(paths); err != nil {
 		return nil, err
 	}
 	if err := validateExistingPoolPaths(paths); err != nil {

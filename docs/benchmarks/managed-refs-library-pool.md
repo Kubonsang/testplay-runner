@@ -1,6 +1,6 @@
 # Managed ReFS Library Pool benchmark record
 
-Status: `NOT MEASURED` on Windows native hardware.
+Status: native standalone Phase 1 `PROMISING`; Unity and workers `NOT MEASURED`.
 
 This file is an evidence template, not a performance claim. The implementation
 was built from `v0.12.0` as an independent architecture probe. It does not
@@ -10,17 +10,17 @@ change or invalidate the released v0.13 Image + native CoW benchmark history.
 
 | Field | Result |
 |---|---|
-| Windows edition/build | NOT MEASURED |
-| Windows provider | `dev-drive-vhdx` (static configuration) |
-| volume kind | `Dev Drive` (native verification NOT MEASURED) |
-| Dev Drive format/query evidence | NOT MEASURED |
+| Windows edition/build | Windows 11 Pro / 26200 |
+| Windows provider | `dev-drive-vhdx` (native verified) |
+| volume kind | `Dev Drive` (native verified) |
+| Dev Drive format/query evidence | PASS / exit 0 |
 | Unity Editor | NOT MEASURED |
 | Project identity | NOT MEASURED |
-| VHDX maximum | NOT MEASURED |
-| soft budget / reserve | NOT MEASURED |
-| minimum host free / VHDX overhead reserve | NOT MEASURED |
-| ReFS cluster size | NOT MEASURED |
-| host filesystem | NOT MEASURED |
+| VHDX maximum | 64 GiB |
+| soft budget / reserve | 14 GiB / 2 GiB |
+| minimum host free / VHDX overhead reserve | 30 GiB / 2 GiB |
+| ReFS cluster size | 4096 bytes |
+| host filesystem | NTFS |
 
 The VHDX maximum is the guest volume's virtual-size ceiling. Before setup,
 testplay's separate host reservation gate requires minimum host free space plus
@@ -34,8 +34,8 @@ Maximums below 50 GiB are rejected.
 The earlier generic ReFS formatter is not a fallback and is no longer used.
 Its retained native result was Windows 11 Pro 25H2 build 26200.8875,
 `refs-format-unavailable`, cleanup released, with the VHDX and mount absent.
-This is evidence about the rejected generic provider only. The Dev Drive VHDX
-provider has not yet been run on native hardware.
+This is evidence about the rejected generic provider only and is preserved
+alongside the later Dev Drive results.
 
 ## Retained Dev Drive path-validation failure
 
@@ -234,11 +234,27 @@ a generation-token, USN, or validated-cache optimization.
    `wait-mounted-pool-metadata` with cleanup `preserved`. Ownership metadata and
    VHDX were retained; attached disks, temporary drive letters, and probe
    processes were zero. Remove and fresh Phase 1 were not run. Artifact
-   SHA-256: `500273C1A9B50C1589B24BA453ECF89037D6BA2ABD59F9D2EE4AA7B21FD71714`.
+    SHA-256: `500273C1A9B50C1589B24BA453ECF89037D6BA2ABD59F9D2EE4AA7B21FD71714`.
+5. Read-only forensics classified the retained pool as
+   `C_LAYOUT_EXISTS_POOL_METADATA_MISSING`. Exact VHDX identity and volume GUID
+   matched; ReFS, 4096-byte clusters, Dev Drive query, and Block Clone
+   capability passed. The required layout and synthetic probe tree existed,
+   while `pool.json` was absent at all candidate paths. Forensic artifact
+   SHA-256: `1A87B7F3A7792D823130B316BE04776970035635526D9C8C94BB34540DEE560E`.
+6. Explicit ownership-gated recovery removed the retained incomplete pool with
+   storage, disk, drive-letter, and process residuals zero. Recovery artifact
+   SHA-256: `BBEA3BA201A1A3B2FC680991DBDC0022F7749E5AD7DE46AE306FCD0FA49D0A5B`.
+7. Fresh transactional Phase 1 passed Dev Drive format/query, ReFS and Block
+   Clone capabilities, regular/sparse Block Clone, CoW isolation, file and
+   volume flushes, internal detach/reattach metadata/layout durability proof,
+   post-proof owner commit, external probe/status reattach, and explicit remove.
+   It used no fallback and left all measured residuals zero. Artifact SHA-256:
+   `AF020C740B80FBB6472A3C5EC416E6DF69EA73DD8BDEDCDCBEB8DBE000E0CF36`.
 
 ## Verdict
 
-`FAILED`
+`PROMISING`
 
-The standalone source and cross-platform tests are implementation evidence;
-they are not native ReFS or Unity benchmark evidence.
+This verdict applies only to the standalone native Phase 1. Unity correctness,
+canonical baseline ACL correctness, the 1/2/4/8 worker ladder, and release
+readiness remain `NOT MEASURED`. `PROMISING` is not `PROVEN` or release-ready.

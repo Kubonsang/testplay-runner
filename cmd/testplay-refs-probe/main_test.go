@@ -62,6 +62,24 @@ func TestErrorPayloadDoesNotInventPreMountEvidence(t *testing.T) {
 	}
 }
 
+func TestErrorPayloadPreservesSetupTransactionEvidence(t *testing.T) {
+	transaction := &refsworkspace.SetupTransactionEvidence{
+		PendingOwnerCreated: true, VHDXCreated: true, PoolMetadataWritten: true,
+		PoolMetadataFlushed: true, PoolMetadataReadBack: true,
+		InitialMount:       refsworkspace.SetupMountCycleEvidence{Attempted: true, Mounted: true, Detached: true},
+		DurabilityReattach: refsworkspace.SetupMountCycleEvidence{Attempted: true, Mounted: true, MetadataVisible: false, Detached: true},
+	}
+	err := &refsworkspace.Error{
+		Code:      refsworkspace.CodePoolPersistenceVerificationFailed,
+		Operation: "verify-persistent-pool-after-reattach", Path: `C:\storage\mount\testplay\pool.json`,
+		CleanupState: "released", SetupTransaction: transaction,
+	}
+	payload := errorPayload(err)
+	if payload["setupTransaction"] != transaction {
+		t.Fatalf("payload=%+v", payload)
+	}
+}
+
 func TestErrorPayloadIncludesMountedPoolReadinessAndPreservationEvidence(t *testing.T) {
 	err := &refsworkspace.Error{
 		Code: refsworkspace.CodePoolMountNotReady, Operation: "wait-mounted-pool-metadata",

@@ -28,16 +28,17 @@ type Config struct {
 }
 
 type Paths struct {
-	Root       string `json:"root"`
-	VHDX       string `json:"vhdx"`
-	Owner      string `json:"owner"`
-	Mount      string `json:"mount"`
-	PoolRoot   string `json:"poolRoot"`
-	PoolFile   string `json:"poolFile"`
-	Baselines  string `json:"baselines"`
-	Workers    string `json:"workers"`
-	Leases     string `json:"leases"`
-	Quarantine string `json:"quarantine"`
+	Root         string `json:"root"`
+	VHDX         string `json:"vhdx"`
+	Owner        string `json:"owner"`
+	PendingOwner string `json:"pendingOwner"`
+	Mount        string `json:"mount"`
+	PoolRoot     string `json:"poolRoot"`
+	PoolFile     string `json:"poolFile"`
+	Baselines    string `json:"baselines"`
+	Workers      string `json:"workers"`
+	Leases       string `json:"leases"`
+	Quarantine   string `json:"quarantine"`
 }
 
 type VolumeInfo struct {
@@ -72,6 +73,38 @@ type PoolMetadata struct {
 	WorkerReserveBytes       int64     `json:"workerReserveBytes"`
 	MinimumHostFreeBytes     int64     `json:"minimumHostFreeBytes"`
 	VHDXOverheadReserveBytes int64     `json:"vhdxOverheadReserveBytes"`
+}
+
+// SetupMountCycleEvidence keeps the first formatted mount distinct from the
+// persistence-proof reattach. A false value means the milestone was measured
+// and failed only when the enclosing cycle was attempted.
+type SetupMountCycleEvidence struct {
+	Attempted       bool               `json:"attempted"`
+	Mounted         bool               `json:"mounted"`
+	Metrics         NativeMountMetrics `json:"metrics"`
+	DevDrive        *DevDriveEvidence  `json:"devDrive,omitempty"`
+	Volume          *VolumeInfo        `json:"volume,omitempty"`
+	ReadinessMs     int64              `json:"readinessMs,omitempty"`
+	MetadataVisible bool               `json:"metadataVisible"`
+	LayoutVerified  bool               `json:"layoutVerified"`
+	Detached        bool               `json:"detached"`
+}
+
+// SetupTransactionEvidence describes the commit protocol. It is emitted on
+// both successful setup and post-create failures so artifacts show exactly
+// which durability boundary was reached.
+type SetupTransactionEvidence struct {
+	PendingOwnerCreated         bool                    `json:"pendingOwnerCreated"`
+	VHDXCreated                 bool                    `json:"vhdxCreated"`
+	PoolMetadataWritten         bool                    `json:"poolMetadataWritten"`
+	PoolMetadataFlushed         bool                    `json:"poolMetadataFlushed"`
+	PoolMetadataReadBack        bool                    `json:"poolMetadataReadBack"`
+	VolumeFlushed               bool                    `json:"volumeFlushed"`
+	InitialMount                SetupMountCycleEvidence `json:"initialMount"`
+	DurabilityReattach          SetupMountCycleEvidence `json:"durabilityReattach"`
+	VHDXIdentityRevalidated     bool                    `json:"vhdxIdentityRevalidated"`
+	DurabilityVerified          bool                    `json:"durabilityVerified"`
+	AuthoritativeOwnerCommitted bool                    `json:"authoritativeOwnerCommitted"`
 }
 
 // DevDriveEvidence records only structural observations made by the Windows
@@ -166,27 +199,28 @@ type PoolMetrics struct {
 }
 
 type Result struct {
-	SchemaVersion            string           `json:"schemaVersion"`
-	Status                   string           `json:"status"`
-	Operation                string           `json:"operation"`
-	Architecture             string           `json:"architecture"`
-	WindowsProvider          string           `json:"windowsProvider"`
-	VolumeKind               string           `json:"volumeKind"`
-	DevDrive                 DevDriveEvidence `json:"devDrive"`
-	NativeEvidence           *NativeEvidence  `json:"nativeEvidence,omitempty"`
-	ReleasedVersionModified  bool             `json:"releasedVersionModified"`
-	PhysicalImageCreated     bool             `json:"physicalImageCreated"`
-	DifferencingChildCreated bool             `json:"differencingChildCreated"`
-	FallbackUsed             bool             `json:"fallbackUsed"`
-	BlockCloneSupported      bool             `json:"blockCloneSupported"`
-	SourceUnchanged          bool             `json:"sourceUnchanged,omitempty"`
-	BaselineUnchanged        bool             `json:"baselineUnchanged,omitempty"`
-	Paths                    Paths            `json:"paths"`
-	Volume                   VolumeInfo       `json:"volume"`
-	Pool                     *PoolMetadata    `json:"pool,omitempty"`
-	Metrics                  PoolMetrics      `json:"metrics"`
-	NativeWindowsStatus      string           `json:"nativeWindowsStatus"`
-	Residual                 Residual         `json:"residual"`
+	SchemaVersion            string                    `json:"schemaVersion"`
+	Status                   string                    `json:"status"`
+	Operation                string                    `json:"operation"`
+	Architecture             string                    `json:"architecture"`
+	WindowsProvider          string                    `json:"windowsProvider"`
+	VolumeKind               string                    `json:"volumeKind"`
+	DevDrive                 DevDriveEvidence          `json:"devDrive"`
+	NativeEvidence           *NativeEvidence           `json:"nativeEvidence,omitempty"`
+	SetupTransaction         *SetupTransactionEvidence `json:"setupTransaction,omitempty"`
+	ReleasedVersionModified  bool                      `json:"releasedVersionModified"`
+	PhysicalImageCreated     bool                      `json:"physicalImageCreated"`
+	DifferencingChildCreated bool                      `json:"differencingChildCreated"`
+	FallbackUsed             bool                      `json:"fallbackUsed"`
+	BlockCloneSupported      bool                      `json:"blockCloneSupported"`
+	SourceUnchanged          bool                      `json:"sourceUnchanged,omitempty"`
+	BaselineUnchanged        bool                      `json:"baselineUnchanged,omitempty"`
+	Paths                    Paths                     `json:"paths"`
+	Volume                   VolumeInfo                `json:"volume"`
+	Pool                     *PoolMetadata             `json:"pool,omitempty"`
+	Metrics                  PoolMetrics               `json:"metrics"`
+	NativeWindowsStatus      string                    `json:"nativeWindowsStatus"`
+	Residual                 Residual                  `json:"residual"`
 }
 
 type ResidualMetric struct {

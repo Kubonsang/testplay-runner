@@ -42,7 +42,7 @@ func newRootCommand() *cobra.Command {
 		Short: "Standalone Managed ReFS Library Pool architecture probe",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
-			return errors.New("one command is required: setup, status, probe, or remove")
+			return errors.New("one command is required: setup, status, probe, remove, or recover-incomplete-setup")
 		},
 	}
 	root.PersistentFlags().StringVar(&rootPath, "root", "", "absolute host storage root (defaults to %LOCALAPPDATA%\\TestPlay\\Storage)")
@@ -53,7 +53,7 @@ func newRootCommand() *cobra.Command {
 	root.PersistentFlags().Int64Var(&workerReserve, "worker-reserve-bytes", 0, "reservation required before each worker")
 	root.PersistentFlags().Int64Var(&minimumHostFree, "minimum-host-free-bytes", 0, "minimum host free-space floor")
 	root.PersistentFlags().Int64Var(&vhdxOverheadReserve, "vhdx-overhead-reserve-bytes", 0, "experimental VHDX metadata/allocation overhead reserve")
-	for _, operation := range []string{"setup", "status", "probe", "remove"} {
+	for _, operation := range []string{"setup", "status", "probe", "remove", "recover-incomplete-setup"} {
 		op := operation
 		root.AddCommand(&cobra.Command{
 			Use:   op,
@@ -75,6 +75,8 @@ func newRootCommand() *cobra.Command {
 					result, err = service.Probe(cmd.Context(), config)
 				case "remove":
 					result, err = service.Remove(cmd.Context(), config)
+				case "recover-incomplete-setup":
+					result, err = service.RecoverIncompleteSetup(cmd.Context(), config)
 				}
 				if err != nil {
 					return err
@@ -137,6 +139,7 @@ func errorPayload(err error) map[string]any {
 	var mountReadyTimeoutMs int64
 	lastObservedError := ""
 	var nativeEvidence *refsworkspace.NativeEvidence
+	var setupTransaction *refsworkspace.SetupTransactionEvidence
 	var probeErr *refsworkspace.Error
 	if errors.As(err, &probeErr) {
 		operation = probeErr.Operation
@@ -146,6 +149,7 @@ func errorPayload(err error) map[string]any {
 		ownedVHDX = probeErr.OwnedVHDXPath
 		manualRecovery = probeErr.ManualRecoveryRequired
 		nativeEvidence = probeErr.NativeEvidence
+		setupTransaction = probeErr.SetupTransaction
 		mountPath = probeErr.MountPath
 		poolMetadataPath = probeErr.PoolMetadataPath
 		mountReadyTimeoutMs = probeErr.MountReadyTimeoutMs
@@ -197,6 +201,9 @@ func errorPayload(err error) map[string]any {
 		if nativeEvidence.SparseBlockCloneIOCTLAttempted != nil {
 			payload["sparseBlockCloneIOCTLAttempted"] = nativeEvidence.SparseBlockCloneIOCTLAttempted
 		}
+	}
+	if setupTransaction != nil {
+		payload["setupTransaction"] = setupTransaction
 	}
 	return payload
 }

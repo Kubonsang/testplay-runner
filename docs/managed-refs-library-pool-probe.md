@@ -249,8 +249,10 @@ Platform-independent lifecycle tests and Windows cross-compilation can be run
 on non-Windows hosts. That does not execute VirtDisk, Storage PowerShell,
 ReFS, `FSCTL_DUPLICATE_EXTENTS_TO_FILE`, junction, or Unity code.
 
-Until the Windows hardware gate is run, the native verdict is `NOT MEASURED`.
-No unexecuted native result may be recorded as PASS.
+Native Phase 1 is now `PROMISING` on Windows 11 Pro build 26200. It proves the
+standalone persistent Dev Drive lifecycle and Block Clone probe described
+below; it does not measure Unity, canonical baseline ACL correctness, the
+worker ladder, or release readiness.
 
 ## Pre-native hardening
 
@@ -281,6 +283,18 @@ Fresh setup supports a missing `%LOCALAPPDATA%\TestPlay\Storage` tree. It finds
 and canonicalizes the nearest existing ancestor, rejects symlinks/reparse
 points and files, creates each segment sequentially, then revalidates the final
 canonical identity. Existing non-empty roots are rejected.
+
+Setup is a host/in-volume transaction. It creates
+`pool-owner.pending.json` with `O_EXCL`, creates and identifies the exact VHDX,
+writes the matching in-volume `pool.json` with a flushed temporary file and
+atomic rename, reads it and the required layout back, flushes the exact mounted
+volume, then detaches and reattaches the same VHDX. Only after the reattached
+volume GUID, ReFS capability, Dev Drive query, ownership token, metadata,
+layout, and VHDX file identity pass does setup detach again and atomically
+commit `pool-owner.json`. `status`, `probe`, workers, and normal `remove` do not
+accept a pending owner. A separately named `recover-incomplete-setup` command
+can delete an incomplete pool only after exact ownership and a strict empty
+layout gate; it never repairs metadata or falls back to a copy provider.
 
 Baseline acquire, clear, and quarantine are serialized by
 `leases/baseline-<digest>.coord`; mutation also records a marker. Active-use
@@ -362,7 +376,30 @@ were zero. Per the ownership gate, remove and a fresh Phase 1 were not run.
 Artifact ZIP SHA-256:
 `500273C1A9B50C1589B24BA453ECF89037D6BA2ABD59F9D2EE4AA7B21FD71714`.
 
-Current native Phase 1 status is `FAILED`. The managed pool content-persistence
-failure requires investigation before another cleanup or fresh run. Unity
-correctness, canonical baseline ACL correctness, 1/2/4/8 workers, and release
-readiness remain `NOT MEASURED`.
+Read-only forensics of that retained VHDX classified it as
+`C_LAYOUT_EXISTS_POOL_METADATA_MISSING`. The VHDX file identity
+`a00b8212:00280000003f9ecf`, expected/actual volume GUID
+`\\?\Volume{d0c73e68-afdf-4872-84c2-a6e9db9e9b48}\`, ReFS, 4096-byte
+clusters, Dev Drive query, and Block Clone capability all matched. The required
+layout and the prior synthetic probe files were present, while `pool.json` was
+absent at every candidate path. This confirms that detach lost a tail of ReFS
+namespace changes (probe deletion and pool metadata creation), not that a
+different volume or partition was selected. Forensic ZIP SHA-256:
+`1A87B7F3A7792D823130B316BE04776970035635526D9C8C94BB34540DEE560E`.
+
+The explicit, ownership-gated incomplete-setup recovery removed that retained
+VHDX and owner metadata and measured storage root, mount, attached disk,
+temporary drive letter, and probe-process residuals at zero. Recovery ZIP
+SHA-256:
+`BBEA3BA201A1A3B2FC680991DBDC0022F7749E5AD7DE46AE306FCD0FA49D0A5B`.
+
+A fresh transactional native Phase 1 on Windows 11 Pro build 26200 is
+`PROMISING`. Initial Dev Drive format, ReFS, 4096-byte clusters, volume flush,
+regular/sparse Block Clone, CoW isolation, internal detach/reattach durability
+verification, post-proof owner commit, external probe/status reattach, and
+explicit remove all passed without fallback. Final VHDX, owner, pending owner,
+mount, storage root, attached disk, temporary drive letter, and probe process
+residuals were zero. Artifact ZIP SHA-256:
+`AF020C740B80FBB6472A3C5EC416E6DF69EA73DD8BDEDCDCBEB8DBE000E0CF36`.
+Unity correctness, canonical baseline ACL correctness, 1/2/4/8 workers, and
+release readiness remain `NOT MEASURED`; `PROMISING` is not `PROVEN`.

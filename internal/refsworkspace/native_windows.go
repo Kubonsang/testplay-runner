@@ -50,6 +50,26 @@ func (pool *windowsMountedPool) WaitReady(ctx context.Context, paths Paths, expe
 	return waitForMountedPoolReady(ctx, paths, expected, pool.volume, osMountedPoolReadinessInspector{}, mountedPoolReadinessOptions{})
 }
 
+func (pool *windowsMountedPool) Flush(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	volumePath := strings.TrimSuffix(pool.volume.VolumeGUIDPath, `\`)
+	path, err := windows.UTF16PtrFromString(volumePath)
+	if err != nil {
+		return err
+	}
+	handle, err := windows.CreateFile(path, windows.GENERIC_READ|windows.GENERIC_WRITE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, 0, 0)
+	if err != nil {
+		return fmt.Errorf("open exact volume for flush: %w", err)
+	}
+	defer windows.CloseHandle(handle)
+	if err := windows.FlushFileBuffers(handle); err != nil {
+		return fmt.Errorf("FlushFileBuffers exact volume: %w", err)
+	}
+	return nil
+}
+
 func (pool *windowsMountedPool) Close(ctx context.Context) error {
 	if pool.attachment == nil {
 		return nil

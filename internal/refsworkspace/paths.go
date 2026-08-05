@@ -69,16 +69,17 @@ func NewPaths(config Config) (Config, Paths, error) {
 	config.MountRoot = mount
 	poolRoot := filepath.Join(mount, "testplay")
 	return config, Paths{
-		Root:       root,
-		VHDX:       vhdxPath,
-		Owner:      filepath.Join(root, "pool-owner.json"),
-		Mount:      mount,
-		PoolRoot:   poolRoot,
-		PoolFile:   filepath.Join(poolRoot, "pool.json"),
-		Baselines:  filepath.Join(poolRoot, "baselines"),
-		Workers:    filepath.Join(poolRoot, "workers"),
-		Leases:     filepath.Join(poolRoot, "leases"),
-		Quarantine: filepath.Join(poolRoot, "quarantine"),
+		Root:         root,
+		VHDX:         vhdxPath,
+		Owner:        filepath.Join(root, "pool-owner.json"),
+		PendingOwner: filepath.Join(root, "pool-owner.pending.json"),
+		Mount:        mount,
+		PoolRoot:     poolRoot,
+		PoolFile:     filepath.Join(poolRoot, "pool.json"),
+		Baselines:    filepath.Join(poolRoot, "baselines"),
+		Workers:      filepath.Join(poolRoot, "workers"),
+		Leases:       filepath.Join(poolRoot, "leases"),
+		Quarantine:   filepath.Join(poolRoot, "quarantine"),
 	}, nil
 }
 
@@ -199,7 +200,7 @@ func PathWithin(root, target string) bool {
 }
 
 func validateOwnedPaths(paths Paths) error {
-	for _, target := range []string{paths.VHDX, paths.Owner, paths.Mount} {
+	for _, target := range []string{paths.VHDX, paths.Owner, paths.PendingOwner, paths.Mount} {
 		if !PathWithin(paths.Root, target) || filepath.Dir(target) != paths.Root {
 			return newError(CodeOwnershipMismatch, "validate-owned-path", target, fmt.Errorf("target escaped pool root"))
 		}

@@ -14,24 +14,29 @@ import (
 )
 
 type fakePoolNative struct {
-	platform          string
-	elevated          bool
-	ensureErr         error
-	createErr         error
-	mountErr          error
-	removeErr         error
-	closeErr          error
-	volume            VolumeInfo
-	closeCount        int
-	createCount       int
-	removeCount       int
-	mountInitializes  []bool
-	hostFree          int64
-	hostFreeErr       error
-	hostFilesystem    string
-	emptyMountOnClose bool
-	waitReady         func(context.Context, Paths, PoolMetadata, VolumeInfo) (time.Duration, error)
-	events            *[]string
+	platform            string
+	elevated            bool
+	ensureErr           error
+	createErr           error
+	mountErr            error
+	removeErr           error
+	closeErr            error
+	flushErr            error
+	volume              VolumeInfo
+	closeCount          int
+	createCount         int
+	removeCount         int
+	mountInitializes    []bool
+	hostFree            int64
+	hostFreeErr         error
+	hostFilesystem      string
+	emptyMountOnClose   bool
+	emptyMountOnCloseAt map[int]bool
+	waitReady           func(context.Context, Paths, PoolMetadata, VolumeInfo) (time.Duration, error)
+	events              *[]string
+	afterClose          func(int, string)
+	mountVolumes        []VolumeInfo
+	fileIdentity        string
 }
 
 type fakeMountedPool struct {
@@ -62,9 +67,18 @@ func (pool *fakeMountedPool) WaitReady(ctx context.Context, paths Paths, expecte
 	}
 	return waitForMountedPoolReady(ctx, paths, expected, pool.volume, fakeMountedPoolReadinessInspector{mount: paths.Mount}, mountedPoolReadinessOptions{Timeout: 250 * time.Millisecond, PollInterval: time.Millisecond})
 }
+func (pool *fakeMountedPool) Flush(context.Context) error {
+	if pool.native.events != nil {
+		*pool.native.events = append(*pool.native.events, "volume-flush")
+	}
+	return pool.native.flushErr
+}
 func (pool *fakeMountedPool) Close(context.Context) error {
 	pool.native.closeCount++
-	if pool.native.emptyMountOnClose {
+	if pool.native.afterClose != nil {
+		pool.native.afterClose(pool.native.closeCount, pool.mount)
+	}
+	if pool.native.emptyMountOnClose || pool.native.emptyMountOnCloseAt[pool.native.closeCount] {
 		entries, err := os.ReadDir(pool.mount)
 		if err != nil {
 			return err
@@ -102,7 +116,11 @@ func (native *fakePoolNative) Mount(_ context.Context, vhdx, mount string, initi
 	if err := os.MkdirAll(mount, 0700); err != nil {
 		return nil, err
 	}
-	return &fakeMountedPool{native: native, volume: native.volume, mount: mount}, nil
+	volume := native.volume
+	if index := len(native.mountInitializes) - 1; index >= 0 && index < len(native.mountVolumes) {
+		volume = native.mountVolumes[index]
+	}
+	return &fakeMountedPool{native: native, volume: volume, mount: mount}, nil
 }
 
 type fakeMountedPoolReadinessInspector struct{ mount string }
@@ -119,6 +137,9 @@ func (inspector fakeMountedPoolReadinessInspector) IsReparsePoint(path string) (
 func (native *fakePoolNative) FileIdentity(path string) (string, error) {
 	if _, err := os.Stat(path); err != nil {
 		return "", err
+	}
+	if native.fileIdentity != "" {
+		return native.fileIdentity, nil
 	}
 	return "fake-volume:fake-file", nil
 }
@@ -337,13 +358,13 @@ func TestPoolSetupPersistsVHDXAndStatusDoesNotReformat(t *testing.T) {
 	if _, err := os.Stat(setup.Paths.VHDX); err != nil {
 		t.Fatalf("setup did not preserve VHDX: %v", err)
 	}
-	if native.createCount != 1 || native.removeCount != 0 || len(native.mountInitializes) != 1 || !native.mountInitializes[0] {
+	if native.createCount != 1 || native.removeCount != 0 || len(native.mountInitializes) != 2 || !native.mountInitializes[0] || native.mountInitializes[1] {
 		t.Fatalf("after setup create=%d remove=%d mounts=%v", native.createCount, native.removeCount, native.mountInitializes)
 	}
 	if _, err := service.Status(context.Background(), config); err != nil {
 		t.Fatal(err)
 	}
-	if native.createCount != 1 || native.removeCount != 0 || len(native.mountInitializes) != 2 || native.mountInitializes[1] {
+	if native.createCount != 1 || native.removeCount != 0 || len(native.mountInitializes) != 3 || native.mountInitializes[2] {
 		t.Fatalf("status recreated, reformatted, or removed the pool: create=%d remove=%d mounts=%v", native.createCount, native.removeCount, native.mountInitializes)
 	}
 }
@@ -359,6 +380,9 @@ func (cloner *postMountFailureCloner) CloneTree(_ context.Context, request Clone
 
 func TestPoolPostMountCloneFailurePreservesNativeEvidence(t *testing.T) {
 	native := newFakePoolNative()
+	// A real detached directory mount becomes empty. Model that visibility so
+	// the setup cleanup assertion does not inspect the fake mounted tree.
+	native.emptyMountOnClose = true
 	cloner := &postMountFailureCloner{}
 	config := Config{Root: filepath.Join(t.TempDir(), "storage")}
 	_, err := NewService(native, cloner).Setup(context.Background(), config)
@@ -533,7 +557,7 @@ func TestPoolSetupPreservesOwnedVHDXWhenDetachIsUncertain(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 	var probeErr *Error
-	if !errors.As(err, &probeErr) || probeErr.CleanupState != "uncertain" || !probeErr.OwnerMetadataCommitted || !probeErr.ManualRecoveryRequired || probeErr.OwnedVHDXPath == "" {
+	if !errors.As(err, &probeErr) || probeErr.CleanupState != "uncertain" || probeErr.OwnerMetadataCommitted || !probeErr.ManualRecoveryRequired || probeErr.OwnedVHDXPath == "" {
 		t.Fatalf("cleanup evidence=%+v", probeErr)
 	}
 	_, paths, pathsErr := NewPaths(Config{Root: root})
@@ -543,8 +567,11 @@ func TestPoolSetupPreservesOwnedVHDXWhenDetachIsUncertain(t *testing.T) {
 	if _, statErr := os.Stat(paths.VHDX); statErr != nil {
 		t.Fatalf("uncertain cleanup deleted VHDX: %v", statErr)
 	}
-	if _, statErr := os.Stat(paths.Owner); statErr != nil {
-		t.Fatalf("uncertain cleanup deleted ownership evidence: %v", statErr)
+	if _, statErr := os.Stat(paths.Owner); !os.IsNotExist(statErr) {
+		t.Fatalf("uncertain pre-commit failure created authoritative owner: %v", statErr)
+	}
+	if _, statErr := os.Stat(paths.PendingOwner); statErr != nil {
+		t.Fatalf("uncertain cleanup deleted pending ownership evidence: %v", statErr)
 	}
 }
 
