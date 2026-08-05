@@ -95,11 +95,19 @@ func (pool *windowsMountedPool) Close(ctx context.Context) error {
 }
 
 func (windowsPoolNative) Mount(ctx context.Context, vhdxPath, mountPath string, initialize bool) (MountedPool, error) {
+	return mountWindowsPool(ctx, vhdxPath, mountPath, initialize, false)
+}
+
+func (windowsPoolNative) MountReadOnly(ctx context.Context, vhdxPath, mountPath string) (MountedPool, error) {
+	return mountWindowsPool(ctx, vhdxPath, mountPath, false, true)
+}
+
+func mountWindowsPool(ctx context.Context, vhdxPath, mountPath string, initialize, readOnly bool) (MountedPool, error) {
 	if err := validateUnmountedMountDirectory(mountPath); err != nil {
 		return nil, err
 	}
 	attachStarted := time.Now()
-	attachment, err := vhdxstorage.OpenAndAttach(vhdxPath, false)
+	attachment, err := vhdxstorage.OpenAndAttach(vhdxPath, readOnly)
 	if err != nil {
 		mapped := mapNativeError("open-and-attach-vhdx", vhdxPath, err)
 		return nil, errorWithCleanupEvidence(mapped, "released", vhdxPath, false)
@@ -117,9 +125,12 @@ func (windowsPoolNative) Mount(ctx context.Context, vhdxPath, mountPath string, 
 	var refsInfo vhdxstorage.ReFSVolumeInfo
 	mountStarted := time.Now()
 	if initialize {
+		if readOnly {
+			return fail(newError(CodeInvalidConfiguration, "initialize-read-only-pool", vhdxPath, fmt.Errorf("read-only initialization is forbidden")))
+		}
 		refsInfo, err = attachment.InitializeDevDriveAndMount(ctx, mountPath)
 	} else {
-		if err = attachment.MountExisting(ctx, mountPath, false); err == nil {
+		if err = attachment.MountExisting(ctx, mountPath, readOnly); err == nil {
 			refsInfo, err = attachment.InspectDevDriveVolume(ctx)
 		}
 	}

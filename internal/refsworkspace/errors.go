@@ -56,6 +56,8 @@ type Error struct {
 	PoolMetadataPath       string                    `json:"poolMetadataPath,omitempty"`
 	MountReadyTimeoutMs    int64                     `json:"mountReadyTimeoutMs,omitempty"`
 	LastObservedError      string                    `json:"lastObservedFilesystemError,omitempty"`
+	ResidualEvidence       *Residual                 `json:"residualEvidence,omitempty"`
+	LeaseArtifacts         []LeaseArtifactEvidence   `json:"leaseArtifacts,omitempty"`
 }
 
 func (e *Error) Error() string {
@@ -106,6 +108,8 @@ func errorWithCleanupEvidence(err error, state, ownedVHDX string, ownerCommitted
 		wrapped.PoolMetadataPath = existing.PoolMetadataPath
 		wrapped.MountReadyTimeoutMs = existing.MountReadyTimeoutMs
 		wrapped.LastObservedError = existing.LastObservedError
+		wrapped.ResidualEvidence = existing.ResidualEvidence
+		wrapped.LeaseArtifacts = existing.LeaseArtifacts
 	}
 	return wrapped
 }
@@ -122,6 +126,7 @@ func errorWithNativeEvidence(err error, evidence *NativeEvidence) error {
 			OwnedVHDXPath: existing.OwnedVHDXPath, ManualRecoveryRequired: existing.ManualRecoveryRequired,
 			NativeEvidence: evidence, SetupTransaction: existing.SetupTransaction, MountPath: existing.MountPath, PoolMetadataPath: existing.PoolMetadataPath,
 			MountReadyTimeoutMs: existing.MountReadyTimeoutMs, LastObservedError: existing.LastObservedError,
+			ResidualEvidence: existing.ResidualEvidence, LeaseArtifacts: existing.LeaseArtifacts,
 		}
 	}
 	return &Error{Code: ErrorCode(err), Cause: err, NativeEvidence: evidence}
@@ -140,9 +145,25 @@ func errorWithSetupTransactionEvidence(err error, evidence *SetupTransactionEvid
 			NativeEvidence: existing.NativeEvidence, SetupTransaction: evidence,
 			MountPath: existing.MountPath, PoolMetadataPath: existing.PoolMetadataPath,
 			MountReadyTimeoutMs: existing.MountReadyTimeoutMs, LastObservedError: existing.LastObservedError,
+			ResidualEvidence: existing.ResidualEvidence, LeaseArtifacts: existing.LeaseArtifacts,
 		}
 	}
 	return &Error{Code: ErrorCode(err), Cause: err, SetupTransaction: evidence}
+}
+
+func errorWithResidualEvidence(err error, residual Residual, artifacts []LeaseArtifactEvidence) error {
+	if err == nil {
+		return nil
+	}
+	var existing *Error
+	if errors.As(err, &existing) {
+		copyError := *existing
+		copyError.Cause = err
+		copyError.ResidualEvidence = &residual
+		copyError.LeaseArtifacts = append([]LeaseArtifactEvidence(nil), artifacts...)
+		return &copyError
+	}
+	return &Error{Code: ErrorCode(err), Cause: err, ResidualEvidence: &residual, LeaseArtifacts: append([]LeaseArtifactEvidence(nil), artifacts...)}
 }
 
 func ErrorCode(err error) string {

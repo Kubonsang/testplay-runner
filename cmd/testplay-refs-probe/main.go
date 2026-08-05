@@ -13,16 +13,21 @@ import (
 )
 
 var (
-	rootPath            string
-	poolFile            string
-	mountRoot           string
-	maximumBytes        int64
-	softBudget          int64
-	workerReserve       int64
-	minimumHostFree     int64
-	vhdxOverheadReserve int64
-	recoveryKeyDigest   string
-	recoveryLeaseID     string
+	rootPath             string
+	poolFile             string
+	mountRoot            string
+	maximumBytes         int64
+	softBudget           int64
+	workerReserve        int64
+	minimumHostFree      int64
+	vhdxOverheadReserve  int64
+	recoveryKeyDigest    string
+	recoveryLeaseID      string
+	recoveryEvidenceZIP  string
+	recoveryEvidenceSHA  string
+	recoveryDiagnosis    string
+	recoveryDiagnoseSHA  string
+	recoveryArtifactRoot string
 )
 
 func main() {
@@ -44,7 +49,7 @@ func newRootCommand() *cobra.Command {
 		Short: "Standalone Managed ReFS Library Pool architecture probe",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
-			return errors.New("one command is required: setup, status, probe, remove, recover-incomplete-setup, or recover-released-worker-residual")
+			return errors.New("one command is required: setup, status, probe, remove, recover-incomplete-setup, recover-released-worker-residual, diagnose-worker-release-residual, or recover-corrupt-released-worker-residual")
 		},
 	}
 	root.PersistentFlags().StringVar(&rootPath, "root", "", "absolute host storage root (defaults to %LOCALAPPDATA%\\TestPlay\\Storage)")
@@ -55,7 +60,7 @@ func newRootCommand() *cobra.Command {
 	root.PersistentFlags().Int64Var(&workerReserve, "worker-reserve-bytes", 0, "reservation required before each worker")
 	root.PersistentFlags().Int64Var(&minimumHostFree, "minimum-host-free-bytes", 0, "minimum host free-space floor")
 	root.PersistentFlags().Int64Var(&vhdxOverheadReserve, "vhdx-overhead-reserve-bytes", 0, "experimental VHDX metadata/allocation overhead reserve")
-	for _, operation := range []string{"setup", "status", "probe", "remove", "recover-incomplete-setup", "recover-released-worker-residual"} {
+	for _, operation := range []string{"setup", "status", "probe", "remove", "recover-incomplete-setup", "recover-released-worker-residual", "diagnose-worker-release-residual", "recover-corrupt-released-worker-residual"} {
 		op := operation
 		command := &cobra.Command{
 			Use:   op,
@@ -67,7 +72,7 @@ func newRootCommand() *cobra.Command {
 					return &refsworkspace.Error{Code: refsworkspace.CodeUnsupportedPlatform, Operation: "default-config", Cause: err}
 				}
 				service := refsworkspace.NewNativeService()
-				var result *refsworkspace.Result
+				var result any
 				switch op {
 				case "setup":
 					result, err = service.Setup(cmd.Context(), config)
@@ -81,6 +86,15 @@ func newRootCommand() *cobra.Command {
 					result, err = service.RecoverIncompleteSetup(cmd.Context(), config)
 				case "recover-released-worker-residual":
 					result, err = service.RecoverReleasedWorkerResidual(cmd.Context(), config, recoveryKeyDigest, recoveryLeaseID)
+				case "diagnose-worker-release-residual":
+					result, err = service.DiagnoseReleasedWorkerResidual(cmd.Context(), config, recoveryKeyDigest, recoveryLeaseID)
+				case "recover-corrupt-released-worker-residual":
+					result, err = service.RecoverCorruptReleasedWorkerResidual(cmd.Context(), config, refsworkspace.CorruptWorkerRecoveryRequest{
+						KeyDigest: recoveryKeyDigest, LeaseID: recoveryLeaseID,
+						EvidenceZIP: recoveryEvidenceZIP, EvidenceZIPSHA256: recoveryEvidenceSHA,
+						DiagnosisPath: recoveryDiagnosis, DiagnosisSHA256: recoveryDiagnoseSHA,
+						ArtifactRoot: recoveryArtifactRoot,
+					})
 				}
 				if err != nil {
 					return err
@@ -88,11 +102,21 @@ func newRootCommand() *cobra.Command {
 				return json.NewEncoder(os.Stdout).Encode(result)
 			},
 		}
-		if op == "recover-released-worker-residual" {
+		if op == "recover-released-worker-residual" || op == "diagnose-worker-release-residual" || op == "recover-corrupt-released-worker-residual" {
 			command.Flags().StringVar(&recoveryKeyDigest, "key-digest", "", "exact canonical baseline compatibility-key digest")
 			command.Flags().StringVar(&recoveryLeaseID, "lease-id", "", "exact released worker lease id")
 			_ = command.MarkFlagRequired("key-digest")
 			_ = command.MarkFlagRequired("lease-id")
+		}
+		if op == "recover-corrupt-released-worker-residual" {
+			command.Flags().StringVar(&recoveryEvidenceZIP, "evidence-zip", "", "exact original Unity Phase 2 evidence ZIP")
+			command.Flags().StringVar(&recoveryEvidenceSHA, "evidence-zip-sha256", "", "expected SHA-256 of the original evidence ZIP")
+			command.Flags().StringVar(&recoveryDiagnosis, "diagnosis", "", "exact read-only diagnosis JSON")
+			command.Flags().StringVar(&recoveryDiagnoseSHA, "diagnosis-sha256", "", "expected SHA-256 of the diagnosis JSON")
+			command.Flags().StringVar(&recoveryArtifactRoot, "recovery-artifact-root", "", "new external directory for raw backups and recovery receipt")
+			for _, flag := range []string{"evidence-zip", "evidence-zip-sha256", "diagnosis", "diagnosis-sha256", "recovery-artifact-root"} {
+				_ = command.MarkFlagRequired(flag)
+			}
 		}
 		root.AddCommand(command)
 	}
@@ -151,6 +175,8 @@ func errorPayload(err error) map[string]any {
 	lastObservedError := ""
 	var nativeEvidence *refsworkspace.NativeEvidence
 	var setupTransaction *refsworkspace.SetupTransactionEvidence
+	var residualEvidence *refsworkspace.Residual
+	var leaseArtifacts []refsworkspace.LeaseArtifactEvidence
 	var probeErr *refsworkspace.Error
 	if errors.As(err, &probeErr) {
 		operation = probeErr.Operation
@@ -165,6 +191,8 @@ func errorPayload(err error) map[string]any {
 		poolMetadataPath = probeErr.PoolMetadataPath
 		mountReadyTimeoutMs = probeErr.MountReadyTimeoutMs
 		lastObservedError = probeErr.LastObservedError
+		residualEvidence = probeErr.ResidualEvidence
+		leaseArtifacts = probeErr.LeaseArtifacts
 	}
 	payload := map[string]any{
 		"schemaVersion":               "2",
@@ -215,6 +243,12 @@ func errorPayload(err error) map[string]any {
 	}
 	if setupTransaction != nil {
 		payload["setupTransaction"] = setupTransaction
+	}
+	if residualEvidence != nil {
+		payload["residualEvidence"] = residualEvidence
+	}
+	if len(leaseArtifacts) != 0 {
+		payload["leaseArtifacts"] = leaseArtifacts
 	}
 	return payload
 }

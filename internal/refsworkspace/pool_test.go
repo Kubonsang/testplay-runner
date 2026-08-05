@@ -37,6 +37,7 @@ type fakePoolNative struct {
 	afterClose          func(int, string)
 	mountVolumes        []VolumeInfo
 	fileIdentity        string
+	readOnlyMounts      int
 }
 
 type fakeMountedPool struct {
@@ -121,6 +122,11 @@ func (native *fakePoolNative) Mount(_ context.Context, vhdx, mount string, initi
 		volume = native.mountVolumes[index]
 	}
 	return &fakeMountedPool{native: native, volume: volume, mount: mount}, nil
+}
+
+func (native *fakePoolNative) MountReadOnly(ctx context.Context, vhdx, mount string) (MountedPool, error) {
+	native.readOnlyMounts++
+	return native.Mount(ctx, vhdx, mount, false)
 }
 
 type fakeMountedPoolReadinessInspector struct{ mount string }

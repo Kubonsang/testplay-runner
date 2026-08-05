@@ -142,6 +142,26 @@ func TestMeasureMountedResidualSetsMountedStatus(t *testing.T) {
 	}
 }
 
+func TestCorruptWorkerJournalPreservesStructuralResidualAndBytes(t *testing.T) {
+	paths := testPoolPaths(t)
+	journal := filepath.Join(paths.Leases, "worker-lease-corrupt1.json")
+	data := append([]byte{0, 0, 0, 0}, []byte("not-json")...)
+	if err := os.WriteFile(journal, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	residual, err := measureMountedResidual(paths)
+	if err == nil {
+		t.Fatal("corrupt worker journal was accepted")
+	}
+	if !residual.WorkerLeaseJournals.Measured || residual.WorkerLeaseJournals.Count != 1 || residual.Junctions.Measured || residual.Status != "NOT_MEASURED" {
+		t.Fatalf("residual=%+v", residual)
+	}
+	artifacts := residualArtifacts(err)
+	if len(artifacts) != 1 || artifacts[0].DecodeStatus != "FAILED" || artifacts[0].SHA256 == "" || !strings.HasPrefix(artifacts[0].LeadingBytesHex, "00000000") {
+		t.Fatalf("artifacts=%+v err=%v", artifacts, err)
+	}
+}
+
 func fullyMeasuredResidual() Residual {
 	zero := measured(0)
 	return Residual{

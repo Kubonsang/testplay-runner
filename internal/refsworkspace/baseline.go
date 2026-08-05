@@ -435,18 +435,8 @@ func (s *LibraryBaselineStore) AcquireUse(ctx context.Context, key Compatibility
 	}
 	marker := filepath.Join(s.paths.Leases, "active-"+key.Digest+"-"+leaseID+".json")
 	data, _ := json.Marshal(activeUse{SchemaVersion: LeaseSchemaVersion, KeyDigest: key.Digest, LeaseID: leaseID, OwnershipToken: token})
-	file, err := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return nil, newError(CodeLeaseConflict, "acquire-baseline-use", marker, err)
-	}
-	if _, err := file.Write(data); err != nil {
-		_ = file.Close()
-		_ = os.Remove(marker)
+	if err := atomicfile.WriteExclusiveDurable(marker, data, 0600); err != nil {
 		return nil, newError(CodeLeaseConflict, "write-baseline-use", marker, err)
-	}
-	if err := file.Close(); err != nil {
-		_ = os.Remove(marker)
-		return nil, newError(CodeLeaseConflict, "close-baseline-use", marker, err)
 	}
 	released := false
 	return func() error {

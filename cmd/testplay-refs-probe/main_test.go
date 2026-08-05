@@ -96,3 +96,27 @@ func TestErrorPayloadIncludesMountedPoolReadinessAndPreservationEvidence(t *test
 		t.Fatalf("readiness payload=%+v", payload)
 	}
 }
+
+func TestErrorPayloadPreservesCorruptJournalResidualEvidence(t *testing.T) {
+	residual := refsworkspace.Residual{
+		Status: "NOT_MEASURED",
+		WorkerLeaseJournals: refsworkspace.ResidualMetric{Measured: true, Count: 1},
+		Junctions: refsworkspace.ResidualMetric{Measured: false},
+	}
+	artifacts := []refsworkspace.LeaseArtifactEvidence{{
+		Name: "worker-lease-corrupt1.json", Kind: "worker-journal", DecodeStatus: "FAILED",
+		SHA256: "abc", LeadingBytesHex: "00000000", DecodeError: "invalid character NUL",
+	}}
+	err := &refsworkspace.Error{
+		Code: refsworkspace.CodeCleanupFailed, Operation: "measure-mounted-residual",
+		ResidualEvidence: &residual, LeaseArtifacts: artifacts,
+	}
+	payload := errorPayload(err)
+	if payload["residualEvidence"] != &residual {
+		t.Fatalf("payload=%+v", payload)
+	}
+	actual, ok := payload["leaseArtifacts"].([]refsworkspace.LeaseArtifactEvidence)
+	if !ok || len(actual) != 1 || actual[0].DecodeStatus != "FAILED" {
+		t.Fatalf("artifacts=%T %+v", payload["leaseArtifacts"], payload["leaseArtifacts"])
+	}
+}

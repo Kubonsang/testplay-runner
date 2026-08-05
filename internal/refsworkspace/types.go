@@ -209,6 +209,7 @@ type Result struct {
 	NativeEvidence           *NativeEvidence                 `json:"nativeEvidence,omitempty"`
 	SetupTransaction         *SetupTransactionEvidence       `json:"setupTransaction,omitempty"`
 	ReleasedWorkerRecovery   *ReleasedWorkerRecoveryEvidence `json:"releasedWorkerRecovery,omitempty"`
+	CorruptWorkerRecovery    *CorruptWorkerRecoveryEvidence  `json:"corruptWorkerRecovery,omitempty"`
 	ReleasedVersionModified  bool                            `json:"releasedVersionModified"`
 	PhysicalImageCreated     bool                            `json:"physicalImageCreated"`
 	DifferencingChildCreated bool                            `json:"differencingChildCreated"`
@@ -239,6 +240,37 @@ type ReleasedWorkerRecoveryEvidence struct {
 	PoolRemoved              bool      `json:"poolRemoved"`
 }
 
+type CorruptWorkerRecoveryRequest struct {
+	KeyDigest         string `json:"keyDigest"`
+	LeaseID           string `json:"leaseId"`
+	EvidenceZIP       string `json:"evidenceZip"`
+	EvidenceZIPSHA256 string `json:"evidenceZipSha256"`
+	DiagnosisPath     string `json:"diagnosisPath"`
+	DiagnosisSHA256   string `json:"diagnosisSha256"`
+	ArtifactRoot      string `json:"artifactRoot"`
+}
+
+type CorruptWorkerRecoveryEvidence struct {
+	KeyDigest                string                `json:"keyDigest"`
+	LeaseID                  string                `json:"leaseId"`
+	EvidenceZIPSHA256        string                `json:"evidenceZipSha256"`
+	DiagnosisSHA256          string                `json:"diagnosisSha256"`
+	Journal                  LeaseArtifactEvidence `json:"journal"`
+	Marker                   LeaseArtifactEvidence `json:"marker"`
+	PreconditionResidual     Residual              `json:"preconditionResidual"`
+	JournalBackupPath        string                `json:"journalBackupPath"`
+	MarkerBackupPath         string                `json:"markerBackupPath"`
+	ReceiptPath              string                `json:"receiptPath"`
+	JournalRemoved           bool                  `json:"journalRemoved"`
+	MarkerRemoved            bool                  `json:"markerRemoved"`
+	FlushSucceeded           bool                  `json:"flushSucceeded"`
+	FirstDetachSucceeded     bool                  `json:"firstDetachSucceeded"`
+	DurableReattachAttempted bool                  `json:"durableReattachAttempted"`
+	DurableResidual          *Residual             `json:"durableResidual,omitempty"`
+	DurableAbsenceVerified   bool                  `json:"durableAbsenceVerified"`
+	PoolRemoved              bool                  `json:"poolRemoved"`
+}
+
 type ResidualMetric struct {
 	Measured bool `json:"measured"`
 	Count    int  `json:"count"`
@@ -267,6 +299,27 @@ type Residual struct {
 	AttachedDisks             ResidualMetric `json:"attachedDisks"`
 	ProbeProcesses            ResidualMetric `json:"probeProcesses"`
 	OwnedVHDXFiles            ResidualMetric `json:"ownedVhdxFiles"`
+}
+
+// LeaseArtifactEvidence preserves structural and byte-level observations even
+// when a worker journal cannot be decoded.
+type LeaseArtifactEvidence struct {
+	Name            string `json:"name"`
+	Path            string `json:"path"`
+	Kind            string `json:"kind"`
+	Size            int64  `json:"size"`
+	SHA256          string `json:"sha256,omitempty"`
+	LeadingBytesHex string `json:"leadingBytesHex,omitempty"`
+	Mode            string `json:"mode,omitempty"`
+	ReparsePoint    bool   `json:"reparsePoint"`
+	FileIdentity    string `json:"fileIdentity,omitempty"`
+	DecodeStatus    string `json:"decodeStatus"`
+	DecodeError     string `json:"decodeError,omitempty"`
+	LeaseID         string `json:"leaseId,omitempty"`
+	KeyDigest       string `json:"keyDigest,omitempty"`
+	OwnershipToken  string `json:"ownershipToken,omitempty"`
+	JunctionPath    string `json:"junctionPath,omitempty"`
+	JunctionRemoved *bool  `json:"junctionRemoved,omitempty"`
 }
 
 type CloneMetrics struct {

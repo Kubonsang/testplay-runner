@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Kubonsang/testplay-runner/internal/atomicfile"
 	"github.com/Kubonsang/testplay-runner/internal/shadow"
 )
 
@@ -658,7 +659,12 @@ func (manager *WorkerManager) updateLease(path string, metadata *WorkerMetadata)
 			return newError(CodeLeaseConflict, "update-worker-lease", path, err)
 		}
 	}
-	if err := writeJSONAtomic(path, metadata, 0600); err != nil {
+	data, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return newError(CodeLeaseConflict, "update-worker-lease", path, err)
+	}
+	data = append(data, '\n')
+	if err := atomicfile.WriteDurable(path, data, 0600); err != nil {
 		return newError(CodeLeaseConflict, "update-worker-lease", path, err)
 	}
 	return nil
@@ -701,16 +707,7 @@ func createJSONExclusive(path string, value any) error {
 		return err
 	}
 	data = append(data, '\n')
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return err
-	}
-	if _, err := file.Write(data); err != nil {
-		_ = file.Close()
-		_ = os.Remove(path)
-		return err
-	}
-	return file.Close()
+	return atomicfile.WriteExclusiveDurable(path, data, 0600)
 }
 
 func mustJSON(value any) []byte {

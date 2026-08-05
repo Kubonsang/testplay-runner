@@ -469,9 +469,9 @@ func (a *Attachment) ResolveVolume(ctx context.Context, readOnly bool) (volumeRe
 	return result, bootstrap, nil
 }
 
-func (a *Attachment) Mount(ctx context.Context, mountPath string) (mountResult, int64, error) {
+func (a *Attachment) Mount(ctx context.Context, mountPath string, readOnly bool) (mountResult, int64, error) {
 	var result mountResult
-	bootstrap, err := a.runPowerShell(ctx, mountDiskScript, mountPath, a.partitionNumber, false, &result)
+	bootstrap, err := a.runPowerShell(ctx, mountDiskScript, mountPath, a.partitionNumber, readOnly, &result)
 	if err != nil {
 		code := CodeMountFailed
 		if strings.Contains(strings.ToLower(err.Error()), "mount visibility timeout") {
@@ -488,7 +488,7 @@ func (a *Attachment) MountExisting(ctx context.Context, mountPath string, readOn
 	if _, _, err := a.ResolveVolume(ctx, readOnly); err != nil {
 		return err
 	}
-	_, _, err := a.Mount(ctx, mountPath)
+	_, _, err := a.Mount(ctx, mountPath, readOnly)
 	return err
 }
 
@@ -733,7 +733,7 @@ func (windowsBackend) Acquire(ctx context.Context, request AcquireRequest, progr
 	if err := notify(progress, Progress{State: StateMounting, PhysicalPath: physicalPath, VolumeGUIDPath: volume.VolumeGUIDPath}); err != nil {
 		return fail(err)
 	}
-	mount, bootstrap, err := attachment.Mount(ctx, request.MountPath)
+	mount, bootstrap, err := attachment.Mount(ctx, request.MountPath, false)
 	if err != nil {
 		return fail(err)
 	}

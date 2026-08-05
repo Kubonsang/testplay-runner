@@ -1,11 +1,14 @@
 package refsworkspace
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 var (
@@ -62,16 +65,33 @@ func measureMountedResidual(paths Paths) (Residual, error) {
 		return residual, err
 	}
 	residual.SyntheticProbeDirectories.Measured = true
-	residual.Junctions.Count, err = countWorkerJunctions(paths.Leases)
-	if err != nil {
-		return residual, err
-	}
-	residual.Junctions.Measured = true
+	var artifacts []LeaseArtifactEvidence
+	residual.Junctions.Count, artifacts, err = inspectWorkerJunctions(paths.Leases)
+	residual.Junctions.Measured = err == nil
 	// A running binary cannot independently prove that no peer probe process
 	// exists. The outer PowerShell harness owns this measurement.
 	residual.ProbeProcesses = ResidualMetric{Measured: false}
 	residual.Status = mountedResidualStatus(residual)
+	if err != nil {
+		return residual, &residualInspectionError{Cause: err, Artifacts: artifacts}
+	}
 	return residual, nil
+}
+
+type residualInspectionError struct {
+	Cause     error
+	Artifacts []LeaseArtifactEvidence
+}
+
+func (err *residualInspectionError) Error() string { return err.Cause.Error() }
+func (err *residualInspectionError) Unwrap() error { return err.Cause }
+
+func residualArtifacts(err error) []LeaseArtifactEvidence {
+	var inspection *residualInspectionError
+	if errors.As(err, &inspection) {
+		return inspection.Artifacts
+	}
+	return nil
 }
 
 func mountedResidualStatus(residual Residual) string {
@@ -84,13 +104,13 @@ func mountedResidualStatus(residual Residual) string {
 		residual.Junctions,
 	}
 	for _, metric := range metrics {
-		if metric.Count != 0 {
-			return "MOUNTED_MEASURED_NONZERO"
+		if !metric.Measured {
+			return "NOT_MEASURED"
 		}
 	}
 	for _, metric := range metrics {
-		if !metric.Measured {
-			return "NOT_MEASURED"
+		if metric.Count != 0 {
+			return "MOUNTED_MEASURED_NONZERO"
 		}
 	}
 	return "MOUNTED_MEASURED_ZERO"
@@ -232,35 +252,90 @@ func countCoordinationArtifacts(leases string) (int, error) {
 	return counts.reservation + counts.coordination + counts.mutation, err
 }
 
-func countWorkerJunctions(leases string) (int, error) {
+func inspectWorkerJunctions(leases string) (int, []LeaseArtifactEvidence, error) {
 	entries, err := os.ReadDir(leases)
 	if os.IsNotExist(err) {
-		return 0, nil
+		return 0, nil, nil
 	}
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	count := 0
+	var artifacts []LeaseArtifactEvidence
+	var inspectionErrors []string
 	for _, entry := range entries {
 		if !workerJournalPattern.MatchString(entry.Name()) {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(leases, entry.Name()))
-		if err != nil {
-			return 0, err
+		path := filepath.Join(leases, entry.Name())
+		evidence := LeaseArtifactEvidence{Name: entry.Name(), Path: path, Kind: "worker-journal", DecodeStatus: "NOT_ATTEMPTED"}
+		info, statErr := os.Lstat(path)
+		if statErr != nil {
+			evidence.DecodeStatus = "FAILED"
+			evidence.DecodeError = statErr.Error()
+			artifacts = append(artifacts, evidence)
+			inspectionErrors = append(inspectionErrors, fmt.Sprintf("inspect %s: %v", entry.Name(), statErr))
+			continue
 		}
+		evidence.Size = info.Size()
+		evidence.Mode = info.Mode().String()
+		reparse, reparseErr := inspectPathReparse(path)
+		evidence.ReparsePoint = reparse
+		if reparseErr != nil || reparse || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			evidence.DecodeStatus = "FAILED"
+			evidence.DecodeError = errors.Join(reparseErr, fmt.Errorf("journal is not a real non-reparse file")).Error()
+			artifacts = append(artifacts, evidence)
+			inspectionErrors = append(inspectionErrors, evidence.DecodeError)
+			continue
+		}
+		if info.Size() > 1<<20 {
+			evidence.DecodeStatus = "FAILED"
+			evidence.DecodeError = "worker journal exceeds 1 MiB forensic bound"
+			artifacts = append(artifacts, evidence)
+			inspectionErrors = append(inspectionErrors, fmt.Sprintf("inspect %s: %s", entry.Name(), evidence.DecodeError))
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			evidence.DecodeStatus = "FAILED"
+			evidence.DecodeError = err.Error()
+			artifacts = append(artifacts, evidence)
+			inspectionErrors = append(inspectionErrors, fmt.Sprintf("read %s: %v", entry.Name(), err))
+			continue
+		}
+		digest := sha256.Sum256(data)
+		evidence.SHA256 = fmt.Sprintf("%x", digest[:])
+		leading := data
+		if len(leading) > 64 {
+			leading = leading[:64]
+		}
+		evidence.LeadingBytesHex = fmt.Sprintf("%x", leading)
 		var metadata WorkerMetadata
 		if err := json.Unmarshal(data, &metadata); err != nil {
-			return 0, fmt.Errorf("decode %s: %w", entry.Name(), err)
+			evidence.DecodeStatus = "FAILED"
+			evidence.DecodeError = err.Error()
+			artifacts = append(artifacts, evidence)
+			inspectionErrors = append(inspectionErrors, fmt.Sprintf("decode %s: %v", entry.Name(), err))
+			continue
 		}
+		evidence.DecodeStatus = "PASS"
+		evidence.LeaseID = metadata.LeaseID
+		evidence.KeyDigest = metadata.KeyDigest
+		evidence.OwnershipToken = metadata.OwnershipToken
+		evidence.JunctionPath = metadata.JunctionPath
+		evidence.JunctionRemoved = &metadata.JunctionRemoved
+		artifacts = append(artifacts, evidence)
 		if metadata.JunctionPath == "" || metadata.JunctionRemoved {
 			continue
 		}
 		if _, err := os.Lstat(metadata.JunctionPath); err == nil {
 			count++
 		} else if !os.IsNotExist(err) {
-			return 0, err
+			inspectionErrors = append(inspectionErrors, fmt.Sprintf("inspect junction %s: %v", metadata.JunctionPath, err))
 		}
 	}
-	return count, nil
+	if len(inspectionErrors) != 0 {
+		return count, artifacts, fmt.Errorf("%s", strings.Join(inspectionErrors, "; "))
+	}
+	return count, artifacts, nil
 }

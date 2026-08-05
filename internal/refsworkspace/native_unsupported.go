@@ -21,6 +21,12 @@ func (unsupportedPoolNative) CreateDynamic(string, int64) error {
 func (unsupportedPoolNative) Mount(context.Context, string, string, bool) (MountedPool, error) {
 	return nil, newError(CodeUnsupportedPlatform, "mount", "", nil)
 }
+func (unsupportedPoolNative) MountReadOnly(context.Context, string, string) (MountedPool, error) {
+	return nil, newError(CodeUnsupportedPlatform, "mount-read-only", "", nil)
+}
+func (unsupportedPoolNative) MountReadOnly(context.Context, string, string) (MountedPool, error) {
+	return nil, newError(CodeUnsupportedPlatform, "mount-read-only", "", nil)
+}
 func (unsupportedPoolNative) FileIdentity(string) (string, error) {
 	return "", newError(CodeUnsupportedPlatform, "file-identity", "", nil)
 }

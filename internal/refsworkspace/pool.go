@@ -32,6 +32,7 @@ type PoolNative interface {
 	IsElevated(context.Context) (bool, error)
 	CreateDynamic(path string, maximumBytes int64) error
 	Mount(context.Context, string, string, bool) (MountedPool, error)
+	MountReadOnly(context.Context, string, string) (MountedPool, error)
 	FileIdentity(path string) (string, error)
 	FileUsage(path string) (FileUsage, error)
 	HostFilesystem(path string) (string, error)
@@ -331,7 +332,7 @@ func (service *Service) Setup(ctx context.Context, config Config) (returnResult 
 	service.setupEvent("durable-pool-verification")
 	residual, err := measureMountedResidual(paths)
 	if err != nil {
-		return nil, newError(CodeCleanupFailed, "measure-mounted-residual", paths.PoolRoot, err)
+		return nil, errorWithResidualEvidence(newError(CodeCleanupFailed, "measure-mounted-residual", paths.PoolRoot, err), residual, residualArtifacts(err))
 	}
 	closeErr = closeMountedBounded(mounted)
 	if closeErr != nil {
@@ -485,7 +486,7 @@ func (service *Service) inspect(ctx context.Context, config Config, runProbe boo
 	}
 	residual, err := measureMountedResidual(paths)
 	if err != nil {
-		return nil, newError(CodeCleanupFailed, "measure-mounted-residual", paths.PoolRoot, err)
+		return nil, errorWithResidualEvidence(newError(CodeCleanupFailed, "measure-mounted-residual", paths.PoolRoot, err), residual, residualArtifacts(err))
 	}
 	if runProbe {
 		if err := mounted.Flush(ctx); err != nil {
@@ -614,7 +615,7 @@ func (service *Service) Remove(ctx context.Context, config Config) (returnResult
 	}
 	residual, err := measureMountedResidual(paths)
 	if err != nil {
-		return nil, newError(CodeCleanupFailed, "measure-mounted-residual", paths.PoolRoot, err)
+		return nil, errorWithResidualEvidence(newError(CodeCleanupFailed, "measure-mounted-residual", paths.PoolRoot, err), residual, residualArtifacts(err))
 	}
 	for name, metric := range map[string]ResidualMetric{
 		"baseline creation locks": residual.BaselineCreationLocks,

@@ -331,6 +331,32 @@ or related Unity/probe/Phase 2 process. It deletes only that marker, flushes,
 detaches and reattaches to prove durable absence, then delegates to normal
 ownership-safe remove. It is not forced-termination or reboot recovery.
 
+`diagnose-worker-release-residual --key-digest ... --lease-id ...` attaches an
+existing pool read-only. It counts lease namespace entries before decoding
+them and records each journal or marker's size, SHA-256, leading bytes,
+attributes, reparse state, file identity when available, and decode result. A
+corrupt journal therefore leaves `workerLeaseJournals` measured while
+`junctions` and the aggregate mounted status remain `NOT_MEASURED`; the
+structural evidence is no longer lost behind the JSON error.
+
+`recover-corrupt-released-worker-residual` is separate from the single-marker
+operation. It accepts only the observed completed-release shape, pins both the
+original Unity Phase 2 ZIP and the read-only diagnosis by SHA-256, validates
+their exact key, lease, worker token, pool identity, successful release,
+semantic parity, and isolation evidence, and refuses valid/live journals or
+any worker, staging, quarantine, junction, process, or unknown artifact. Before
+deleting the exact hashed corrupt journal and marker, it durably copies their
+raw bytes to an external artifact root and creates a recovery receipt. It then
+flushes the exact volume, proves absence through detach/reattach, and delegates
+to normal ownership-safe remove. This is not generalized forced-termination or
+reboot recovery.
+
+Worker journals and active-use markers now use a ReFS-managed durable-write
+primitive: exclusive or unique temporary creation, complete write, file flush,
+atomic rename where applicable, and byte-for-byte read-back. The exact volume
+flush remains the transaction boundary for namespace deletions. Other users of
+the shared atomic-file package retain their prior behavior.
+
 Sparse files are cloned from their allocated ranges. The destination is marked
 sparse before sizing; only aligned allocated extents are block-cloned; holes
 remain holes; and unaligned allocated fragments are physically copied and
