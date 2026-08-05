@@ -96,6 +96,11 @@ type WorkerManager struct {
 	releaseHook     func(string) error
 	removeLease     func(string) error
 	updateLeaseHook func(*WorkerMetadata) error
+	mkdir           func(string, os.FileMode) error
+	writeFile       func(string, []byte, os.FileMode) error
+	makeWritable    func(string) error
+	rename          func(string, string) error
+	resolveBaseline func(context.Context, CompatibilityKey) (BaselineResolution, BaselineMetrics, error)
 }
 
 func NewVerifiedWorkerManager(paths Paths, baselines *LibraryBaselineStore, cloner TreeCloner, junctions Junctioner, host, pool PoolMetadata, volume VolumeInfo) (*WorkerManager, error) {
@@ -116,16 +121,21 @@ func NewVerifiedWorkerManager(paths Paths, baselines *LibraryBaselineStore, clon
 // storage meters; production callers must use NewVerifiedWorkerManager.
 func newWorkerManager(paths Paths, baselines *LibraryBaselineStore, cloner TreeCloner, junctions Junctioner, policy PoolPolicy, meter WorkerStorageMeter) *WorkerManager {
 	return &WorkerManager{
-		paths:        paths,
-		baselines:    baselines,
-		cloner:       cloner,
-		junctions:    junctions,
-		policy:       policy,
-		now:          time.Now,
-		pid:          os.Getpid(),
-		processAlive: processIsAlive,
-		removeLease:  os.Remove,
-		storage:      meter,
+		paths:           paths,
+		baselines:       baselines,
+		cloner:          cloner,
+		junctions:       junctions,
+		policy:          policy,
+		now:             time.Now,
+		pid:             os.Getpid(),
+		processAlive:    processIsAlive,
+		removeLease:     os.Remove,
+		mkdir:           os.Mkdir,
+		writeFile:       os.WriteFile,
+		makeWritable:    makeWritableTree,
+		rename:          os.Rename,
+		resolveBaseline: baselines.Resolve,
+		storage:         meter,
 	}
 }
 
@@ -142,7 +152,7 @@ type WorkerLease struct {
 func (lease *WorkerLease) Metadata() WorkerMetadata { return lease.metadata }
 
 func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest) (resultLease *WorkerLease, metrics WorkerMetrics, returnErr error) {
-	if manager == nil || manager.baselines == nil || manager.cloner == nil || manager.junctions == nil || manager.storage == nil {
+	if manager == nil || manager.baselines == nil || manager.cloner == nil || manager.junctions == nil || manager.storage == nil || manager.mkdir == nil || manager.writeFile == nil || manager.makeWritable == nil || manager.rename == nil || manager.resolveBaseline == nil {
 		return nil, metrics, newError(CodeInvalidConfiguration, "worker-acquire", request.LeaseID, fmt.Errorf("worker dependencies are incomplete"))
 	}
 	if err := ctx.Err(); err != nil {
@@ -154,11 +164,10 @@ func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest
 	if manager.policy.ClusterSize <= 0 || manager.policy.SoftBudgetBytes <= 0 || manager.policy.WorkerReserveBytes <= 0 || manager.policy.MinimumHostFreeBytes <= 0 {
 		return nil, metrics, newError(CodeInvalidConfiguration, "worker-policy", request.LeaseID, fmt.Errorf("verified worker policy is incomplete"))
 	}
-	if err := os.MkdirAll(manager.paths.Workers, 0700); err != nil {
-		return nil, metrics, newError(CodeCloneFailed, "create-workers-root", manager.paths.Workers, err)
-	}
-	if err := os.MkdirAll(manager.paths.Leases, 0700); err != nil {
-		return nil, metrics, newError(CodeLeaseConflict, "create-leases-root", manager.paths.Leases, err)
+	for _, path := range []string{manager.paths.PoolRoot, manager.paths.Workers, manager.paths.Leases} {
+		if err := requireExistingWorkerLayoutDirectory(path); err != nil {
+			return nil, metrics, err
+		}
 	}
 	token, err := randomToken()
 	if err != nil {
@@ -185,7 +194,7 @@ func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest
 		}
 	}()
 
-	resolution, preVerify, err := manager.baselines.Resolve(ctx, request.Key)
+	resolution, preVerify, err := manager.resolveBaseline(ctx, request.Key)
 	metrics.BaselinePreCloneVerifyMs = preVerify.BaselineVerifyMs
 	if err != nil {
 		return nil, metrics, err
@@ -211,22 +220,44 @@ func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest
 		}
 	}()
 	staging := filepath.Join(manager.paths.Workers, "."+request.LeaseID+".staging-"+token[:12])
+	if err := validateWorkerStagingPaths(manager.paths, workerPath, staging); err != nil {
+		return nil, metrics, err
+	}
+	if _, err := os.Lstat(staging); err == nil {
+		return nil, metrics, newError(CodeLeaseConflict, "create-worker-staging", staging, fmt.Errorf("staging path already exists"))
+	} else if !os.IsNotExist(err) {
+		return nil, metrics, newError(CodeCloneFailed, "inspect-worker-staging", staging, err)
+	}
+	if _, err := os.Lstat(workerPath); err == nil {
+		return nil, metrics, newError(CodeLeaseConflict, "worker-path", workerPath, fmt.Errorf("worker path already exists"))
+	} else if !os.IsNotExist(err) {
+		return nil, metrics, newError(CodeLeaseConflict, "worker-path", workerPath, err)
+	}
+
+	stagingCreated := false
 	stagingCommitted := false
 	defer func() {
-		// This staging name and token were created by this acquire. If native
-		// clone code reports uncertain ownership it must return an owned marker
-		// error before this point; otherwise this bounded staging cleanup is safe.
-		if !stagingCommitted {
+		// A collision is never adopted or removed. Only the exact directory this
+		// acquire created is eligible for bounded cleanup.
+		if stagingCreated && !stagingCommitted {
 			if cleanupErr := os.RemoveAll(staging); cleanupErr != nil {
 				returnErr = errors.Join(returnErr, newError(CodeCleanupFailed, "cleanup-worker-staging", staging, cleanupErr))
 			}
 		}
 	}()
-	if _, err := os.Lstat(workerPath); !os.IsNotExist(err) {
-		return nil, metrics, newError(CodeLeaseConflict, "worker-path", workerPath, fmt.Errorf("worker path already exists"))
-	}
 	metadata.State = LeaseCloning
 	if err := manager.updateLease(leaseFile, &metadata); err != nil {
+		return nil, metrics, err
+	}
+	if err := manager.mkdir(staging, 0700); err != nil {
+		code := CodeCloneFailed
+		if os.IsExist(err) {
+			code = CodeLeaseConflict
+		}
+		return nil, metrics, newError(code, "create-worker-staging", staging, err)
+	}
+	stagingCreated = true
+	if err := verifyCreatedWorkerStaging(manager.paths, staging); err != nil {
 		return nil, metrics, err
 	}
 	cloneMetrics, err := manager.cloner.CloneTree(ctx, CloneRequest{
@@ -249,13 +280,13 @@ func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest
 	if err := ValidateCloneMetrics(cloneMetrics); err != nil {
 		return nil, metrics, err
 	}
-	if err := os.WriteFile(filepath.Join(staging, workerOwnerFile), mustJSON(metadata), 0600); err != nil {
+	if err := manager.writeFile(filepath.Join(staging, workerOwnerFile), mustJSON(metadata), 0600); err != nil {
 		return nil, metrics, newError(CodeCloneFailed, "write-worker-owner", staging, err)
 	}
-	if err := makeWritableTree(staging); err != nil {
+	if err := manager.makeWritable(staging); err != nil {
 		return nil, metrics, newError(CodeCloneFailed, "make-worker-writable", staging, err)
 	}
-	if err := os.Rename(staging, workerPath); err != nil {
+	if err := manager.rename(staging, workerPath); err != nil {
 		return nil, metrics, newError(CodeCloneFailed, "commit-worker", workerPath, err)
 	}
 	stagingCommitted = true
@@ -267,10 +298,19 @@ func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest
 			}
 		}
 	}()
+	if _, err := os.Lstat(staging); !os.IsNotExist(err) {
+		return nil, metrics, newError(CodeCloneFailed, "verify-worker-staging-committed", staging, errors.Join(err, fmt.Errorf("staging path remains after commit")))
+	}
+	if err := verifyWorkerOwner(workerPath, metadata); err != nil {
+		return nil, metrics, err
+	}
+	if info, err := os.Lstat(filepath.Join(workerPath, "Library")); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, metrics, newError(CodeCloneFailed, "verify-worker-library", filepath.Join(workerPath, "Library"), errors.Join(err, fmt.Errorf("committed Library is not a real directory")))
+	}
 
 	// Re-hash the canonical payload after cloning. A changed baseline blocks the
 	// worker before Unity can mutate it.
-	after, postVerify, err := manager.baselines.Resolve(ctx, request.Key)
+	after, postVerify, err := manager.resolveBaseline(ctx, request.Key)
 	metrics.BaselinePostCloneVerifyMs = postVerify.BaselineVerifyMs
 	if err != nil || after.State != BaselineValid {
 		if err == nil {
@@ -303,6 +343,61 @@ func (manager *WorkerManager) Acquire(ctx context.Context, request WorkerRequest
 		releaseActive: releaseActive,
 		metrics:       metrics,
 	}, metrics, nil
+}
+
+func requireExistingWorkerLayoutDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return newError(CodePoolCorrupt, "validate-worker-layout", path, err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return newError(CodeOwnershipMismatch, "validate-worker-layout", path, fmt.Errorf("managed layout entry must be a real directory"))
+	}
+	reparse, err := inspectPathReparse(path)
+	if err != nil || reparse {
+		return newError(CodeOwnershipMismatch, "validate-worker-layout", path, errors.Join(err, fmt.Errorf("managed layout entry is a reparse point")))
+	}
+	return nil
+}
+
+func validateWorkerStagingPaths(paths Paths, workerPath, staging string) error {
+	if !filepath.IsAbs(staging) || !filepath.IsAbs(workerPath) {
+		return newError(CodeInvalidConfiguration, "validate-worker-staging", staging, fmt.Errorf("absolute worker paths required"))
+	}
+	workers := filepath.Clean(paths.Workers)
+	staging = filepath.Clean(staging)
+	workerPath = filepath.Clean(workerPath)
+	if !strings.EqualFold(filepath.Clean(filepath.Dir(staging)), workers) || !PathWithin(workers, staging) || !PathWithin(paths.PoolRoot, staging) {
+		return newError(CodeOwnershipMismatch, "validate-worker-staging", staging, fmt.Errorf("staging must be a direct child of the managed workers root"))
+	}
+	if strings.EqualFold(staging, workerPath) {
+		return newError(CodeOwnershipMismatch, "validate-worker-staging", staging, fmt.Errorf("staging and final worker paths must differ"))
+	}
+	return nil
+}
+
+func verifyCreatedWorkerStaging(paths Paths, staging string) error {
+	info, err := os.Lstat(staging)
+	if err != nil {
+		return newError(CodeCloneFailed, "verify-worker-staging", staging, err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return newError(CodeOwnershipMismatch, "verify-worker-staging", staging, fmt.Errorf("created staging is not a real directory"))
+	}
+	reparse, err := inspectPathReparse(staging)
+	if err != nil || reparse {
+		return newError(CodeOwnershipMismatch, "verify-worker-staging", staging, errors.Join(err, fmt.Errorf("created staging is a reparse point")))
+	}
+	if !PathWithin(paths.PoolRoot, staging) || !strings.EqualFold(filepath.Clean(filepath.Dir(staging)), filepath.Clean(paths.Workers)) {
+		return newError(CodeOwnershipMismatch, "verify-worker-staging", staging, fmt.Errorf("created staging escaped the verified ReFS pool"))
+	}
+	library := filepath.Join(staging, "Library")
+	if _, err := os.Lstat(library); err == nil {
+		return newError(CodeLeaseConflict, "verify-worker-staging", library, fmt.Errorf("clone destination already exists"))
+	} else if !os.IsNotExist(err) {
+		return newError(CodeCloneFailed, "verify-worker-staging", library, err)
+	}
+	return nil
 }
 
 func (manager *WorkerManager) reserveWorker(ctx context.Context, request WorkerRequest, metadata WorkerMetadata) (leaseFile string, returnErr error) {

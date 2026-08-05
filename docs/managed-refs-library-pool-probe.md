@@ -166,6 +166,7 @@ acquire pool reservation lock
 → verify baseline under its coordination lock
 → acquire baseline active-use marker with O_EXCL
 → persist cloning lease
+→ create and verify an exact owned worker staging root
 → Block Clone every regular file
 → verify baseline again
 → make worker writable
@@ -403,3 +404,15 @@ residuals were zero. Artifact ZIP SHA-256:
 `AF020C740B80FBB6472A3C5EC416E6DF69EA73DD8BDEDCDCBEB8DBE000E0CF36`.
 Unity correctness, canonical baseline ACL correctness, 1/2/4/8 workers, and
 release readiness remain `NOT MEASURED`; `PROMISING` is not `PROVEN`.
+
+The first Unity Phase 2A single-worker run at commit
+`5838a2cba06f0138e4092fa1962a94ebeb0832ce` built and protected a canonical
+Unity 6000.3.8f1 Library baseline and passed reference EditMode 2/2 and
+PlayMode 1/1 with no compile errors. The first worker acquire then failed at
+`validate-clone-destination-parent`: `WorkerManager` had calculated, but had
+not created, its exact staging root before passing `staging\Library` to the
+strict clone path validator. Worker Block Clone and worker Unity were not
+executed. Cleanup was `released`; the VHDX, owner records, mount, storage root,
+related attached disk, temporary drive letter, and owned processes had zero
+residuals. Artifact ZIP SHA-256:
+`242F3365EFA1BF1B359D5D913640ECC1045649EFD9D4D0BE57DAA36D69DD304A`.

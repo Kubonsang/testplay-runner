@@ -2,6 +2,7 @@ package refsworkspace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -519,4 +520,358 @@ func boolCount(value bool) int64 {
 		return 1
 	}
 	return 0
+}
+
+type stagingContractCloner struct {
+	t     *testing.T
+	paths Paths
+}
+
+type treeClonerFunc func(context.Context, CloneRequest) (CloneMetrics, error)
+
+func (function treeClonerFunc) CloneTree(ctx context.Context, request CloneRequest) (CloneMetrics, error) {
+	return function(ctx, request)
+}
+
+func (cloner stagingContractCloner) CloneTree(ctx context.Context, request CloneRequest) (CloneMetrics, error) {
+	cloner.t.Helper()
+	parent := filepath.Dir(request.Destination)
+	info, err := os.Lstat(parent)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		cloner.t.Fatalf("clone parent is not an existing real directory: info=%v err=%v", info, err)
+	}
+	if _, err := os.Lstat(request.Destination); !os.IsNotExist(err) {
+		cloner.t.Fatalf("clone destination must not exist: %v", err)
+	}
+	if request.TrustedRoot != cloner.paths.PoolRoot {
+		cloner.t.Fatalf("trustedRoot=%q expected=%q", request.TrustedRoot, cloner.paths.PoolRoot)
+	}
+	if !strings.EqualFold(filepath.Clean(filepath.Dir(parent)), filepath.Clean(cloner.paths.Workers)) || !PathWithin(cloner.paths.PoolRoot, parent) {
+		cloner.t.Fatalf("staging parent escaped workers root: %s", parent)
+	}
+	return (copyClaimingCloner{}).CloneTree(ctx, request)
+}
+
+func TestWorkerStagingRootContractAndSuccessLifecycle(t *testing.T) {
+	paths := testPoolPaths(t)
+	store := NewLibraryBaselineStore(paths)
+	key := testCompatibilityKey("a")
+	if _, _, _, err := store.Ensure(context.Background(), key, func(_ context.Context, libraryPath string) error {
+		return os.WriteFile(filepath.Join(libraryPath, "artifact.bin"), []byte(strings.Repeat("s", 8193)), 0600)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	manager := newWorkerTestManager(paths, store, stagingContractCloner{t: t, paths: paths}, testJunctioner{})
+	leaseID := "lease-stage1"
+	leasePath := filepath.Join(paths.Leases, "worker-"+leaseID+".json")
+	var staging string
+	originalMkdir := manager.mkdir
+	manager.mkdir = func(path string, mode os.FileMode) error {
+		data, err := os.ReadFile(leasePath)
+		if err != nil {
+			t.Fatalf("CLONING journal was not persisted before mkdir: %v", err)
+		}
+		var metadata WorkerMetadata
+		if err := json.Unmarshal(data, &metadata); err != nil || metadata.State != LeaseCloning {
+			t.Fatalf("journal=%+v err=%v", metadata, err)
+		}
+		staging = path
+		return originalMkdir(path, mode)
+	}
+	junction := filepath.Join(t.TempDir(), "Library")
+	lease, metrics, err := manager.Acquire(context.Background(), WorkerRequest{Key: key, LeaseID: leaseID, JunctionPath: junction})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := lease.Metadata()
+	if staging == "" || filepath.Dir(staging) != paths.Workers || !PathWithin(paths.PoolRoot, staging) {
+		t.Fatalf("staging=%q", staging)
+	}
+	if _, err := os.Lstat(staging); !os.IsNotExist(err) {
+		t.Fatalf("committed staging remains: %v", err)
+	}
+	for _, path := range []string{metadata.WorkerPath, filepath.Join(metadata.WorkerPath, "Library"), filepath.Join(metadata.WorkerPath, workerOwnerFile)} {
+		if _, err := os.Lstat(path); err != nil {
+			t.Fatalf("committed worker path missing %s: %v", path, err)
+		}
+	}
+	if metadata.State != LeaseReady || metrics.ClonedBytes != 8192 || !metadata.Clone.RegularBlockCloneIOCTLAttempted {
+		t.Fatalf("metadata=%+v metrics=%+v", metadata, metrics)
+	}
+	if count, _ := countEntries(paths.Leases, "active-", ".json"); count != 1 {
+		t.Fatalf("active use count=%d", count)
+	}
+	if _, err := lease.Release(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertWorkerAcquireResidualZero(t, paths, junction)
+	if err := store.Clear(context.Background(), key); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWorkerStagingCollisionIsRejectedAndPreserved(t *testing.T) {
+	paths, store, key := workerStagingTestFixture(t, "b")
+	manager := newWorkerTestManager(paths, store, copyClaimingCloner{}, testJunctioner{})
+	var collision string
+	manager.mkdir = func(path string, mode os.FileMode) error {
+		collision = path
+		if err := os.Mkdir(path, mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "foreign.txt"), []byte("foreign"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		return os.ErrExist
+	}
+	junction := filepath.Join(t.TempDir(), "Library")
+	_, _, err := manager.Acquire(context.Background(), WorkerRequest{Key: key, LeaseID: "lease-stage2", JunctionPath: junction})
+	if ErrorCode(err) != CodeLeaseConflict {
+		t.Fatalf("err=%v", err)
+	}
+	if data, readErr := os.ReadFile(filepath.Join(collision, "foreign.txt")); readErr != nil || string(data) != "foreign" {
+		t.Fatalf("collision was removed or changed: %q err=%v", data, readErr)
+	}
+	if count, _ := countEntries(paths.Leases, "worker-", ".json"); count != 0 {
+		t.Fatalf("lease residual=%d", count)
+	}
+	if count, _ := countEntries(paths.Leases, "active-", ".json"); count != 0 {
+		t.Fatalf("active residual=%d", count)
+	}
+	if err := os.RemoveAll(collision); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Clear(context.Background(), key); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWorkerStagingMkdirFailurePreservesPrimaryError(t *testing.T) {
+	paths, store, key := workerStagingTestFixture(t, "c")
+	manager := newWorkerTestManager(paths, store, copyClaimingCloner{}, testJunctioner{})
+	primary := errors.New("mkdir injection")
+	manager.mkdir = func(string, os.FileMode) error { return primary }
+	junction := filepath.Join(t.TempDir(), "Library")
+	_, _, err := manager.Acquire(context.Background(), WorkerRequest{Key: key, LeaseID: "lease-stage3", JunctionPath: junction})
+	if ErrorCode(err) != CodeCloneFailed || !errors.Is(err, primary) {
+		t.Fatalf("err=%v", err)
+	}
+	assertWorkerAcquireResidualZero(t, paths, junction)
+	if err := store.Clear(context.Background(), key); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWorkerCloneFailureRemovesOwnedStagingAndReferences(t *testing.T) {
+	paths, store, key := workerStagingTestFixture(t, "d")
+	primary := errors.New("clone injection")
+	manager := newWorkerTestManager(paths, store, copyClaimingCloner{fail: primary}, testJunctioner{})
+	junction := filepath.Join(t.TempDir(), "Library")
+	_, _, err := manager.Acquire(context.Background(), WorkerRequest{Key: key, LeaseID: "lease-stage4", JunctionPath: junction})
+	if ErrorCode(err) != CodeCloneFailed || !errors.Is(err, primary) {
+		t.Fatalf("err=%v", err)
+	}
+	assertWorkerAcquireResidualZero(t, paths, junction)
+	resolution, _, verifyErr := store.Resolve(context.Background(), key)
+	if verifyErr != nil || resolution.State != BaselineValid {
+		t.Fatalf("baseline state=%s err=%v", resolution.State, verifyErr)
+	}
+	if err := store.Clear(context.Background(), key); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWorkerRejectsReparseWorkersRootAndFinalCollision(t *testing.T) {
+	t.Run("reparse-workers-root", func(t *testing.T) {
+		paths, store, key := workerStagingTestFixture(t, "e")
+		original := inspectPathReparse
+		inspectPathReparse = func(path string) (bool, error) {
+			if strings.EqualFold(filepath.Clean(path), filepath.Clean(paths.Workers)) {
+				return true, nil
+			}
+			return original(path)
+		}
+		t.Cleanup(func() { inspectPathReparse = original })
+		manager := newWorkerTestManager(paths, store, copyClaimingCloner{}, testJunctioner{})
+		_, _, err := manager.Acquire(context.Background(), WorkerRequest{Key: key, LeaseID: "lease-stage5", JunctionPath: filepath.Join(t.TempDir(), "Library")})
+		if ErrorCode(err) != CodeOwnershipMismatch {
+			t.Fatalf("err=%v", err)
+		}
+		if err := store.Clear(context.Background(), key); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("final-worker-collision", func(t *testing.T) {
+		paths, store, key := workerStagingTestFixture(t, "f")
+		workerPath := filepath.Join(paths.Workers, "lease-stage6")
+		if err := os.Mkdir(workerPath, 0700); err != nil {
+			t.Fatal(err)
+		}
+		marker := filepath.Join(workerPath, "foreign.txt")
+		if err := os.WriteFile(marker, []byte("foreign"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		manager := newWorkerTestManager(paths, store, copyClaimingCloner{}, testJunctioner{})
+		_, _, err := manager.Acquire(context.Background(), WorkerRequest{Key: key, LeaseID: "lease-stage6", JunctionPath: filepath.Join(t.TempDir(), "Library")})
+		if ErrorCode(err) != CodeLeaseConflict {
+			t.Fatalf("err=%v", err)
+		}
+		if data, readErr := os.ReadFile(marker); readErr != nil || string(data) != "foreign" {
+			t.Fatalf("final collision changed: %q err=%v", data, readErr)
+		}
+		if err := os.RemoveAll(workerPath); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.Clear(context.Background(), key); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestWorkerAcquireFailureStagesCleanOwnedArtifacts(t *testing.T) {
+	tests := []struct {
+		name      string
+		wantCode  string
+		configure func(*testing.T, *WorkerManager, Paths, error)
+	}{
+		{
+			name: "before-clone-validation", wantCode: CodeLeaseConflict,
+			configure: func(t *testing.T, manager *WorkerManager, _ Paths, _ error) {
+				original := manager.mkdir
+				manager.mkdir = func(path string, mode os.FileMode) error {
+					if err := original(path, mode); err != nil {
+						return err
+					}
+					return os.Mkdir(filepath.Join(path, "Library"), 0700)
+				}
+			},
+		},
+		{
+			name: "clone-midway", wantCode: CodeCloneFailed,
+			configure: func(_ *testing.T, manager *WorkerManager, _ Paths, primary error) {
+				manager.cloner = treeClonerFunc(func(_ context.Context, request CloneRequest) (CloneMetrics, error) {
+					if err := os.Mkdir(request.Destination, 0700); err != nil {
+						return CloneMetrics{}, err
+					}
+					if err := os.WriteFile(filepath.Join(request.Destination, "partial.bin"), []byte("partial"), 0600); err != nil {
+						return CloneMetrics{}, err
+					}
+					return CloneMetrics{FailedFileCount: 1}, primary
+				})
+			},
+		},
+		{
+			name: "clone-metrics", wantCode: CodeBlockCloneUnavailable,
+			configure: func(_ *testing.T, manager *WorkerManager, _ Paths, _ error) {
+				manager.cloner = copyClaimingCloner{fallback: true}
+			},
+		},
+		{
+			name: "owner-write", wantCode: CodeCloneFailed,
+			configure: func(_ *testing.T, manager *WorkerManager, _ Paths, primary error) {
+				manager.writeFile = func(string, []byte, os.FileMode) error { return primary }
+			},
+		},
+		{
+			name: "make-writable", wantCode: CodeCloneFailed,
+			configure: func(_ *testing.T, manager *WorkerManager, _ Paths, primary error) {
+				manager.makeWritable = func(string) error { return primary }
+			},
+		},
+		{
+			name: "rename", wantCode: CodeCloneFailed,
+			configure: func(_ *testing.T, manager *WorkerManager, _ Paths, primary error) {
+				manager.rename = func(string, string) error { return primary }
+			},
+		},
+		{
+			name: "post-clone-baseline-verify", wantCode: CodeBaselineCorrupt,
+			configure: func(_ *testing.T, manager *WorkerManager, _ Paths, primary error) {
+				original := manager.resolveBaseline
+				calls := 0
+				manager.resolveBaseline = func(ctx context.Context, key CompatibilityKey) (BaselineResolution, BaselineMetrics, error) {
+					calls++
+					if calls == 2 {
+						return BaselineResolution{}, BaselineMetrics{}, primary
+					}
+					return original(ctx, key)
+				}
+			},
+		},
+		{
+			name: "junction-create", wantCode: CodeJunctionFailed,
+			configure: func(_ *testing.T, manager *WorkerManager, _ Paths, primary error) {
+				manager.junctions = failingJunctioner{err: primary}
+			},
+		},
+		{
+			name: "ready-journal", wantCode: CodeLeaseConflict,
+			configure: func(_ *testing.T, manager *WorkerManager, _ Paths, primary error) {
+				manager.updateLeaseHook = func(metadata *WorkerMetadata) error {
+					if metadata.State == LeaseReady {
+						return primary
+					}
+					return nil
+				}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			paths, store, key := workerStagingTestFixture(t, "7")
+			manager := newWorkerTestManager(paths, store, copyClaimingCloner{}, testJunctioner{})
+			primary := errors.New("injected " + test.name)
+			test.configure(t, manager, paths, primary)
+			junction := filepath.Join(t.TempDir(), "Library")
+			_, _, err := manager.Acquire(context.Background(), WorkerRequest{Key: key, LeaseID: "lease-stage7", JunctionPath: junction})
+			if ErrorCode(err) != test.wantCode {
+				t.Fatalf("err=%v", err)
+			}
+			if test.name != "before-clone-validation" && test.name != "clone-metrics" && !errors.Is(err, primary) {
+				t.Fatalf("primary error was not preserved: %v", err)
+			}
+			assertWorkerAcquireResidualZero(t, paths, junction)
+			resolution, _, verifyErr := store.Resolve(context.Background(), key)
+			if verifyErr != nil || resolution.State != BaselineValid {
+				t.Fatalf("baseline state=%s err=%v", resolution.State, verifyErr)
+			}
+			if err := store.Clear(context.Background(), key); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func workerStagingTestFixture(t *testing.T, seed string) (Paths, *LibraryBaselineStore, CompatibilityKey) {
+	t.Helper()
+	paths := testPoolPaths(t)
+	store := NewLibraryBaselineStore(paths)
+	key := testCompatibilityKey(seed)
+	if _, _, _, err := store.Ensure(context.Background(), key, func(_ context.Context, libraryPath string) error {
+		return os.WriteFile(filepath.Join(libraryPath, "artifact.bin"), []byte(strings.Repeat("x", 8193)), 0600)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return paths, store, key
+}
+
+func assertWorkerAcquireResidualZero(t *testing.T, paths Paths, junction string) {
+	t.Helper()
+	residual, err := measureMountedResidual(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, metric := range map[string]ResidualMetric{
+		"active": residual.ActiveBaselineUses, "journals": residual.WorkerLeaseJournals,
+		"workers": residual.WorkerDirectories, "staging": residual.WorkerStagingDirs,
+		"unknown-workers": residual.UnknownWorkerArtifacts, "quarantine": residual.QuarantineEntries,
+		"reservation": residual.ReservationLocks, "junctions": residual.Junctions,
+	} {
+		if !metric.Measured || metric.Count != 0 {
+			t.Fatalf("%s residual=%+v", name, metric)
+		}
+	}
+	if _, err := os.Lstat(junction); !os.IsNotExist(err) {
+		t.Fatalf("junction residual: %v", err)
+	}
 }
