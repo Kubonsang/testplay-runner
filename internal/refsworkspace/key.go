@@ -16,10 +16,11 @@ import (
 )
 
 type CompatibilityOptions struct {
-	ProjectPath      string
-	UnityExecutable  string
-	BuildTarget      string
-	ScriptingBackend string
+	ProjectPath         string
+	UnityExecutable     string
+	BuildTarget         string
+	ScriptingBackend    string
+	LocalPackagesSHA256 string
 }
 
 type CompatibilityKey struct {
@@ -34,6 +35,7 @@ type CompatibilityKey struct {
 	ScriptingBackend      string `json:"scriptingBackend"`
 	ProjectIdentitySHA256 string `json:"projectIdentitySha256"`
 	AssetsSHA256          string `json:"assetsSha256"`
+	LocalPackagesSHA256   string `json:"localPackagesSha256,omitempty"`
 }
 
 type KeyMetrics struct {
@@ -60,6 +62,7 @@ type keyPayload struct {
 	ScriptingBackend      string `json:"scriptingBackend"`
 	ProjectIdentitySHA256 string `json:"projectIdentitySha256"`
 	AssetsSHA256          string `json:"assetsSha256"`
+	LocalPackagesSHA256   string `json:"localPackagesSha256,omitempty"`
 }
 
 func ComputeCompatibilityKey(ctx context.Context, options CompatibilityOptions) (CompatibilityKey, KeyMetrics, error) {
@@ -127,6 +130,7 @@ func ComputeCompatibilityKey(ctx context.Context, options CompatibilityOptions) 
 		ScriptingBackend:      options.ScriptingBackend,
 		ProjectIdentitySHA256: hashBytes([]byte(projectPath)),
 		AssetsSHA256:          assets.Digest,
+		LocalPackagesSHA256:   options.LocalPackagesSHA256,
 	}
 	canonical, err := json.Marshal(payload)
 	if err != nil {
@@ -144,6 +148,7 @@ func ComputeCompatibilityKey(ctx context.Context, options CompatibilityOptions) 
 		ScriptingBackend:      payload.ScriptingBackend,
 		ProjectIdentitySHA256: payload.ProjectIdentitySHA256,
 		AssetsSHA256:          payload.AssetsSHA256,
+		LocalPackagesSHA256:   payload.LocalPackagesSHA256,
 	}
 	metrics.KeyComputationMs = time.Since(started).Milliseconds()
 	return key, metrics, nil

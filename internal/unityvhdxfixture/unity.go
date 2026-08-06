@@ -16,11 +16,12 @@ import (
 )
 
 type UnityExecutor struct {
-	EditorPath string
-	Version    string
-	Marker     string
-	Filter     string
-	OnStart    func(pid int, startedAt time.Time)
+	EditorPath  string
+	Version     string
+	Marker      string
+	Filter      string
+	Environment map[string]string
+	OnStart     func(pid int, startedAt time.Time)
 }
 
 type synchronizedBuffer struct {
@@ -84,7 +85,7 @@ func (e UnityExecutor) RunCompile(ctx context.Context, projectPath, logPath stri
 	}
 	args := append(unity.BuildCompileArgs(projectPath), "-logFile", logPath)
 	started := time.Now()
-	runner := &unity.ProcessRunner{UnityPath: e.EditorPath, Env: map[string]string{MarkerEnv: e.Marker}, OnStart: e.OnStart}
+	runner := &unity.ProcessRunner{UnityPath: e.EditorPath, Env: e.processEnvironment(), OnStart: e.OnStart}
 	var output synchronizedBuffer
 	exitCode, runErr := runner.Run(ctx, args, &output, &output)
 	wall := time.Since(started).Milliseconds()
@@ -106,7 +107,7 @@ func (e UnityExecutor) RunTests(ctx context.Context, projectPath, platform, resu
 	}
 	args := unity.BuildRunArgs(projectPath, &unity.RunOptions{ResultsFilePath: resultsPath, TestPlatform: platform, Filter: e.Filter})
 	args = append(args, "-logFile", logPath)
-	runner := &unity.ProcessRunner{UnityPath: e.EditorPath, Env: map[string]string{MarkerEnv: e.Marker}, OnStart: e.OnStart}
+	runner := &unity.ProcessRunner{UnityPath: e.EditorPath, Env: e.processEnvironment(), OnStart: e.OnStart}
 	started := time.Now()
 	var output synchronizedBuffer
 	exitCode, runErr := runner.Run(ctx, args, &output, &output)
@@ -123,6 +124,17 @@ func (e UnityExecutor) RunTests(ctx context.Context, projectPath, platform, resu
 		return PlatformResult{}, resultErr
 	}
 	return result, nil
+}
+
+func (e UnityExecutor) processEnvironment() map[string]string {
+	environment := make(map[string]string, len(e.Environment)+1)
+	for key, value := range e.Environment {
+		environment[key] = value
+	}
+	if e.Marker != "" {
+		environment[MarkerEnv] = e.Marker
+	}
+	return environment
 }
 
 func ensureUnityLog(path, fallback string) {

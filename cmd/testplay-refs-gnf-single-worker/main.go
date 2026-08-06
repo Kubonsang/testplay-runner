@@ -18,6 +18,7 @@ func main() {
 	var timeout time.Duration
 	flag.StringVar(&config.UnityEditorPath, "unity-editor", "", "absolute Unity Editor executable")
 	flag.StringVar(&config.ProjectPath, "project", "", "absolute clean GNF Unity project")
+	flag.StringVar(&config.LocalPackagePath, "unity-cli-connector", "", "absolute clean portable Unity CLI connector package")
 	flag.StringVar(&config.ArtifactRoot, "artifact-root", "", "absolute artifact directory outside the VHDX")
 	flag.StringVar(&config.Pool.Root, "storage-root", "", "absolute fresh host storage root")
 	flag.StringVar(&config.Pool.VHDXPath, "pool-file", "", "absolute VHDX path directly under storage root")

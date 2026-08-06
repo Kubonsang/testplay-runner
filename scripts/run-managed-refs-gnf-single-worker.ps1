@@ -63,6 +63,7 @@ if (-not (Test-Administrator)) { throw 'Administrator PowerShell is required; th
 
 $unityEditor = Resolve-RequiredPath 'TESTPLAY_REFS_UNITY_EDITOR_PATH' $env:TESTPLAY_REFS_UNITY_EDITOR_PATH
 $projectPath = Resolve-RequiredPath 'TESTPLAY_REFS_GNF_PROJECT_PATH' $env:TESTPLAY_REFS_GNF_PROJECT_PATH
+$unityCLIConnector = Resolve-RequiredPath 'TESTPLAY_REFS_GNF_UNITY_CLI_CONNECTOR_PATH' $env:TESTPLAY_REFS_GNF_UNITY_CLI_CONNECTOR_PATH
 if ([string]::IsNullOrWhiteSpace($env:TESTPLAY_REFS_MAX_BYTES)) { throw 'TESTPLAY_REFS_MAX_BYTES is required' }
 $maximumBytes = [int64]$env:TESTPLAY_REFS_MAX_BYTES
 $testTimeout = if ([string]::IsNullOrWhiteSpace($env:TESTPLAY_REFS_UNITY_TEST_TIMEOUT)) { '30m' } else { $env:TESTPLAY_REFS_UNITY_TEST_TIMEOUT }
@@ -98,6 +99,7 @@ $preState = [ordered]@{
     build = [Environment]::OSVersion.Version.ToString()
   }
   projectPath = $projectPath
+  unityCLIConnectorPath = $unityCLIConnector
   storageRoot = Get-PathState $storageRoot
   vhdx = Get-PathState $poolFile
   mount = Get-PathState $mountRoot
@@ -126,6 +128,7 @@ try {
   & $binary `
     --unity-editor $unityEditor `
     --project $projectPath `
+    --unity-cli-connector $unityCLIConnector `
     --artifact-root $artifactRoot `
     --storage-root $storageRoot `
     --pool-file $poolFile `
@@ -212,7 +215,12 @@ if ($runExitCode -ne 0 -or -not $outerZero -or $runFailure) {
 }
 $summary | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $summaryPath -Encoding utf8
 
-Compress-Archive -Path (Join-Path $artifactRoot '*') -DestinationPath $zipPath
+$artifactFiles = @(
+  Get-ChildItem -LiteralPath $artifactRoot -File |
+    Where-Object { $_.FullName -ne $binary }
+)
+if ($artifactFiles.Count -eq 0) { throw "no evidence files available for archive: $artifactRoot" }
+Compress-Archive -LiteralPath @($artifactFiles.FullName) -DestinationPath $zipPath
 $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash
 Write-Output "GNF_STATUS=$($summary.verdict)"
 Write-Output "GNF_ARTIFACT_ROOT=$artifactRoot"

@@ -42,6 +42,7 @@ const (
 	CodeGNFSourceDirty                    = "gnf-source-dirty"
 	CodeUnityVersionMismatch              = "unity-version-mismatch"
 	CodeDeterministicTestUnavailable      = "deterministic-test-selection-unavailable"
+	CodeGNFLocalPackageNotFound           = "gnf-local-package-not-found"
 )
 
 // Error is the stable machine-readable error boundary for the probe.

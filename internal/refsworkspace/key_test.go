@@ -59,6 +59,31 @@ func TestCompatibilityKeyRequiresExplicitRuntimeDimensions(t *testing.T) {
 	}
 }
 
+func TestCompatibilityKeyIncludesPortableLocalPackageIdentity(t *testing.T) {
+	project, editor := makeKeyFixture(t)
+	options := CompatibilityOptions{ProjectPath: project, UnityExecutable: editor, BuildTarget: "StandaloneWindows64", ScriptingBackend: "Mono"}
+	withoutPackage, _, err := ComputeCompatibilityKey(context.Background(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options.LocalPackagesSHA256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	firstPackage, _, err := ComputeCompatibilityKey(context.Background(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options.LocalPackagesSHA256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	secondPackage, _, err := ComputeCompatibilityKey(context.Background(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withoutPackage.Digest == firstPackage.Digest || firstPackage.Digest == secondPackage.Digest {
+		t.Fatalf("portable package identity did not invalidate key: %q %q %q", withoutPackage.Digest, firstPackage.Digest, secondPackage.Digest)
+	}
+	if firstPackage.LocalPackagesSHA256 == "" {
+		t.Fatal("portable package digest was not retained as key evidence")
+	}
+}
+
 func makeKeyFixture(t *testing.T) (string, string) {
 	t.Helper()
 	root := t.TempDir()

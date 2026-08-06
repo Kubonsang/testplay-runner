@@ -30,3 +30,22 @@ func TestUnityFailureClassificationUsesTerminalLicenseFailure(t *testing.T) {
 		t.Fatalf("code=%q", code)
 	}
 }
+
+func TestUnityExecutorProcessEnvironmentPreservesScopedGitConfiguration(t *testing.T) {
+	executor := UnityExecutor{
+		Marker: "marker",
+		Environment: map[string]string{
+			"GIT_CONFIG_COUNT":   "1",
+			"GIT_CONFIG_KEY_0":   "core.longpaths",
+			"GIT_CONFIG_VALUE_0": "true",
+		},
+	}
+	environment := executor.processEnvironment()
+	if environment[MarkerEnv] != "marker" || environment["GIT_CONFIG_KEY_0"] != "core.longpaths" || environment["GIT_CONFIG_VALUE_0"] != "true" {
+		t.Fatalf("environment=%v", environment)
+	}
+	environment["GIT_CONFIG_VALUE_0"] = "false"
+	if executor.Environment["GIT_CONFIG_VALUE_0"] != "true" {
+		t.Fatal("process environment mutated the executor configuration")
+	}
+}

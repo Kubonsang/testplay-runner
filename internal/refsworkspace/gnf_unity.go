@@ -2,6 +2,7 @@ package refsworkspace
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -17,13 +18,16 @@ import (
 
 const GNFUnitySchemaVersion = 1
 
+const gnfUnityCLIConnectorPackage = "com.youngwoocho02.unity-cli-connector"
+
 type GNFUnityConfig struct {
-	Pool            Config        `json:"pool"`
-	UnityEditorPath string        `json:"unityEditorPath"`
-	ProjectPath     string        `json:"projectPath"`
-	ArtifactRoot    string        `json:"artifactRoot"`
-	TestTimeout     time.Duration `json:"testTimeout"`
-	PolicyOverride  bool          `json:"policyOverride"`
+	Pool             Config        `json:"pool"`
+	UnityEditorPath  string        `json:"unityEditorPath"`
+	ProjectPath      string        `json:"projectPath"`
+	ArtifactRoot     string        `json:"artifactRoot"`
+	TestTimeout      time.Duration `json:"testTimeout"`
+	PolicyOverride   bool          `json:"policyOverride"`
+	LocalPackagePath string        `json:"localPackagePath"`
 }
 
 type GNFTestSelection struct {
@@ -38,11 +42,23 @@ type GNFTestSelection struct {
 }
 
 type GNFUnityProcessEvidence struct {
-	PID         int                             `json:"pid"`
-	StartedAt   time.Time                       `json:"startedAt"`
-	CompletedAt time.Time                       `json:"completedAt"`
-	TimedOut    bool                            `json:"timedOut"`
-	Result      unityvhdxfixture.PlatformResult `json:"result"`
+	PID                 int                             `json:"pid"`
+	StartedAt           time.Time                       `json:"startedAt"`
+	CompletedAt         time.Time                       `json:"completedAt"`
+	TimedOut            bool                            `json:"timedOut"`
+	GitLongPathsEnabled bool                            `json:"gitLongPathsEnabled"`
+	Result              unityvhdxfixture.PlatformResult `json:"result"`
+}
+
+type GNFLocalPackageEvidence struct {
+	Path           string   `json:"path"`
+	RepositoryRoot string   `json:"repositoryRoot"`
+	Revision       string   `json:"revision"`
+	Origin         string   `json:"origin"`
+	GitStatus      string   `json:"gitStatus"`
+	Name           string   `json:"name"`
+	Version        string   `json:"version"`
+	Tree           TreeInfo `json:"tree"`
 }
 
 type GNFBaselineEvidence struct {
@@ -107,6 +123,9 @@ type GNFUnitySummary struct {
 	SourceBefore           *UnityPhase2SourceSnapshot       `json:"sourceBefore,omitempty"`
 	SourceAfter            *UnityPhase2SourceSnapshot       `json:"sourceAfter,omitempty"`
 	SourceUnchanged        *bool                            `json:"sourceUnchanged,omitempty"`
+	LocalPackageBefore     *GNFLocalPackageEvidence         `json:"localPackageBefore,omitempty"`
+	LocalPackageAfter      *GNFLocalPackageEvidence         `json:"localPackageAfter,omitempty"`
+	LocalPackageUnchanged  *bool                            `json:"localPackageUnchanged,omitempty"`
 	Selection              *GNFTestSelection                `json:"testSelection,omitempty"`
 	Setup                  *Result                          `json:"setup,omitempty"`
 	Baseline               *GNFBaselineEvidence             `json:"baseline,omitempty"`
@@ -156,7 +175,19 @@ func RunGNFUnity(ctx context.Context, requested GNFUnityConfig) (summary *GNFUni
 		return summary, err
 	}
 	summary.SourceBefore, summary.Selection = &source, &selection
-	_ = writePhase2JSON(artifactRoot, "environment.json", map[string]any{"config": config, "source": source})
+	localPackage, err := validateGNFLocalPackage(ctx, config.ProjectPath, config.LocalPackagePath)
+	if err != nil {
+		if ErrorCode(err) == CodeGNFLocalPackageNotFound {
+			summary.Status, summary.Verdict, summary.Code, summary.CleanupState = "BLOCKED", "BLOCKED", ErrorCode(err), "released"
+		}
+		return summary, err
+	}
+	summary.LocalPackageBefore = localPackage
+	portableLocalPackagePath := ""
+	if localPackage != nil {
+		portableLocalPackagePath = config.LocalPackagePath
+	}
+	_ = writePhase2JSON(artifactRoot, "environment.json", map[string]any{"config": config, "source": source, "localPackage": localPackage})
 	_ = writePhase2JSON(artifactRoot, "test-selection.json", selection)
 	workspacesRoot, err := prepareGNFWorkspacesRoot(artifactRoot)
 	if err != nil {
@@ -175,6 +206,21 @@ func RunGNFUnity(ctx context.Context, requested GNFUnityConfig) (summary *GNFUni
 		unchanged := source == after
 		summary.SourceUnchanged = &unchanged
 	}()
+	if localPackage != nil {
+		defer func() {
+			after, packageErr := captureGNFLocalPackage(context.Background(), config.LocalPackagePath)
+			if packageErr != nil {
+				returnErr = errors.Join(returnErr, packageErr)
+				return
+			}
+			summary.LocalPackageAfter = after
+			unchanged := *localPackage == *after
+			summary.LocalPackageUnchanged = &unchanged
+			if !unchanged {
+				returnErr = errors.Join(returnErr, newError(CodeOwnershipMismatch, "verify-gnf-local-package-isolation", config.LocalPackagePath, nil))
+			}
+		}()
+	}
 
 	baseExecutor := unityvhdxfixture.UnityExecutor{EditorPath: config.UnityEditorPath, Version: unityvhdxfixture.TargetUnityVersion}
 	versionCtx, cancelVersion := context.WithTimeout(ctx, config.TestTimeout)
@@ -253,7 +299,11 @@ func RunGNFUnity(ctx context.Context, requested GNFUnityConfig) (summary *GNFUni
 	volume := mounted.Volume()
 	summary.Storage = append(summary.Storage, measureUnityPhase2Storage(ctx, "before-baseline", service, paths, "", ""))
 
-	key, _, err := ComputeCompatibilityKey(ctx, CompatibilityOptions{ProjectPath: config.ProjectPath, UnityExecutable: config.UnityEditorPath, BuildTarget: "StandaloneWindows64", ScriptingBackend: "Mono"})
+	localPackageDigest := ""
+	if localPackage != nil {
+		localPackageDigest = localPackage.Tree.Digest
+	}
+	key, _, err := ComputeCompatibilityKey(ctx, CompatibilityOptions{ProjectPath: config.ProjectPath, UnityExecutable: config.UnityEditorPath, BuildTarget: "StandaloneWindows64", ScriptingBackend: "Mono", LocalPackagesSHA256: localPackageDigest})
 	if err != nil {
 		return summary, err
 	}
@@ -262,7 +312,7 @@ func RunGNFUnity(ctx context.Context, requested GNFUnityConfig) (summary *GNFUni
 	summary.Baseline = baselineEvidence
 	referenceWorkspace := filepath.Join(workspacesRoot, "reference")
 	baseline, state, baselineMetrics, err := store.Ensure(ctx, key, func(buildCtx context.Context, libraryPath string) (buildErr error) {
-		if copyErr := copyGNFProjectInputs(buildCtx, config.ProjectPath, referenceWorkspace); copyErr != nil {
+		if copyErr := copyGNFProjectInputs(buildCtx, config.ProjectPath, referenceWorkspace, portableLocalPackagePath); copyErr != nil {
 			return copyErr
 		}
 		junctionPath := filepath.Join(referenceWorkspace, "Library")
@@ -319,7 +369,7 @@ func RunGNFUnity(ctx context.Context, requested GNFUnityConfig) (summary *GNFUni
 	}
 
 	workerWorkspace := filepath.Join(workspacesRoot, "worker")
-	if err := copyGNFProjectInputs(ctx, config.ProjectPath, workerWorkspace); err != nil {
+	if err := copyGNFProjectInputs(ctx, config.ProjectPath, workerWorkspace, portableLocalPackagePath); err != nil {
 		return summary, err
 	}
 	manager, err := NewVerifiedWorkerManager(paths, store, NewNativeTreeCloner(), NewNativeJunctioner(), host, pool, volume)
@@ -477,6 +527,12 @@ func validateGNFConfig(ctx context.Context, requested GNFUnityConfig) (GNFUnityC
 	}
 	phase2, paths, err := validateUnityPhase2Config(UnityPhase2Config{Pool: requested.Pool, UnityEditorPath: requested.UnityEditorPath, FixturePath: requested.ProjectPath, ArtifactRoot: requested.ArtifactRoot, TestTimeout: requested.TestTimeout})
 	requested.Pool, requested.UnityEditorPath, requested.ProjectPath, requested.ArtifactRoot, requested.TestTimeout = phase2.Pool, phase2.UnityEditorPath, phase2.FixturePath, phase2.ArtifactRoot, phase2.TestTimeout
+	if requested.LocalPackagePath != "" {
+		if !filepath.IsAbs(requested.LocalPackagePath) {
+			return requested, paths, emptySource, emptySelection, newError(CodeGNFLocalPackageNotFound, "validate-gnf-local-package", requested.LocalPackagePath, fmt.Errorf("absolute path required"))
+		}
+		requested.LocalPackagePath = filepath.Clean(requested.LocalPackagePath)
+	}
 	if err != nil {
 		return requested, paths, emptySource, emptySelection, err
 	}
@@ -579,7 +635,7 @@ func inventoryContainsSuffix(inventory []string, candidate string) bool {
 	return false
 }
 
-func copyGNFProjectInputs(ctx context.Context, source, destination string) error {
+func copyGNFProjectInputs(ctx context.Context, source, destination string, localPackagePath ...string) error {
 	parent := filepath.Dir(destination)
 	parentInfo, err := os.Lstat(parent)
 	if err != nil || !parentInfo.IsDir() {
@@ -608,8 +664,151 @@ func copyGNFProjectInputs(ctx context.Context, source, destination string) error
 			return err
 		}
 	}
+	if len(localPackagePath) > 1 {
+		return newError(CodeInvalidConfiguration, "copy-gnf-local-package", destination, fmt.Errorf("at most one local package path is accepted"))
+	}
+	if len(localPackagePath) == 1 && localPackagePath[0] != "" {
+		if err := embedGNFLocalPackage(ctx, destination, localPackagePath[0]); err != nil {
+			return err
+		}
+	}
 	succeeded = true
 	return nil
+}
+
+func validateGNFLocalPackage(ctx context.Context, projectPath, configuredPath string) (*GNFLocalPackageEvidence, error) {
+	manifest, err := readJSONMap(filepath.Join(projectPath, "Packages", "manifest.json"))
+	if err != nil {
+		return nil, newError(CodeInvalidConfiguration, "read-gnf-manifest", projectPath, err)
+	}
+	dependencies, _ := manifest["dependencies"].(map[string]any)
+	value, exists := dependencies[gnfUnityCLIConnectorPackage].(string)
+	if !exists {
+		return nil, nil
+	}
+	if !strings.HasPrefix(strings.TrimSpace(value), "file:") {
+		return nil, nil
+	}
+	if configuredPath == "" {
+		return nil, newError(CodeGNFLocalPackageNotFound, "resolve-gnf-local-package", gnfUnityCLIConnectorPackage, fmt.Errorf("project dependency %q requires an explicit portable package path", value))
+	}
+	evidence, err := captureGNFLocalPackage(ctx, configuredPath)
+	if err != nil {
+		return nil, newError(CodeGNFLocalPackageNotFound, "validate-gnf-local-package", configuredPath, err)
+	}
+	if evidence.Name != gnfUnityCLIConnectorPackage {
+		return nil, newError(CodeGNFLocalPackageNotFound, "validate-gnf-local-package-name", configuredPath, fmt.Errorf("package=%q expected=%q", evidence.Name, gnfUnityCLIConnectorPackage))
+	}
+	if evidence.GitStatus != "" {
+		return nil, newError(CodeGNFLocalPackageNotFound, "validate-gnf-local-package-clean", configuredPath, fmt.Errorf("local package repository is dirty: %s", evidence.GitStatus))
+	}
+	return evidence, nil
+}
+
+func captureGNFLocalPackage(ctx context.Context, packagePath string) (*GNFLocalPackageEvidence, error) {
+	canonical, err := canonicalExistingPath(packagePath)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(canonical)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, errors.Join(err, fmt.Errorf("local package must be a real directory"))
+	}
+	reparse, err := inspectPathReparse(canonical)
+	if err != nil || reparse {
+		return nil, errors.Join(err, fmt.Errorf("local package must not be a reparse point"))
+	}
+	var packageJSON struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	}
+	data, err := os.ReadFile(filepath.Join(canonical, "package.json"))
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(data, &packageJSON); err != nil {
+		return nil, err
+	}
+	if packageJSON.Name == "" || packageJSON.Version == "" {
+		return nil, fmt.Errorf("valid package.json name and version are required")
+	}
+	repository, err := runGit(canonical, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return nil, err
+	}
+	repository = strings.TrimSpace(repository)
+	revision, err := runGit(repository, "rev-parse", "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	status, err := runGit(repository, "status", "--porcelain=v1", "--untracked-files=all")
+	if err != nil {
+		return nil, err
+	}
+	origin, err := runGit(repository, "remote", "get-url", "origin")
+	if err != nil {
+		return nil, err
+	}
+	tree, err := HashTree(ctx, canonical)
+	if err != nil {
+		return nil, err
+	}
+	return &GNFLocalPackageEvidence{Path: canonical, RepositoryRoot: repository, Revision: strings.TrimSpace(revision), Origin: strings.TrimSpace(origin), GitStatus: strings.TrimSpace(status), Name: packageJSON.Name, Version: packageJSON.Version, Tree: tree}, nil
+}
+
+func embedGNFLocalPackage(ctx context.Context, workspace, packagePath string) error {
+	destination := filepath.Join(workspace, "Packages", gnfUnityCLIConnectorPackage)
+	if _, err := os.Lstat(destination); err == nil {
+		return newError(CodeOwnershipMismatch, "embed-gnf-local-package", destination, fmt.Errorf("embedded package destination already exists"))
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := shadow.CopyDirParallel(ctx, packagePath, destination, 0); err != nil {
+		return err
+	}
+	manifestPath := filepath.Join(workspace, "Packages", "manifest.json")
+	manifest, err := readJSONMap(manifestPath)
+	if err != nil {
+		return err
+	}
+	dependencies, ok := manifest["dependencies"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("manifest dependencies object is missing")
+	}
+	delete(dependencies, gnfUnityCLIConnectorPackage)
+	if err := writeJSONAtomic(manifestPath, manifest, 0600); err != nil {
+		return err
+	}
+	lockPath := filepath.Join(workspace, "Packages", "packages-lock.json")
+	lock, err := readJSONMap(lockPath)
+	if err != nil {
+		return err
+	}
+	lockDependencies, ok := lock["dependencies"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("packages-lock dependencies object is missing")
+	}
+	entry, ok := lockDependencies[gnfUnityCLIConnectorPackage].(map[string]any)
+	if !ok {
+		return fmt.Errorf("packages-lock entry is missing: %s", gnfUnityCLIConnectorPackage)
+	}
+	entry["version"] = "file:" + gnfUnityCLIConnectorPackage
+	entry["depth"] = float64(0)
+	entry["source"] = "embedded"
+	delete(entry, "hash")
+	return writeJSONAtomic(lockPath, lock, 0600)
+}
+
+func readJSONMap(path string) (map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]any
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func prepareGNFWorkspacesRoot(artifactRoot string) (string, error) {
@@ -641,11 +840,20 @@ func prepareGNFWorkspacesRoot(artifactRoot string) (string, error) {
 }
 
 func runGNFSelectedTest(ctx context.Context, config GNFUnityConfig, workspace, platform string, expected []string, results, log string) (GNFUnityProcessEvidence, error) {
-	evidence := GNFUnityProcessEvidence{}
+	evidence := GNFUnityProcessEvidence{GitLongPathsEnabled: true}
 	if len(expected) == 0 {
 		return evidence, newError(CodeDeterministicTestUnavailable, "run-gnf-selection", platform, fmt.Errorf("empty selection"))
 	}
-	executor := unityvhdxfixture.UnityExecutor{EditorPath: config.UnityEditorPath, Version: unityvhdxfixture.TargetUnityVersion, Filter: strings.Join(expected, ";")}
+	executor := unityvhdxfixture.UnityExecutor{
+		EditorPath: config.UnityEditorPath,
+		Version:    unityvhdxfixture.TargetUnityVersion,
+		Filter:     strings.Join(expected, ";"),
+		Environment: map[string]string{
+			"GIT_CONFIG_COUNT":   "1",
+			"GIT_CONFIG_KEY_0":   "core.longpaths",
+			"GIT_CONFIG_VALUE_0": "true",
+		},
+	}
 	executor.OnStart = func(pid int, startedAt time.Time) { evidence.PID, evidence.StartedAt = pid, startedAt }
 	runCtx, cancel := context.WithTimeout(ctx, config.TestTimeout)
 	result, err := executor.RunTests(runCtx, workspace, platform, results, log)
@@ -696,7 +904,7 @@ func measureGNFBudget(ctx context.Context, service *Service, paths Paths, config
 
 func isGNFBlockedCode(code string) bool {
 	switch code {
-	case CodeGNFProjectNotFound, CodeGNFSourceDirty, CodeUnityVersionMismatch, CodeDeterministicTestUnavailable, CodeHostFreeSpaceFloor, CodeStorageBudgetExceeded:
+	case CodeGNFProjectNotFound, CodeGNFSourceDirty, CodeGNFLocalPackageNotFound, CodeUnityVersionMismatch, CodeDeterministicTestUnavailable, CodeHostFreeSpaceFloor, CodeStorageBudgetExceeded:
 		return true
 	default:
 		return false

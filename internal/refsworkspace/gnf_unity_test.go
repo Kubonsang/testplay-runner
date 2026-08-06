@@ -2,6 +2,7 @@ package refsworkspace
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -64,6 +65,101 @@ func TestCopyGNFProjectInputsPhysicallyIsolatesPackages(t *testing.T) {
 	}
 	if err := copyGNFProjectInputs(context.Background(), root, destination); err == nil {
 		t.Fatal("existing workspace should be rejected")
+	}
+}
+
+func TestCopyGNFProjectInputsEmbedsPortableUnityCLIConnector(t *testing.T) {
+	source := makeGNFSourceTree(t, unityVersionForTest)
+	manifestPath := filepath.Join(source, "Packages", "manifest.json")
+	lockPath := filepath.Join(source, "Packages", "packages-lock.json")
+	manifestBefore := `{"dependencies":{"com.youngwoocho02.unity-cli-connector":"file:/Users/developer/unity-connector","com.unity.test-framework":"1.1.33"}}`
+	lockBefore := `{"dependencies":{"com.youngwoocho02.unity-cli-connector":{"version":"file:/Users/developer/unity-connector","depth":0,"source":"local","dependencies":{"com.unity.nuget.newtonsoft-json":"3.2.1"}},"com.unity.test-framework":{"version":"1.1.33","depth":0,"source":"registry"}}}`
+	if err := os.WriteFile(manifestPath, []byte(manifestBefore), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lockPath, []byte(lockBefore), 0600); err != nil {
+		t.Fatal(err)
+	}
+	localPackage := filepath.Join(t.TempDir(), "unity-connector")
+	if err := os.Mkdir(localPackage, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localPackage, "package.json"), []byte(`{"name":"com.youngwoocho02.unity-cli-connector","version":"0.3.22"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localPackage, "Connector.cs"), []byte("class Connector {}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), "workspace")
+	if err := copyGNFProjectInputs(context.Background(), source, destination, localPackage); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(manifestPath); err != nil || string(data) != manifestBefore {
+		t.Fatalf("source manifest changed: data=%q err=%v", data, err)
+	}
+	var manifest map[string]any
+	if data, err := os.ReadFile(filepath.Join(destination, "Packages", "manifest.json")); err != nil || json.Unmarshal(data, &manifest) != nil {
+		t.Fatalf("read copied manifest: %v", err)
+	}
+	dependencies := manifest["dependencies"].(map[string]any)
+	if _, exists := dependencies[gnfUnityCLIConnectorPackage]; exists {
+		t.Fatal("nonportable file dependency remained in copied manifest")
+	}
+	if _, err := os.Stat(filepath.Join(destination, "Packages", gnfUnityCLIConnectorPackage, "Connector.cs")); err != nil {
+		t.Fatalf("embedded package was not physically copied: %v", err)
+	}
+	var lock map[string]any
+	data, err := os.ReadFile(filepath.Join(destination, "Packages", "packages-lock.json"))
+	if err != nil || json.Unmarshal(data, &lock) != nil {
+		t.Fatalf("read copied lock: %v", err)
+	}
+	entry := lock["dependencies"].(map[string]any)[gnfUnityCLIConnectorPackage].(map[string]any)
+	if entry["version"] != "file:"+gnfUnityCLIConnectorPackage || entry["source"] != "embedded" || entry["depth"] != float64(0) {
+		t.Fatalf("portable lock entry=%v", entry)
+	}
+}
+
+func TestValidateGNFLocalPackagePinsCleanRepositoryIdentity(t *testing.T) {
+	project := makeGNFSourceTree(t, unityVersionForTest)
+	manifest := `{"dependencies":{"com.youngwoocho02.unity-cli-connector":"file:/Users/developer/unity-connector"}}`
+	if err := os.WriteFile(filepath.Join(project, "Packages", "manifest.json"), []byte(manifest), 0600); err != nil {
+		t.Fatal(err)
+	}
+	repository := t.TempDir()
+	packagePath := filepath.Join(repository, "unity-connector")
+	if err := os.Mkdir(packagePath, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(packagePath, "package.json"), []byte(`{"name":"com.youngwoocho02.unity-cli-connector","version":"0.3.22"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runTestGit(t, repository, "init", "-b", "main")
+	runTestGit(t, repository, "remote", "add", "origin", "https://example.invalid/unity-cli.git")
+	runTestGit(t, repository, "add", ".")
+	runTestGit(t, repository, "-c", "user.name=TestPlay", "-c", "user.email=testplay@example.invalid", "commit", "-m", "fixture")
+	evidence, err := validateGNFLocalPackage(context.Background(), project, packagePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evidence == nil || evidence.Name != gnfUnityCLIConnectorPackage || evidence.Version != "0.3.22" || evidence.Revision == "" || evidence.Tree.FileCount == 0 {
+		t.Fatalf("evidence=%+v", evidence)
+	}
+	if err := os.WriteFile(filepath.Join(packagePath, "dirty.txt"), []byte("dirty"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := validateGNFLocalPackage(context.Background(), project, packagePath); ErrorCode(err) != CodeGNFLocalPackageNotFound {
+		t.Fatalf("dirty package err=%v", err)
+	}
+}
+
+func TestValidateGNFLocalPackageRequiresExplicitPortablePath(t *testing.T) {
+	project := makeGNFSourceTree(t, unityVersionForTest)
+	manifest := `{"dependencies":{"com.youngwoocho02.unity-cli-connector":"file:/Users/developer/unity-connector"}}`
+	if err := os.WriteFile(filepath.Join(project, "Packages", "manifest.json"), []byte(manifest), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := validateGNFLocalPackage(context.Background(), project, ""); ErrorCode(err) != CodeGNFLocalPackageNotFound {
+		t.Fatalf("err=%v", err)
 	}
 }
 
