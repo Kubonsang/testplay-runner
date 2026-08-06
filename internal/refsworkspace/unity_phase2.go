@@ -38,6 +38,7 @@ type UnityPhase2Config struct {
 type UnityPhase2SourceSnapshot struct {
 	RepositoryRoot     string   `json:"repositoryRoot"`
 	Revision           string   `json:"revision"`
+	Branch             string   `json:"branch"`
 	GitStatus          string   `json:"gitStatus"`
 	FixtureGitStatus   string   `json:"fixtureGitStatus"`
 	UnityVersion       string   `json:"unityVersion"`
@@ -589,6 +590,10 @@ func captureUnityPhase2Source(ctx context.Context, fixture string) (UnityPhase2S
 	if err != nil {
 		return UnityPhase2SourceSnapshot{}, err
 	}
+	branch, err := runGit(repo, "branch", "--show-current")
+	if err != nil {
+		return UnityPhase2SourceSnapshot{}, err
+	}
 	status, err := runGit(repo, "status", "--porcelain=v1", "--untracked-files=all")
 	if err != nil {
 		return UnityPhase2SourceSnapshot{}, err
@@ -621,14 +626,16 @@ func captureUnityPhase2Source(ctx context.Context, fixture string) (UnityPhase2S
 	if err != nil {
 		return UnityPhase2SourceSnapshot{}, err
 	}
-	return UnityPhase2SourceSnapshot{RepositoryRoot: repo, Revision: strings.TrimSpace(revision), GitStatus: strings.TrimSpace(status), FixtureGitStatus: strings.TrimSpace(fixtureStatus), UnityVersion: version, Assets: assets, Packages: packages, ProjectSettings: settings, PackagesLockSHA256: lockDigest}, nil
+	return UnityPhase2SourceSnapshot{RepositoryRoot: repo, Revision: strings.TrimSpace(revision), Branch: strings.TrimSpace(branch), GitStatus: strings.TrimSpace(status), FixtureGitStatus: strings.TrimSpace(fixtureStatus), UnityVersion: version, Assets: assets, Packages: packages, ProjectSettings: settings, PackagesLockSHA256: lockDigest}, nil
 }
 
 func runGit(directory string, arguments ...string) (string, error) {
 	command := exec.Command("git", append([]string{"-c", "safe.directory=C:/Dev/testplay-runner", "-C", directory}, arguments...)...)
-	output, err := command.CombinedOutput()
+	var stderr strings.Builder
+	command.Stderr = &stderr
+	output, err := command.Output()
 	if err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(arguments, " "), err, strings.TrimSpace(string(output)))
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(arguments, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return string(output), nil
 }

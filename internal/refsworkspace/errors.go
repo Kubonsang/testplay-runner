@@ -38,6 +38,10 @@ const (
 	CodeCancelled                         = "cancelled"
 	CodeInvalidConfiguration              = "invalid-configuration"
 	CodeOwnershipMismatch                 = "ownership-mismatch"
+	CodeGNFProjectNotFound                = "gnf-project-not-found"
+	CodeGNFSourceDirty                    = "gnf-source-dirty"
+	CodeUnityVersionMismatch              = "unity-version-mismatch"
+	CodeDeterministicTestUnavailable      = "deterministic-test-selection-unavailable"
 )
 
 // Error is the stable machine-readable error boundary for the probe.

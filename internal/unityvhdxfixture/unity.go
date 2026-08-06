@@ -19,6 +19,7 @@ type UnityExecutor struct {
 	EditorPath string
 	Version    string
 	Marker     string
+	Filter     string
 	OnStart    func(pid int, startedAt time.Time)
 }
 
@@ -103,7 +104,7 @@ func (e UnityExecutor) RunTests(ctx context.Context, projectPath, platform, resu
 			return PlatformResult{}, err
 		}
 	}
-	args := unity.BuildRunArgs(projectPath, &unity.RunOptions{ResultsFilePath: resultsPath, TestPlatform: platform})
+	args := unity.BuildRunArgs(projectPath, &unity.RunOptions{ResultsFilePath: resultsPath, TestPlatform: platform, Filter: e.Filter})
 	args = append(args, "-logFile", logPath)
 	runner := &unity.ProcessRunner{UnityPath: e.EditorPath, Env: map[string]string{MarkerEnv: e.Marker}, OnStart: e.OnStart}
 	started := time.Now()
