@@ -562,3 +562,16 @@ process counts zero. The outer PowerShell wrapper treated the native stderr as
 a terminating error before producing `post-state.json`; this absence is
 explicit in `artifact-manifest.json`. Artifact ZIP SHA-256:
 `4F7A94ACA2CB25B74FD8759B8A5CAB1E2448E4BA3DA0E3605095BA12C6DB4065`.
+
+The follow-up at implementation commit
+`97da5c970305f67ec6b7efb3b60ebb6afd45e48d` proved the workspace-parent fix
+and reached the first reference EditMode Unity process. Package resolution then
+failed for two independent portability defects in the clean upstream GNF_
+revision. The `com.veriorpies.parrelsync` Git dependency exceeded the default
+Windows Git path limit while cloning its hooks, and
+`com.youngwoocho02.unity-cli-connector` was pinned to the nonportable absolute
+path `file:/Users/gubonsang/Desktop/Dev/UnityCLI/unity-cli/unity-connector`.
+No selected reference test ran and the baseline was not finalized. The source
+remained clean and hash-identical. Ownership-safe pool removal passed with
+internal and outer residuals measured zero. Artifact ZIP SHA-256:
+`8C1C9E1F790CED5F3D49AC4505CA371AAE945657A77976BCC3C1D8840D8B9955`.
