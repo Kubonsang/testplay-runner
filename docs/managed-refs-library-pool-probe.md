@@ -540,3 +540,25 @@ status reattached with `MEASURED_ZERO`, pool removal passed, and the outer
 disk, drive-letter, Unity/probe/parallel-process, storage-root, VHDX, mount,
 and owner residuals were all zero. Artifact ZIP SHA-256:
 `2B651FF8F6D96F1704668A39374A05EC099F6D5D66AF1EC44EBC2430A04611AE`.
+
+The first real GNF_ Managed ReFS single-worker run used implementation commit
+`d61f9578e6eab31e91522a1554e0bf47fa30cf05` and a clean shallow checkout of
+`NeverEndingClass/GNF_` `main` at
+`19a17074f6366038cd5b17c01e0a904f0d585470`. Source inventory froze
+`GNF.DungeonGen.Tests.WallPropValidatorTests.NullPrefab_Error` and
+`DOOR_CONSENSUS_Tests.Proximity_CountsNearestExitWithinRadius`; the historical
+`CodexMovementSmokeTest.TestPlayer_MovesRight_InPlayMode` was absent. Dev Drive
+setup, ReFS with 4096-byte clusters, the Block Clone capability probe, and
+transactional detach/reattach durability all passed. Baseline construction then
+failed before reference Unity because the harness attempted to create
+`artifacts/workspaces/reference` with `os.Mkdir` while the intermediate
+`artifacts/workspaces` parent did not exist. The result was `FAILED`, code
+`baseline-corrupt`, operation `build-baseline`; canonical baseline finalization,
+worker clone, worker Unity, semantic parity, and release durability were not
+measured. The clean GNF_ source hashes and Git status were unchanged. Normal
+ownership-safe pool removal passed with internal residual `MEASURED_ZERO`,
+attached disk count zero, VHDX/mount/owner absent, and owned Unity/probe/GNF
+process counts zero. The outer PowerShell wrapper treated the native stderr as
+a terminating error before producing `post-state.json`; this absence is
+explicit in `artifact-manifest.json`. Artifact ZIP SHA-256:
+`4F7A94ACA2CB25B74FD8759B8A5CAB1E2448E4BA3DA0E3605095BA12C6DB4065`.
