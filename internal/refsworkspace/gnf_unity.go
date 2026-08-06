@@ -158,6 +158,10 @@ func RunGNFUnity(ctx context.Context, requested GNFUnityConfig) (summary *GNFUni
 	summary.SourceBefore, summary.Selection = &source, &selection
 	_ = writePhase2JSON(artifactRoot, "environment.json", map[string]any{"config": config, "source": source})
 	_ = writePhase2JSON(artifactRoot, "test-selection.json", selection)
+	workspacesRoot, err := prepareGNFWorkspacesRoot(artifactRoot)
+	if err != nil {
+		return summary, err
+	}
 	defer func() {
 		if summary.SourceAfter != nil {
 			return
@@ -256,7 +260,7 @@ func RunGNFUnity(ctx context.Context, requested GNFUnityConfig) (summary *GNFUni
 	store := NewLibraryBaselineStore(paths)
 	baselineEvidence := &GNFBaselineEvidence{CompatibilityKey: key}
 	summary.Baseline = baselineEvidence
-	referenceWorkspace := filepath.Join(artifactRoot, "workspaces", "reference")
+	referenceWorkspace := filepath.Join(workspacesRoot, "reference")
 	baseline, state, baselineMetrics, err := store.Ensure(ctx, key, func(buildCtx context.Context, libraryPath string) (buildErr error) {
 		if copyErr := copyGNFProjectInputs(buildCtx, config.ProjectPath, referenceWorkspace); copyErr != nil {
 			return copyErr
@@ -314,7 +318,7 @@ func RunGNFUnity(ctx context.Context, requested GNFUnityConfig) (summary *GNFUni
 		return summary, err
 	}
 
-	workerWorkspace := filepath.Join(artifactRoot, "workspaces", "worker")
+	workerWorkspace := filepath.Join(workspacesRoot, "worker")
 	if err := copyGNFProjectInputs(ctx, config.ProjectPath, workerWorkspace); err != nil {
 		return summary, err
 	}
@@ -576,6 +580,15 @@ func inventoryContainsSuffix(inventory []string, candidate string) bool {
 }
 
 func copyGNFProjectInputs(ctx context.Context, source, destination string) error {
+	parent := filepath.Dir(destination)
+	parentInfo, err := os.Lstat(parent)
+	if err != nil || !parentInfo.IsDir() {
+		return newError(CodeInvalidConfiguration, "validate-gnf-workspace-parent", parent, errors.Join(err, fmt.Errorf("workspace parent must be an existing directory")))
+	}
+	parentReparse, err := inspectPathReparse(parent)
+	if err != nil || parentReparse {
+		return newError(CodeOwnershipMismatch, "validate-gnf-workspace-parent", parent, errors.Join(err, fmt.Errorf("workspace parent must be a real directory")))
+	}
 	if _, err := os.Lstat(destination); err == nil {
 		return fmt.Errorf("destination already exists: %s", destination)
 	} else if !os.IsNotExist(err) {
@@ -597,6 +610,34 @@ func copyGNFProjectInputs(ctx context.Context, source, destination string) error
 	}
 	succeeded = true
 	return nil
+}
+
+func prepareGNFWorkspacesRoot(artifactRoot string) (string, error) {
+	artifactRoot = filepath.Clean(artifactRoot)
+	if !filepath.IsAbs(artifactRoot) {
+		return "", newError(CodeInvalidConfiguration, "prepare-gnf-workspaces-root", artifactRoot, fmt.Errorf("absolute artifact root required"))
+	}
+	artifactInfo, err := os.Lstat(artifactRoot)
+	if err != nil || !artifactInfo.IsDir() {
+		return "", newError(CodeInvalidConfiguration, "prepare-gnf-workspaces-root", artifactRoot, errors.Join(err, fmt.Errorf("artifact root must be an existing directory")))
+	}
+	artifactReparse, err := inspectPathReparse(artifactRoot)
+	if err != nil || artifactReparse {
+		return "", newError(CodeOwnershipMismatch, "prepare-gnf-workspaces-root", artifactRoot, errors.Join(err, fmt.Errorf("artifact root must be a real directory")))
+	}
+	root := filepath.Join(artifactRoot, "workspaces")
+	if err := os.Mkdir(root, 0700); err != nil {
+		return "", newError(CodeInvalidConfiguration, "create-gnf-workspaces-root", root, err)
+	}
+	info, err := os.Lstat(root)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", newError(CodeOwnershipMismatch, "verify-gnf-workspaces-root", root, errors.Join(err, fmt.Errorf("created workspace root is not a real directory")))
+	}
+	reparse, err := inspectPathReparse(root)
+	if err != nil || reparse {
+		return "", newError(CodeOwnershipMismatch, "verify-gnf-workspaces-root", root, errors.Join(err, fmt.Errorf("created workspace root is a reparse point")))
+	}
+	return root, nil
 }
 
 func runGNFSelectedTest(ctx context.Context, config GNFUnityConfig, workspace, platform string, expected []string, results, log string) (GNFUnityProcessEvidence, error) {

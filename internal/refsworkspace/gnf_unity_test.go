@@ -67,6 +67,57 @@ func TestCopyGNFProjectInputsPhysicallyIsolatesPackages(t *testing.T) {
 	}
 }
 
+func TestPrepareGNFWorkspacesRootCreatesOwnedParentForReferenceAndWorker(t *testing.T) {
+	artifactRoot := t.TempDir()
+	workspaces, err := prepareGNFWorkspacesRoot(artifactRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workspaces != filepath.Join(artifactRoot, "workspaces") {
+		t.Fatalf("workspaces=%q", workspaces)
+	}
+	info, err := os.Lstat(workspaces)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("workspace root info=%v err=%v", info, err)
+	}
+	for _, name := range []string{"reference", "worker"} {
+		destination := filepath.Join(workspaces, name)
+		if err := copyGNFProjectInputs(context.Background(), makeGNFSourceTree(t, unityVersionForTest), destination); err != nil {
+			t.Fatalf("copy %s: %v", name, err)
+		}
+	}
+}
+
+func TestPrepareGNFWorkspacesRootRejectsPreexistingPathWithoutRemovingIt(t *testing.T) {
+	artifactRoot := t.TempDir()
+	workspaces := filepath.Join(artifactRoot, "workspaces")
+	if err := os.Mkdir(workspaces, 0700); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(workspaces, "sentinel.txt")
+	if err := os.WriteFile(sentinel, []byte("owned elsewhere"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prepareGNFWorkspacesRoot(artifactRoot); err == nil {
+		t.Fatal("pre-existing workspace root should be rejected")
+	}
+	if data, err := os.ReadFile(sentinel); err != nil || string(data) != "owned elsewhere" {
+		t.Fatalf("pre-existing workspace was modified: data=%q err=%v", data, err)
+	}
+}
+
+func TestCopyGNFProjectInputsRejectsMissingParent(t *testing.T) {
+	source := makeGNFSourceTree(t, unityVersionForTest)
+	destination := filepath.Join(t.TempDir(), "missing", "reference")
+	err := copyGNFProjectInputs(context.Background(), source, destination)
+	if ErrorCode(err) != CodeInvalidConfiguration {
+		t.Fatalf("err=%v", err)
+	}
+	if _, statErr := os.Lstat(filepath.Dir(destination)); !os.IsNotExist(statErr) {
+		t.Fatalf("missing parent was unexpectedly created: %v", statErr)
+	}
+}
+
 func TestValidateGNFConfigRejectsDirtySource(t *testing.T) {
 	root := makeGNFGitProject(t, unityVersionForTest)
 	if err := os.WriteFile(filepath.Join(root, "Assets", "dirty.txt"), []byte("dirty"), 0600); err != nil {
