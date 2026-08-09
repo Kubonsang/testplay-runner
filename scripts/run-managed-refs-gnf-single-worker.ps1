@@ -64,13 +64,20 @@ if (-not (Test-Administrator)) { throw 'Administrator PowerShell is required; th
 $unityEditor = Resolve-RequiredPath 'TESTPLAY_REFS_UNITY_EDITOR_PATH' $env:TESTPLAY_REFS_UNITY_EDITOR_PATH
 $projectPath = Resolve-RequiredPath 'TESTPLAY_REFS_GNF_PROJECT_PATH' $env:TESTPLAY_REFS_GNF_PROJECT_PATH
 $unityCLIConnector = Resolve-RequiredPath 'TESTPLAY_REFS_GNF_UNITY_CLI_CONNECTOR_PATH' $env:TESTPLAY_REFS_GNF_UNITY_CLI_CONNECTOR_PATH
-if ([string]::IsNullOrWhiteSpace($env:TESTPLAY_REFS_MAX_BYTES)) { throw 'TESTPLAY_REFS_MAX_BYTES is required' }
-$maximumBytes = [int64]$env:TESTPLAY_REFS_MAX_BYTES
+$referenceSmoke = $env:TESTPLAY_REFS_GNF_REFERENCE_SMOKE -eq '1'
+$workerCount = if ([string]::IsNullOrWhiteSpace($env:TESTPLAY_REFS_GNF_WORKERS)) { 1 } else { [int]$env:TESTPLAY_REFS_GNF_WORKERS }
+if ($referenceSmoke) { $workerCount = 1 }
+if ($workerCount -ne 1 -and $workerCount -notin @(2, 4, 8)) { throw 'TESTPLAY_REFS_GNF_WORKERS must be 1, 2, 4, or 8' }
+if (-not $referenceSmoke -and [string]::IsNullOrWhiteSpace($env:TESTPLAY_REFS_MAX_BYTES)) { throw 'TESTPLAY_REFS_MAX_BYTES is required' }
+$maximumBytes = if ($referenceSmoke) { 68719476736L } else { [int64]$env:TESTPLAY_REFS_MAX_BYTES }
 $testTimeout = if ([string]::IsNullOrWhiteSpace($env:TESTPLAY_REFS_UNITY_TEST_TIMEOUT)) { '30m' } else { $env:TESTPLAY_REFS_UNITY_TEST_TIMEOUT }
 $softBudget = if ([string]::IsNullOrWhiteSpace($env:TESTPLAY_REFS_GNF_SOFT_BUDGET_BYTES)) { [int64](14GB) } else { [int64]$env:TESTPLAY_REFS_GNF_SOFT_BUDGET_BYTES }
 $workerReserve = if ([string]::IsNullOrWhiteSpace($env:TESTPLAY_REFS_GNF_WORKER_RESERVE_BYTES)) { [int64](2GB) } else { [int64]$env:TESTPLAY_REFS_GNF_WORKER_RESERVE_BYTES }
+$sizingOnly = $env:TESTPLAY_REFS_BASELINE_SIZING_ONLY -eq '1'
+$sizingUsedBytes = if ([string]::IsNullOrWhiteSpace($env:TESTPLAY_REFS_BASELINE_SIZING_USED_BYTES)) { 0L } else { [int64]$env:TESTPLAY_REFS_BASELINE_SIZING_USED_BYTES }
 $runId = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss-fff')
-$storageRoot = Join-Path $env:LOCALAPPDATA "TestPlay\GNFSingleWorker-$runId"
+$modeName = if ($referenceSmoke) { 'GNFReferenceSmoke' } elseif ($workerCount -eq 1) { 'GNFSingleWorker' } else { "GNFParallel$workerCount" }
+$storageRoot = Join-Path $env:LOCALAPPDATA "TestPlay\$modeName-$runId"
 $poolFile = Join-Path $storageRoot 'managed-library-pool.vhdx'
 $mountRoot = Join-Path $storageRoot 'mount'
 $artifactBase = Resolve-RequiredPath 'TESTPLAY_REFS_ARTIFACT_ROOT' $env:TESTPLAY_REFS_ARTIFACT_ROOT
@@ -82,7 +89,8 @@ foreach ($freshPath in @($storageRoot, $artifactRoot, $zipPath)) {
 }
 
 New-Item -ItemType Directory -Path $artifactRoot | Out-Null
-$binary = Join-Path $artifactRoot 'testplay-refs-gnf-single-worker.exe'
+$commandName = if ($referenceSmoke) { 'testplay-refs-gnf-reference-smoke' } elseif ($workerCount -eq 1) { 'testplay-refs-gnf-single-worker' } else { 'testplay-refs-gnf-parallel' }
+$binary = Join-Path $artifactRoot "$commandName.exe"
 $transcript = Join-Path $artifactRoot 'terminal-transcript.txt'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 
@@ -90,7 +98,7 @@ $preDisks = @(Get-FileBackedDiskSnapshot)
 $preLetters = @(Get-DriveLetterSnapshot)
 $preUnity = @(Get-ProcessSnapshot 'Unity')
 $preProbe = @(Get-ProcessSnapshot 'testplay-refs-probe')
-$preGNF = @(Get-ProcessSnapshot 'testplay-refs-gnf-single-worker')
+$preGNF = @(Get-ProcessSnapshot $commandName)
 $preState = [ordered]@{
   measuredAt = [DateTime]::UtcNow
   elevated = $true
@@ -119,24 +127,21 @@ try {
   $transcriptStarted = $true
   Push-Location $repoRoot
   try {
-    & go build -o $binary ./cmd/testplay-refs-gnf-single-worker
+    & go build -o $binary "./cmd/$commandName"
     if ($LASTEXITCODE -ne 0) { throw "GNF harness build failed with exit code $LASTEXITCODE" }
   }
   finally {
     Pop-Location
   }
-  & $binary `
-    --unity-editor $unityEditor `
-    --project $projectPath `
-    --unity-cli-connector $unityCLIConnector `
-    --artifact-root $artifactRoot `
-    --storage-root $storageRoot `
-    --pool-file $poolFile `
-    --mount-root $mountRoot `
-    --max-bytes $maximumBytes `
-    --soft-budget-bytes $softBudget `
-    --worker-reserve-bytes $workerReserve `
-    --test-timeout $testTimeout
+  $arguments = @('--unity-editor', $unityEditor, '--project', $projectPath, '--unity-cli-connector', $unityCLIConnector, '--artifact-root', $artifactRoot, '--test-timeout', $testTimeout)
+  if (-not $referenceSmoke) {
+    $arguments += @('--storage-root', $storageRoot, '--pool-file', $poolFile, '--mount-root', $mountRoot, '--max-bytes', $maximumBytes, '--soft-budget-bytes', $softBudget, '--worker-reserve-bytes', $workerReserve)
+    if ($workerCount -gt 1) {
+      $arguments += @('--worker-count', $workerCount, '--baseline-sizing-used-bytes', $sizingUsedBytes)
+      if ($sizingOnly) { $arguments += '--sizing-only' }
+    }
+  }
+  & $binary @arguments
   $runExitCode = $LASTEXITCODE
   if ($runExitCode -ne 0) { throw "GNF harness failed with exit code $runExitCode" }
 }
@@ -151,7 +156,7 @@ $postDisks = @(Get-FileBackedDiskSnapshot)
 $postLetters = @(Get-DriveLetterSnapshot)
 $postUnity = @(Get-ProcessSnapshot 'Unity')
 $postProbe = @(Get-ProcessSnapshot 'testplay-refs-probe')
-$postGNF = @(Get-ProcessSnapshot 'testplay-refs-gnf-single-worker')
+$postGNF = @(Get-ProcessSnapshot $commandName)
 $newDisks = @(Compare-IDs $preDisks $postDisks 'Number')
 $newLetters = @($postLetters | Where-Object { $preLetters -notcontains $_ })
 $newUnity = @(Compare-IDs $preUnity $postUnity 'Id')

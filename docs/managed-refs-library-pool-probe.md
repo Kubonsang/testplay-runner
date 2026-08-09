@@ -575,3 +575,29 @@ No selected reference test ran and the baseline was not finalized. The source
 remained clean and hash-identical. Ownership-safe pool removal passed with
 internal and outer residuals measured zero. Artifact ZIP SHA-256:
 `8C1C9E1F790CED5F3D49AC4505CA371AAE945657A77976BCC3C1D8840D8B9955`.
+
+Two later GNF_ reference-baseline attempts reached Unity after the portability
+fixes but rebooted Windows with bugcheck `0xF7` in `amdkmdag.sys`. The second
+crash occurred after the AMD WHQL 26.7.1 update and retained the same
+`0xF7_MISSING_GSFRAME_amdkmdag` failure bucket; its dump SHA-256 is
+`8764799406509B45981EEBD4B7821EA46799BB92AAB33477D05D9953BC83B16B`.
+The second-crash forensic ZIP SHA-256 is
+`128B2E7DB6B73E8679E5D782F238B41740F0D569F2BAFF588880339C1107D3C6`.
+The exact interrupted baseline staging tree and creation lock were later
+ownership-gated, flushed, detach/reattach verified, and removed through the
+normal pool operation. Recovery ended with host residual zero; recovery ZIP
+SHA-256 is
+`7BE7E788A75C90D75243FAA79C5FFDF31A94C641CBC2542DEA3014C41F9A50BB`.
+This recovery success is not a GNF_ compatibility result.
+
+The worker-ladder implementation accepts only 2, 4, or 8 workers and preserves
+the native-tested two-worker verdict. It adds N-way concurrent clone and Unity
+overlap, reference and pairwise semantic parity, marker isolation, sequential
+release/flush gates, and the established final detach/status/remove durability
+proof. A separate sizing pool calculates the experimental soft budget as
+`ceilGiB(usedAfterBaseline + workers*2GiB + 4GiB)`, capped at 62 GiB for the
+64 GiB VHDX. Native ladder execution is fail-closed behind an NVIDIA-only
+hardware gate and two NTFS GNF_ reference runs. AMD/NVIDIA device transitions
+remain explicit user-administered actions; the repository gate only records
+exact PnP identities and restore commands. Fixture 4/8 and GNF_ 1/2/4/8 remain
+`NOT MEASURED` until that gate and every preceding native stage pass.

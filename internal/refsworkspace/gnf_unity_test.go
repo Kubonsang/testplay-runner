@@ -247,6 +247,35 @@ func TestValidateGNFConfigCapturesCleanRevisionAndBranch(t *testing.T) {
 	}
 }
 
+func TestValidateGNFConfigWorkerCounts(t *testing.T) {
+	root := makeGNFGitProject(t, unityVersionForTest)
+	for _, count := range []int{1, 2, 4, 8} {
+		config := makeGNFConfig(t, root)
+		config.WorkerCount = count
+		validated, _, _, _, err := validateGNFConfig(context.Background(), config)
+		if err != nil || validated.WorkerCount != count {
+			t.Fatalf("count=%d validated=%d err=%v", count, validated.WorkerCount, err)
+		}
+	}
+	for _, count := range []int{-1, 3, 5, 16} {
+		config := makeGNFConfig(t, root)
+		config.WorkerCount = count
+		_, _, _, _, err := validateGNFConfig(context.Background(), config)
+		if ErrorCode(err) != CodeInvalidConfiguration {
+			t.Fatalf("count=%d err=%v", count, err)
+		}
+	}
+}
+
+func TestGNFWorkerVerdicts(t *testing.T) {
+	wants := map[int]string{1: "GNF_SINGLE_WORKER_COMPATIBLE", 2: "GNF_TWO_WORKERS_COMPATIBLE", 4: "GNF_FOUR_WORKERS_COMPATIBLE", 8: "GNF_WORKER_LADDER_2_4_8_COMPATIBLE"}
+	for count, want := range wants {
+		if got := gnfWorkerVerdict(count); got != want {
+			t.Fatalf("count=%d got=%q want=%q", count, got, want)
+		}
+	}
+}
+
 const unityVersionForTest = "6000.3.8f1"
 
 func makeGNFConfig(t *testing.T, project string) GNFUnityConfig {

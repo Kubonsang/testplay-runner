@@ -30,10 +30,18 @@ foreach ($required in @(
   'newUnityProcesses = @($newUnity)',
   'newProbeProcesses = @($newProbe)',
   'newGNFProcesses = @($newGNF)'
+  'TESTPLAY_REFS_GNF_WORKERS'
+  'testplay-refs-gnf-reference-smoke'
+  'testplay-refs-gnf-parallel'
+  '--baseline-sizing-used-bytes'
 )) {
   if (-not $script.Contains($required)) {
     throw "GNF snapshot contract is missing: $required"
   }
+}
+
+foreach ($wrapper in @('run-managed-refs-gnf-reference-smoke.ps1', 'run-managed-refs-gnf-parallel.ps1')) {
+  if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $wrapper))) { throw "missing GNF wrapper: $wrapper" }
 }
 
 Write-Output 'managed ReFS GNF single-worker snapshot tests: PASS'

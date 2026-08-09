@@ -42,7 +42,8 @@ function Get-PathState([string]$Path) {
 if (-not (Test-Administrator)) { throw 'Administrator PowerShell is required; this script does not request or bypass UAC.' }
 $unityEditor = Resolve-RequiredPath 'TESTPLAY_REFS_UNITY_EDITOR_PATH' $env:TESTPLAY_REFS_UNITY_EDITOR_PATH
 $fixturePath = Resolve-RequiredPath 'TESTPLAY_REFS_UNITY_FIXTURE_PATH' $env:TESTPLAY_REFS_UNITY_FIXTURE_PATH
-if ($env:TESTPLAY_REFS_PARALLEL_WORKERS -ne '2') { throw 'TESTPLAY_REFS_PARALLEL_WORKERS must be exactly 2' }
+$workerCount = [int]$env:TESTPLAY_REFS_PARALLEL_WORKERS
+if ($workerCount -notin @(2, 4, 8)) { throw 'TESTPLAY_REFS_PARALLEL_WORKERS must be 2, 4, or 8' }
 $artifactBase = Resolve-RequiredPath 'TESTPLAY_REFS_ARTIFACT_ROOT' $env:TESTPLAY_REFS_ARTIFACT_ROOT
 $stamp = [DateTime]::Now.ToString('yyyyMMdd-HHmmss-fff')
 $storageRoot = Join-Path $env:LOCALAPPDATA "TestPlay\UnityParallel-$stamp"
@@ -50,6 +51,10 @@ $artifactRoot = "$artifactBase-$stamp"
 $poolFile = Join-Path $storageRoot 'managed-library-pool.vhdx'
 $mountRoot = Join-Path $storageRoot 'mount'
 $maximumBytes = 68719476736L
+$softBudgetBytes = if ([string]::IsNullOrWhiteSpace($env:TESTPLAY_REFS_SOFT_BUDGET_BYTES)) { 15032385536L } else { [int64]$env:TESTPLAY_REFS_SOFT_BUDGET_BYTES }
+$workerReserveBytes = if ([string]::IsNullOrWhiteSpace($env:TESTPLAY_REFS_WORKER_RESERVE_BYTES)) { 2147483648L } else { [int64]$env:TESTPLAY_REFS_WORKER_RESERVE_BYTES }
+$sizingOnly = $env:TESTPLAY_REFS_BASELINE_SIZING_ONLY -eq '1'
+$sizingUsedBytes = if ([string]::IsNullOrWhiteSpace($env:TESTPLAY_REFS_BASELINE_SIZING_USED_BYTES)) { 0L } else { [int64]$env:TESTPLAY_REFS_BASELINE_SIZING_USED_BYTES }
 $testTimeout = if ([string]::IsNullOrWhiteSpace($env:TESTPLAY_REFS_UNITY_TEST_TIMEOUT)) { '20m' } else { $env:TESTPLAY_REFS_UNITY_TEST_TIMEOUT }
 $zipPath = "$artifactRoot.zip"
 
@@ -91,7 +96,22 @@ try {
   try {
     & go build -o $binary ./cmd/testplay-refs-unity-parallel
     if ($LASTEXITCODE -ne 0) { throw "parallel harness build failed with exit code $LASTEXITCODE" }
-    & $binary --unity-editor $unityEditor --fixture $fixturePath --artifact-root $artifactRoot --storage-root $storageRoot --pool-file $poolFile --mount-root $mountRoot --max-bytes $maximumBytes --worker-count 2 --test-timeout $testTimeout
+    $arguments = @(
+      '--unity-editor', $unityEditor,
+      '--fixture', $fixturePath,
+      '--artifact-root', $artifactRoot,
+      '--storage-root', $storageRoot,
+      '--pool-file', $poolFile,
+      '--mount-root', $mountRoot,
+      '--max-bytes', $maximumBytes,
+      '--soft-budget-bytes', $softBudgetBytes,
+      '--worker-reserve-bytes', $workerReserveBytes,
+      '--worker-count', $workerCount,
+      '--baseline-sizing-used-bytes', $sizingUsedBytes,
+      '--test-timeout', $testTimeout
+    )
+    if ($sizingOnly) { $arguments += '--sizing-only' }
+    & $binary @arguments
     $runExitCode = $LASTEXITCODE
     if ($runExitCode -ne 0) { throw "parallel harness failed with exit code $runExitCode" }
   }

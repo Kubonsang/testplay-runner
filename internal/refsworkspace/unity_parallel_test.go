@@ -148,14 +148,119 @@ func TestParallelIntervalAndParityHelpers(t *testing.T) {
 	if timeIntervalsOverlap(now, now.Add(time.Second), now.Add(2*time.Second), now.Add(3*time.Second)) {
 		t.Fatal("unexpected overlap")
 	}
-	if parallelParityPassed(&UnityParallelParity{ReferenceAEdit: true, ReferenceBEdit: true, ReferenceAPlay: true, ReferenceBPlay: true, ABEdit: true, ABPlay: true, ExactTestSets: true}) != true {
+	if parallelParityPassed(&UnityParallelParity{ReferenceAEdit: true, ReferenceBEdit: true, ReferenceAPlay: true, ReferenceBPlay: true, ABEdit: true, ABPlay: true, ExactTestSets: true, AllReferenceEqual: true, AllPairwiseEqual: true}) != true {
 		t.Fatal("complete parity should pass")
+	}
+	intervals := [][2]time.Time{{now, now.Add(4 * time.Second)}, {now.Add(time.Second), now.Add(5 * time.Second)}, {now.Add(2 * time.Second), now.Add(6 * time.Second)}, {now.Add(3 * time.Second), now.Add(7 * time.Second)}}
+	if !intervalsHaveCommonOverlap(intervals) {
+		t.Fatal("four intervals should share a common overlap")
+	}
+	intervals[3] = [2]time.Time{now.Add(8 * time.Second), now.Add(9 * time.Second)}
+	if intervalsHaveCommonOverlap(intervals) {
+		t.Fatal("disjoint interval must fail the all-worker overlap gate")
 	}
 }
 
-func TestValidateUnityParallelConfigRequiresExactlyTwo(t *testing.T) {
-	_, _, err := validateUnityParallelConfig(UnityParallelConfig{WorkerCount: 1})
-	if ErrorCode(err) != CodeInvalidConfiguration {
-		t.Fatalf("err=%v", err)
+func TestValidateUnityParallelConfigWorkerCounts(t *testing.T) {
+	for _, count := range []int{2, 4, 8} {
+		if !validParallelWorkerCount(count) {
+			t.Fatalf("count %d should be allowed", count)
+		}
+	}
+	for _, count := range []int{-1, 0, 1, 3, 5, 16} {
+		_, _, err := validateUnityParallelConfig(UnityParallelConfig{WorkerCount: count})
+		if ErrorCode(err) != CodeInvalidConfiguration {
+			t.Fatalf("count=%d err=%v", count, err)
+		}
+	}
+}
+
+func TestParallelAcquireSupportsFourAndEightWorkers(t *testing.T) {
+	for _, workerCount := range []int{4, 8} {
+		t.Run(string(rune('0'+workerCount)), func(t *testing.T) {
+			paths := testPoolPaths(t)
+			store := NewLibraryBaselineStore(paths)
+			keyChar := "a"
+			if workerCount == 8 {
+				keyChar = "b"
+			}
+			key := testCompatibilityKey(keyChar)
+			baseline, _, _, err := store.Ensure(context.Background(), key, func(_ context.Context, libraryPath string) error {
+				return os.WriteFile(filepath.Join(libraryPath, "artifact.bin"), []byte(strings.Repeat("n", 8193)), 0600)
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = store.Clear(context.Background(), key) }()
+			policy := testWorkerPolicy()
+			policy.MaximumBytes, policy.SoftBudgetBytes, policy.WorkerReserveBytes = 64<<30, 62<<30, 2<<30
+			manager := newWorkerManager(paths, store, copyClaimingCloner{}, testJunctioner{}, policy, &fakeWorkerStorageMeter{hostFree: 100 << 30})
+			recorder := newParallelAcquireRecorder(time.Second, workerCount)
+			manager.acquireHook = recorder.observe
+			workspace := t.TempDir()
+			start := make(chan struct{})
+			type outcome struct {
+				index   int
+				lease   *WorkerLease
+				metrics WorkerMetrics
+				err     error
+			}
+			outcomes := make(chan outcome, workerCount)
+			for index := 0; index < workerCount; index++ {
+				go func(index int) {
+					<-start
+					leaseID := "parallel-" + strings.ToLower(parallelWorkerName(index)) + "1"
+					lease, metrics, acquireErr := manager.Acquire(context.Background(), WorkerRequest{Key: key, LeaseID: leaseID, JunctionPath: filepath.Join(workspace, leaseID)})
+					outcomes <- outcome{index: index, lease: lease, metrics: metrics, err: acquireErr}
+				}(index)
+			}
+			close(start)
+			workers := make([]*UnityParallelWorkerEvidence, workerCount)
+			leases := make([]*WorkerLease, workerCount)
+			for range workerCount {
+				result := <-outcomes
+				if result.err != nil {
+					t.Fatal(result.err)
+				}
+				leases[result.index] = result.lease
+				metadata := result.lease.Metadata()
+				workers[result.index] = &UnityParallelWorkerEvidence{Name: parallelWorkerName(result.index), LeaseID: metadata.LeaseID, Metadata: metadata, Metrics: result.metrics, JunctionVerified: true, AcquireEvents: recorder.forLease(metadata.LeaseID)}
+			}
+			if err := validateParallelAcquire(paths, workers, policy.WorkerReserveBytes); err != nil {
+				t.Fatal(err)
+			}
+			if !acquireGroupIntervalsOverlap(workers, "clone-start", "clone-end") {
+				t.Fatal("all clone intervals must overlap")
+			}
+			for index, lease := range leases {
+				workers[index].Marker = "marker-" + strings.ToLower(workers[index].Name)
+				markerRoot := filepath.Join(workers[index].Metadata.WorkerPath, "Library", "TestPlayVHDX")
+				if err := os.MkdirAll(markerRoot, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(markerRoot, "marker.txt"), []byte(workers[index].Marker), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := lease.MarkRunning(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := leases[0].Release(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			intermediate, err := validateWorkersRemaining(context.Background(), paths, store, baseline, workers[0].Name, workers[1:], policy.WorkerReserveBytes)
+			if err != nil || intermediate.RemainingWorkerCount != workerCount-1 || intermediate.ActiveReservationBytes != int64(workerCount-1)*policy.WorkerReserveBytes {
+				t.Fatalf("intermediate=%+v err=%v", intermediate, err)
+			}
+			for _, lease := range leases[1:] {
+				if _, err := lease.Release(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := store.Clear(context.Background(), key); err != nil {
+				t.Fatal(err)
+			}
+			_ = baseline
+		})
 	}
 }
