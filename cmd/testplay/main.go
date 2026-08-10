@@ -17,7 +17,7 @@ var rootCmd = &cobra.Command{
 	// "all tests passed", and cobra's default help would land on stdout,
 	// which is reserved for JSON.
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return errors.New("no command specified; use one of: init, check, list, run, result, version")
+		return errors.New("no command specified; use one of: init, check, list, run, result, version, storage, workspace")
 	},
 }
 

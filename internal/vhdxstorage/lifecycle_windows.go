@@ -18,6 +18,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 const (
@@ -33,6 +35,7 @@ const (
 	attachVirtualDiskNoDriveLetter   = 0x00000002
 	getVirtualDiskInfoSize           = 1
 	getVirtualDiskInfoParentLocation = 3
+	getVirtualDiskInfoVirtualDiskID  = 14
 )
 
 var (
@@ -59,6 +62,17 @@ const initializeDiskScript = `
 $ErrorActionPreference = 'Stop'
 $diskNumber = [int]$env:TESTPLAY_VHDX_DISK_NUMBER
 $mountPath = $env:TESTPLAY_VHDX_MOUNT_PATH.TrimEnd('\') + '\'
+$mountItem = Get-Item -LiteralPath $mountPath -Force -ErrorAction Stop
+if (($mountItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+  throw "mount path is a reparse point: $mountPath"
+}
+if (@(Get-ChildItem -LiteralPath $mountPath -Force).Count -ne 0) {
+  throw "mount path is not empty: $mountPath"
+}
+$hostVolume = Get-Volume -FilePath $mountItem.FullName -ErrorAction Stop
+if ($hostVolume.FileSystemType.ToString() -ne 'NTFS') {
+  throw "mount host must be NTFS; found $($hostVolume.FileSystemType)"
+}
 $deadline = [DateTime]::UtcNow.AddSeconds(15)
 $started = [Diagnostics.Stopwatch]::StartNew()
 do {
@@ -139,6 +153,14 @@ $ErrorActionPreference = 'Stop'
 $diskNumber = [int]$env:TESTPLAY_VHDX_DISK_NUMBER
 $partitionNumber = [int]$env:TESTPLAY_VHDX_PARTITION_NUMBER
 $mountPath = $env:TESTPLAY_VHDX_MOUNT_PATH.TrimEnd('\') + '\'
+$mountItem = Get-Item -LiteralPath $mountPath -Force -ErrorAction Stop
+if (($mountItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+  throw "mount path is a reparse point: $mountPath"
+}
+$hostVolume = Get-Volume -FilePath $mountItem.FullName -ErrorAction Stop
+if ($hostVolume.FileSystemType.ToString() -ne 'NTFS') {
+  throw "mount host must be NTFS; found $($hostVolume.FileSystemType)"
+}
 $disk = Get-Disk -Number $diskNumber -ErrorAction Stop
 if ($disk.BusType.ToString() -ne 'File Backed Virtual') {
   throw "unsafe bus type for disk ${diskNumber}: $($disk.BusType)"
@@ -279,10 +301,28 @@ func IsElevated(ctx context.Context) (bool, error) {
 	return strings.EqualFold(strings.TrimSpace(string(output)), "true"), nil
 }
 
-func CreateDynamic(path string, maximumSize int64) error { return createVHDX(path, maximumSize, "") }
-func CreateDifferencing(path, parentPath string) error   { return createVHDX(path, 0, parentPath) }
+func CreateDynamic(path string, maximumSize int64) error {
+	return createVHDX(path, CreateOptions{MaximumSize: maximumSize}, "")
+}
 
-func createVHDX(path string, maximumSize int64, parentPath string) error {
+func CreateDynamicWithOptions(path string, options CreateOptions) error {
+	if options.MaximumSize <= 0 {
+		return newError(CodeChildCreateFailed, "validate-create-options", path, fmt.Errorf("maximum size must be positive"))
+	}
+	if options.BlockSizeInBytes != 0 && (options.BlockSizeInBytes < 1<<20 || options.BlockSizeInBytes > 256<<20 || options.BlockSizeInBytes%(1<<20) != 0) {
+		return newError(CodeChildCreateFailed, "validate-create-options", path, fmt.Errorf("VHDX block size must be a 1 MiB multiple between 1 and 256 MiB"))
+	}
+	if options.SectorSizeInBytes != 0 && options.SectorSizeInBytes != 512 && options.SectorSizeInBytes != 4096 {
+		return newError(CodeChildCreateFailed, "validate-create-options", path, fmt.Errorf("sector size must be 512 or 4096"))
+	}
+	return createVHDX(path, options, "")
+}
+
+func CreateDifferencing(path, parentPath string) error {
+	return createVHDX(path, CreateOptions{}, parentPath)
+}
+
+func createVHDX(path string, options CreateOptions, parentPath string) error {
 	if _, err := os.Lstat(path); err == nil {
 		return newError(CodeChildExists, "create-vhdx", path, fmt.Errorf("path already exists"))
 	} else if !os.IsNotExist(err) {
@@ -299,7 +339,12 @@ func createVHDX(path string, maximumSize int64, parentPath string) error {
 			return newError(CodeChildCreateFailed, "encode-parent-path", parentPath, err)
 		}
 	}
-	parameters := createVirtualDiskParametersV2{Version: createVirtualDiskVersion2, MaximumSize: uint64(maximumSize), ParentPath: parentPtr, ParentVirtualStorageType: vhdxStorageType()}
+	parameters := createVirtualDiskParametersV2{
+		Version: createVirtualDiskVersion2, MaximumSize: uint64(options.MaximumSize),
+		BlockSizeInBytes: options.BlockSizeInBytes, SectorSizeInBytes: options.SectorSizeInBytes,
+		PhysicalSectorSizeInBytes: options.SectorSizeInBytes,
+		ParentPath:                parentPtr, ParentVirtualStorageType: vhdxStorageType(),
+	}
 	storageType := vhdxStorageType()
 	var handle virtualDiskHandle
 	status, _, _ := procCreateVirtualDisk.Call(uintptr(unsafe.Pointer(&storageType)), uintptr(unsafe.Pointer(pathPtr)), 0, 0, 0, 0, uintptr(unsafe.Pointer(&parameters)), 0, uintptr(unsafe.Pointer(&handle)))
@@ -396,7 +441,30 @@ func (a *Attachment) ResolvePhysicalPath() (string, error) {
 	return physicalPath, nil
 }
 
-func (a *Attachment) PhysicalPath() string { return a.physicalPath }
+func (a *Attachment) PhysicalPath() string   { return a.physicalPath }
+func (a *Attachment) VolumeGUIDPath() string { return a.volumeGUIDPath }
+
+func (a *Attachment) Flush(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if a.volumeGUIDPath == "" {
+		return newError(CodeCleanupFailed, "flush-volume", a.path, fmt.Errorf("volume identity is unavailable"))
+	}
+	ptr, err := windows.UTF16PtrFromString(strings.TrimSuffix(a.volumeGUIDPath, `\`))
+	if err != nil {
+		return err
+	}
+	handle, err := windows.CreateFile(ptr, windows.GENERIC_READ|windows.GENERIC_WRITE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, nil, windows.OPEN_EXISTING, 0, 0)
+	if err != nil {
+		return newError(CodeCleanupFailed, "open-volume-for-flush", a.volumeGUIDPath, err)
+	}
+	defer windows.CloseHandle(handle)
+	if err := windows.FlushFileBuffers(handle); err != nil {
+		return newError(CodeCleanupFailed, "FlushFileBuffers", a.volumeGUIDPath, err)
+	}
+	return nil
+}
 
 func (a *Attachment) Size() (SizeInfo, error) {
 	buffer := make([]byte, 64)
@@ -408,6 +476,19 @@ func (a *Attachment) Size() (SizeInfo, error) {
 		return SizeInfo{}, win32Error(CodeParentInvalid, "GetVirtualDiskInformation(size)", a.path, status)
 	}
 	return SizeInfo{VirtualSize: *(*uint64)(unsafe.Pointer(&buffer[8])), PhysicalSize: *(*uint64)(unsafe.Pointer(&buffer[16])), BlockSize: *(*uint32)(unsafe.Pointer(&buffer[24])), SectorSize: *(*uint32)(unsafe.Pointer(&buffer[28]))}, nil
+}
+
+func (a *Attachment) VirtualDiskID() (string, error) {
+	buffer := make([]byte, 32)
+	*(*uint32)(unsafe.Pointer(&buffer[0])) = getVirtualDiskInfoVirtualDiskID
+	size := uint32(len(buffer))
+	var used uint32
+	status, _, _ := procGetVirtualDiskInformation.Call(uintptr(a.handle), uintptr(unsafe.Pointer(&size)), uintptr(unsafe.Pointer(&buffer[0])), uintptr(unsafe.Pointer(&used)))
+	if status != 0 {
+		return "", win32Error(CodeParentInvalid, "GetVirtualDiskInformation(virtual-disk-id)", a.path, status)
+	}
+	identifier := *(*windows.GUID)(unsafe.Pointer(&buffer[8]))
+	return identifier.String(), nil
 }
 
 func (a *Attachment) VerifyParent(expectedParent string) error {
@@ -625,6 +706,35 @@ func allocatedFileSize(path string) (*int64, error) {
 	return &value, nil
 }
 
+func FileIdentity(path string) (string, error) {
+	ptr, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return "", err
+	}
+	handle, err := windows.CreateFile(ptr, windows.FILE_READ_ATTRIBUTES, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		return "", err
+	}
+	defer windows.CloseHandle(handle)
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(handle, &info); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%08x:%08x%08x", info.VolumeSerialNumber, info.FileIndexHigh, info.FileIndexLow), nil
+}
+
+func FileUsageOf(path string) (FileUsage, error) {
+	logical, err := logicalFileSize(path)
+	if err != nil {
+		return FileUsage{}, err
+	}
+	allocated, err := allocatedFileSize(path)
+	if err != nil {
+		return FileUsage{}, err
+	}
+	return FileUsage{LogicalBytes: *logical, AllocatedBytes: *allocated}, nil
+}
+
 type windowsBackend struct{}
 
 func NewBackend() Backend                                           { return windowsBackend{} }
@@ -733,6 +843,79 @@ func (windowsBackend) Acquire(ctx context.Context, request AcquireRequest, progr
 	if err := notify(progress, Progress{State: StateMounting, PhysicalPath: physicalPath, VolumeGUIDPath: volume.VolumeGUIDPath}); err != nil {
 		return fail(err)
 	}
+	mount, bootstrap, err := attachment.Mount(ctx, request.MountPath, false)
+	if err != nil {
+		return fail(err)
+	}
+	metrics.MountCallMs = milliseconds(mount.MountCallMs)
+	metrics.MountVisibilityWaitMs = milliseconds(mount.MountVisibilityWaitMs)
+	value := *metrics.PowerShellBootstrapMs + bootstrap
+	metrics.PowerShellBootstrapMs = milliseconds(value)
+	metrics.ChildReadyLogicalBytes, _ = logicalFileSize(request.ChildPath)
+	metrics.ChildReadyAllocatedBytes, _ = allocatedFileSize(request.ChildPath)
+	metrics.WorkspaceReadyMs = milliseconds(time.Since(started).Milliseconds())
+	metrics.AcquireWallClockMs = metrics.WorkspaceReadyMs
+	metrics.TotalWallClockMs = metrics.WorkspaceReadyMs
+	if err := notify(progress, Progress{State: StateReady, PhysicalPath: physicalPath, VolumeGUIDPath: volume.VolumeGUIDPath}); err != nil {
+		return fail(err)
+	}
+	return &windowsLease{attachment: attachment, info: LeaseInfo{ParentPath: request.ParentPath, ChildPath: request.ChildPath, PhysicalPath: physicalPath, VolumeGUIDPath: volume.VolumeGUIDPath, MountPath: request.MountPath}, mountCreated: mountCreated}, metrics, nil
+}
+
+// AttachExisting reopens a retained, broker-owned differencing child. It never
+// creates or replaces either VHDX and verifies the child's recorded parent
+// before exposing the mount.
+func AttachExisting(ctx context.Context, request AcquireRequest, progress ProgressFunc) (Lease, Metrics, error) {
+	started := time.Now()
+	metrics := Metrics{}
+	if err := ctx.Err(); err != nil {
+		return nil, metrics, newError(CodeCancelled, "attach-existing", request.ChildPath, err)
+	}
+	for label, path := range map[string]string{"parent": request.ParentPath, "child": request.ChildPath} {
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return nil, metrics, newError(CodeParentInvalid, "validate-"+label, path, err)
+		}
+	}
+	mountCreated := false
+	if _, err := os.Stat(request.MountPath); os.IsNotExist(err) {
+		if err := os.Mkdir(request.MountPath, 0700); err != nil {
+			return nil, metrics, newError(CodeMountFailed, "create-mount-path", request.MountPath, err)
+		}
+		mountCreated = true
+	} else if err != nil {
+		return nil, metrics, err
+	}
+	attachment, err := Open(request.ChildPath, false)
+	if err != nil {
+		return nil, metrics, err
+	}
+	fail := func(primary error) (Lease, Metrics, error) {
+		cleanupErr := attachment.Close(context.Background())
+		if mountCreated {
+			_ = os.Remove(request.MountPath)
+		}
+		return nil, metrics, errors.Join(primary, cleanupErr)
+	}
+	if err := attachment.VerifyParent(request.ParentPath); err != nil {
+		return fail(err)
+	}
+	phase := time.Now()
+	if err := attachment.Attach(false); err != nil {
+		return fail(err)
+	}
+	metrics.AttachCallMs = milliseconds(time.Since(phase).Milliseconds())
+	physicalPath, err := attachment.ResolvePhysicalPath()
+	if err != nil {
+		return fail(err)
+	}
+	volume, bootstrap, err := attachment.ResolveVolume(ctx, false)
+	if err != nil {
+		return fail(err)
+	}
+	metrics.PnPDiscoveryWaitMs = milliseconds(volume.PnPDiscoveryWaitMs)
+	metrics.VolumeReadyWaitMs = milliseconds(volume.VolumeReadyWaitMs)
+	metrics.PowerShellBootstrapMs = milliseconds(bootstrap)
 	mount, bootstrap, err := attachment.Mount(ctx, request.MountPath, false)
 	if err != nil {
 		return fail(err)

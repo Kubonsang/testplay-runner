@@ -31,16 +31,32 @@ type BridgeConfig struct {
 	Enabled *bool `json:"enabled,omitempty"` // nil → default true; false disables tier-1 bridge selection
 }
 
+const (
+	DefaultWorkspaceStoreMaxAllocatedBytes int64 = 32 << 30
+	DefaultWorkspaceMinimumHostFreeBytes   int64 = 20 << 30
+)
+
+// WorkspaceConfig selects the isolated workspace storage provider. It is
+// additive to schema 1 so existing configuration files retain their meaning.
+// An empty Backend preserves the historical selection rules.
+type WorkspaceConfig struct {
+	Backend                string `json:"backend,omitempty"`
+	StoreRoot              string `json:"store_root,omitempty"`
+	StoreMaxAllocatedBytes int64  `json:"store_max_allocated_bytes,omitempty"`
+	MinimumHostFreeBytes   int64  `json:"minimum_host_free_bytes,omitempty"`
+}
+
 type Config struct {
-	SchemaVersion string          `json:"schema_version"`
-	UnityPath     string          `json:"unity_path"`
-	ProjectPath   string          `json:"project_path"`
-	Timeout       Timeouts        `json:"timeout"`
-	ResultDir     string          `json:"result_dir"`
-	TestPlatform  string          `json:"test_platform"` // "edit_mode" (default) | "play_mode"
-	Retention     RetentionConfig `json:"retention"`
-	Bridge        *BridgeConfig   `json:"bridge,omitempty"` // warm-editor bridge backend; nil → enabled by default
-	configDir     string          // unexported: directory containing testplay.json
+	SchemaVersion string           `json:"schema_version"`
+	UnityPath     string           `json:"unity_path"`
+	ProjectPath   string           `json:"project_path"`
+	Timeout       Timeouts         `json:"timeout"`
+	ResultDir     string           `json:"result_dir"`
+	TestPlatform  string           `json:"test_platform"` // "edit_mode" (default) | "play_mode"
+	Retention     RetentionConfig  `json:"retention"`
+	Bridge        *BridgeConfig    `json:"bridge,omitempty"` // warm-editor bridge backend; nil → enabled by default
+	Workspace     *WorkspaceConfig `json:"workspace,omitempty"`
+	configDir     string           // unexported: directory containing testplay.json
 }
 
 // BridgeEnabled reports whether the warm-editor bridge backend may be selected.
@@ -138,6 +154,26 @@ func (c *Config) Validate(requireUnity bool) error {
 	}
 	if *c.Retention.MaxRuns < 0 {
 		return fmt.Errorf("%w: retention.max_runs must be non-negative", ErrConfigInvalid)
+	}
+
+	if c.Workspace != nil {
+		switch c.Workspace.Backend {
+		case "", "legacy", "image", "vhdx-diff", "auto":
+		default:
+			return fmt.Errorf("%w: workspace.backend must be legacy, image, vhdx-diff, or auto", ErrConfigInvalid)
+		}
+		if c.Workspace.StoreRoot != "" && !filepath.IsAbs(c.Workspace.StoreRoot) {
+			return fmt.Errorf("%w: workspace.store_root must be an absolute path", ErrConfigInvalid)
+		}
+		if c.Workspace.StoreMaxAllocatedBytes == 0 {
+			c.Workspace.StoreMaxAllocatedBytes = DefaultWorkspaceStoreMaxAllocatedBytes
+		}
+		if c.Workspace.MinimumHostFreeBytes == 0 {
+			c.Workspace.MinimumHostFreeBytes = DefaultWorkspaceMinimumHostFreeBytes
+		}
+		if c.Workspace.StoreMaxAllocatedBytes < 0 || c.Workspace.MinimumHostFreeBytes < 0 {
+			return fmt.Errorf("%w: workspace storage limits must be non-negative", ErrConfigInvalid)
+		}
 	}
 
 	return nil

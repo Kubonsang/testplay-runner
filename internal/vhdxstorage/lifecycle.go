@@ -15,6 +15,19 @@ const (
 	ProviderReflink = "linux-reflink"
 )
 
+// CreateOptions fixes the parent disk geometry that all differencing children
+// inherit. Zero geometry fields retain the platform default for legacy callers.
+type CreateOptions struct {
+	MaximumSize       int64
+	BlockSizeInBytes  uint32
+	SectorSizeInBytes uint32
+}
+
+type FileUsage struct {
+	LogicalBytes   int64 `json:"logicalBytes"`
+	AllocatedBytes int64 `json:"allocatedBytes"`
+}
+
 const (
 	CodeUnsupportedPlatform               = "unsupported-platform"
 	CodeNotElevated                       = "not-elevated"

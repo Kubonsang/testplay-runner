@@ -25,6 +25,22 @@ func TestLoad_ValidConfig(t *testing.T) {
 	}
 }
 
+func TestWorkspaceConfigBackendsAndDefaultsAreAdditive(t *testing.T) {
+	for _, backend := range []string{"legacy", "image", "vhdx-diff", "auto"} {
+		cfg := &config.Config{SchemaVersion: "1", UnityPath: "unity", ProjectPath: t.TempDir(), Workspace: &config.WorkspaceConfig{Backend: backend}}
+		if err := cfg.Validate(false); err != nil {
+			t.Fatalf("backend %s: %v", backend, err)
+		}
+		if cfg.Workspace.StoreMaxAllocatedBytes != config.DefaultWorkspaceStoreMaxAllocatedBytes || cfg.Workspace.MinimumHostFreeBytes != config.DefaultWorkspaceMinimumHostFreeBytes {
+			t.Fatalf("defaults=%+v", cfg.Workspace)
+		}
+	}
+	cfg := &config.Config{SchemaVersion: "1", UnityPath: "unity", ProjectPath: t.TempDir(), Workspace: &config.WorkspaceConfig{Backend: "unknown"}}
+	if err := cfg.Validate(false); err == nil {
+		t.Fatal("unknown workspace backend accepted")
+	}
+}
+
 func TestLoad_FileNotFound(t *testing.T) {
 	_, err := config.Load("testdata/nonexistent.json")
 	if !errors.Is(err, config.ErrConfigNotFound) {
