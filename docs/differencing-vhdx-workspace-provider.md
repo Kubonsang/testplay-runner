@@ -150,6 +150,32 @@ failure. The follow-up adds explicit marker setup, native exit-code capture,
 bounded executable-lock retry, and an ownership-restricted interrupted
 uninstall recovery path. It does not rewrite the failed result as a pass.
 
+The fresh Phase 1 rerun on 2026-08-11 is
+`VHDX_DIFF_NATIVE_PHASE1_PROMISING`:
+
+- artifact SHA-256:
+  `2DF2C43A7BCAF5FD6EC2E762B5E59BB66809A38B3EFD677797B7FF5093AC6D21`;
+- EditMode passed 2/2 and PlayMode passed 1/1 with no fallback;
+- the second run reused the same immutable parent, both children reported
+  `cleanupState: released`, and uninstall left no service, store, or
+  file-backed disk residual.
+
+The native broker security gate then passed with artifact SHA-256
+`F54D30959A48995537EDEDCE456B3AE7FAD175D447B6793A4E2141E0A297A575`:
+
+- the installed user completed an authenticated protocol-v2 hello;
+- a forged claimed SID and an actual SYSTEM caller were rejected by the
+  broker's impersonated-token authorization check;
+- an actual LOCAL SERVICE caller was denied by the named-pipe DACL;
+- caller-selected workspace roots and `..\\escape` workspace IDs were
+  rejected before dispatch;
+- uninstall removed both exact scheduled-task probes, the service, receipt,
+  store and scratch root, with zero new file-backed disks.
+
+The pipe is configured with `PIPE_REJECT_REMOTE_CLIENTS`, but an attempted
+connection from a second physical machine remains **NOT MEASURED**. GNF and
+recovery promotion gates also remain outstanding.
+
 ## Win32 references
 
 - [Named Pipe Security and Access Rights](https://learn.microsoft.com/windows/win32/ipc/named-pipe-security-and-access-rights)

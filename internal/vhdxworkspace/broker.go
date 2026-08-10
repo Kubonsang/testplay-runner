@@ -198,6 +198,15 @@ func (b *Broker) handleLocked(ctx context.Context, callerSID string, request Req
 	if !strings.EqualFold(callerSID, b.config.UserSID) || (request.UserSID != "" && !strings.EqualFold(request.UserSID, callerSID)) {
 		return fail("unauthorized-client", "authorize-client", callerSID, ErrOwnershipMismatch)
 	}
+	// Filesystem roots are installation policy. A client may name only opaque
+	// workspace identifiers; it must never be able to redirect the LocalSystem
+	// broker to a caller-selected path.
+	if request.WorkspaceRoot != "" {
+		return fail("invalid-request", "validate-client-workspace-root", request.WorkspaceRoot, ErrInvalidInput)
+	}
+	if request.WorkspaceID != "" && !identifierPattern.MatchString(request.WorkspaceID) {
+		return fail("invalid-workspace", "validate-workspace-id", request.WorkspaceID, ErrInvalidInput)
+	}
 	if request.Operation != OperationHello {
 		if err := b.native.Available(ctx); err != nil {
 			return fail("broker-unavailable", "native-check", b.native.Platform(), err)

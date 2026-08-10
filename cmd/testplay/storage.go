@@ -12,12 +12,16 @@ import (
 )
 
 var (
-	storageRoot         string
-	storageJSON         bool
-	storageDryRun       bool
-	storagePreserveData bool
-	brokerConfigPath    string
-	brokerConsole       bool
+	storageRoot              string
+	storageJSON              bool
+	storageDryRun            bool
+	storagePreserveData      bool
+	brokerConfigPath         string
+	brokerConsole            bool
+	brokerProbeOperation     string
+	brokerProbeClaimedSID    string
+	brokerProbeWorkspaceID   string
+	brokerProbeWorkspaceRoot string
 )
 
 var storageCmd = &cobra.Command{Use: "storage", Short: "Manage the privileged VHDX workspace broker"}
@@ -74,6 +78,39 @@ var brokerRunCmd = &cobra.Command{Use: "broker-run", Hidden: true, Args: cobra.N
 	return vhdxworkspace.RunWindowsService(brokerConfigPath)
 }}
 
+var brokerProbeCmd = &cobra.Command{Use: "broker-probe", Hidden: true, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	requestID := "security-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	request := vhdxworkspace.NewRequest(brokerProbeOperation, requestID)
+	request.UserSID = brokerProbeClaimedSID
+	request.WorkspaceID = brokerProbeWorkspaceID
+	request.WorkspaceRoot = brokerProbeWorkspaceRoot
+	callerSID, sidErr := vhdxworkspace.CurrentUserSID()
+	response, callErr := vhdxworkspace.DefaultClient().Call(cmd.Context(), request)
+	status := "PASS"
+	if callErr != nil {
+		status = "REJECTED"
+	}
+	result := map[string]any{
+		"schemaVersion":         1,
+		"status":                status,
+		"callerSid":             callerSID,
+		"operation":             brokerProbeOperation,
+		"claimedUserSid":        brokerProbeClaimedSID,
+		"workspaceId":           brokerProbeWorkspaceID,
+		"workspaceRoot":         brokerProbeWorkspaceRoot,
+		"response":              response,
+		"transportAccessDenied": brokerProbeAccessDenied(callErr),
+	}
+	if sidErr != nil {
+		result["callerSidError"] = sidErr.Error()
+	}
+	if callErr != nil {
+		result["callError"] = callErr.Error()
+	}
+	writeJSON(cmd.OutOrStdout(), result)
+	return nil
+}}
+
 var workspaceCmd = &cobra.Command{Use: "workspace", Short: "Manage retained VHDX workspaces"}
 
 var workspaceAttachCmd = &cobra.Command{Use: "attach <run-id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -116,7 +153,7 @@ func requireAbsoluteOptionalRoot(root string) (string, error) {
 
 func init() {
 	rootCmd.AddCommand(storageCmd, workspaceCmd)
-	storageCmd.AddCommand(storageInstallCmd, storageStatusCmd, storageGCCmd, storageUpgradeCmd, storageUninstallCmd, brokerRunCmd)
+	storageCmd.AddCommand(storageInstallCmd, storageStatusCmd, storageGCCmd, storageUpgradeCmd, storageUninstallCmd, brokerRunCmd, brokerProbeCmd)
 	workspaceCmd.AddCommand(workspaceAttachCmd, workspaceRemoveCmd)
 	storageInstallCmd.Flags().StringVar(&storageRoot, "root", "", "Absolute VHDX store root")
 	storageStatusCmd.Flags().BoolVar(&storageJSON, "json", false, "Emit JSON (the CLI always emits JSON)")
@@ -124,5 +161,9 @@ func init() {
 	storageUninstallCmd.Flags().BoolVar(&storagePreserveData, "preserve-data", false, "Remove the broker service but preserve store data")
 	brokerRunCmd.Flags().StringVar(&brokerConfigPath, "service-config", "", "Broker service config path")
 	brokerRunCmd.Flags().BoolVar(&brokerConsole, "console", false, "Run broker in the current console")
+	brokerProbeCmd.Flags().StringVar(&brokerProbeOperation, "operation", vhdxworkspace.OperationHello, "Raw broker operation")
+	brokerProbeCmd.Flags().StringVar(&brokerProbeClaimedSID, "claimed-user-sid", "", "Optional user SID asserted in the request")
+	brokerProbeCmd.Flags().StringVar(&brokerProbeWorkspaceID, "workspace-id", "", "Optional workspace identifier")
+	brokerProbeCmd.Flags().StringVar(&brokerProbeWorkspaceRoot, "workspace-root", "", "Optional client-selected workspace root")
 	_ = storageJSON
 }

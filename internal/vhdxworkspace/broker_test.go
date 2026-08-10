@@ -154,13 +154,25 @@ func TestBrokerRejectsUnauthorizedCallerAndTraversal(t *testing.T) {
 	if unauthorized.OK || unauthorized.Error == nil || unauthorized.Error.Code != "unauthorized-client" {
 		t.Fatalf("response=%+v", unauthorized)
 	}
+	claimed := request(OperationHello, "claimed-sid")
+	claimed.UserSID = "S-1-5-18"
+	claimedResponse := broker.Handle(context.Background(), "S-1-5-21-test", claimed)
+	if claimedResponse.OK || claimedResponse.Error == nil || claimedResponse.Error.Code != "unauthorized-client" {
+		t.Fatalf("claimed response=%+v", claimedResponse)
+	}
+	rootInjection := request(OperationHello, "root-injection")
+	rootInjection.WorkspaceRoot = filepath.Join(workspaces, "escape")
+	rootResponse := broker.Handle(context.Background(), "S-1-5-21-test", rootInjection)
+	if rootResponse.OK || rootResponse.Error == nil || rootResponse.Error.Operation != "validate-client-workspace-root" {
+		t.Fatalf("root response=%+v", rootResponse)
+	}
 	_ = os.Mkdir(filepath.Join(workspaces, "valid"), 0700)
 	req := request(OperationBeginParentBuild, "traversal")
 	req.ParentKey = &key
 	req.Source = &SourceSnapshot{}
 	req.WorkspaceID = "..\\escape"
 	response := broker.Handle(context.Background(), "S-1-5-21-test", req)
-	if response.OK || response.Error == nil || response.Error.Code != "invalid-workspace" {
+	if response.OK || response.Error == nil || response.Error.Code != "invalid-workspace" || response.Error.Operation != "validate-workspace-id" {
 		t.Fatalf("response=%+v", response)
 	}
 }

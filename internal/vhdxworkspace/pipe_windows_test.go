@@ -32,6 +32,12 @@ func TestPipeSecurityDescriptorAllowsOnlySystemAdminsAndInstalledUser(t *testing
 	}
 }
 
+func TestNamedPipeRejectsRemoteClients(t *testing.T) {
+	if pipeMode&windows.PIPE_REJECT_REMOTE_CLIENTS == 0 {
+		t.Fatal("named pipe must reject remote clients")
+	}
+}
+
 func TestNamedPipeRoundTripAuthenticatesCurrentUser(t *testing.T) {
 	sid, err := CurrentUserSID()
 	if err != nil {

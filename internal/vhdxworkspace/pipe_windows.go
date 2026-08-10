@@ -19,6 +19,8 @@ import (
 
 const DefaultPipeName = `\\.\pipe\testplay-storage-broker-v2`
 
+const pipeMode = windows.PIPE_TYPE_MESSAGE | windows.PIPE_READMODE_MESSAGE | windows.PIPE_WAIT | windows.PIPE_REJECT_REMOTE_CLIENTS
+
 type PipeClient struct{ Name string }
 
 func DefaultClient() Client { return PipeClient{Name: DefaultPipeName} }
@@ -39,7 +41,7 @@ func (client PipeClient) Call(ctx context.Context, request Request) (Response, e
 	}
 	handle, err := windows.CreateFile(path, windows.GENERIC_READ|windows.GENERIC_WRITE, 0, nil, windows.OPEN_EXISTING, windows.SECURITY_SQOS_PRESENT|windows.SECURITY_IMPERSONATION, 0)
 	if err != nil {
-		return Response{}, fmt.Errorf("%w: open named pipe: %v", ErrBrokerUnavailable, err)
+		return Response{}, fmt.Errorf("%w: open named pipe: %w", ErrBrokerUnavailable, err)
 	}
 	file := os.NewFile(uintptr(handle), name)
 	defer file.Close()
@@ -90,7 +92,7 @@ func (server *PipeServer) Serve(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		handle, err := windows.CreateNamedPipe(namePtr, windows.PIPE_ACCESS_DUPLEX, windows.PIPE_TYPE_MESSAGE|windows.PIPE_READMODE_MESSAGE|windows.PIPE_WAIT|windows.PIPE_REJECT_REMOTE_CLIENTS, windows.PIPE_UNLIMITED_INSTANCES, 1<<20, 1<<20, 5000, security)
+		handle, err := windows.CreateNamedPipe(namePtr, windows.PIPE_ACCESS_DUPLEX, pipeMode, windows.PIPE_UNLIMITED_INSTANCES, 1<<20, 1<<20, 5000, security)
 		if err != nil {
 			return err
 		}
