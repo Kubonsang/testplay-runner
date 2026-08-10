@@ -128,6 +128,28 @@ zero disk/mount/process/ephemeral-child residual. Eight workers, long-running
 child growth, performance superiority, production readiness, and release
 readiness remain **NOT MEASURED**.
 
+### Native evidence history
+
+The first Phase 1 attempt at commit
+`4a98bad9918483376976983494484ce770964bde` is retained as **FAILED**:
+
+- artifact SHA-256:
+  `3497141B7C6873FEA5D4E598A49A1582E41282956608F8671A012E4A8FB8C180`;
+- parent build, read-only verification, child create/attach/mount, and child
+  release completed with no fallback and no attached-disk residual;
+- EditMode ran 2 tests (1 pass, 1 fail) because the harness omitted the
+  fixture's required `TESTPLAY_UNITY_FIXTURE_MARKER` environment variable;
+- Windows PowerShell 5.1 promoted the CLI's normal stderr progress line to a
+  terminating harness error;
+- service deletion completed, but immediate store removal raced the stopped
+  broker executable's final file lock. The exact store and install receipt were
+  preserved with no file-backed disks.
+
+This is harness/uninstall transaction evidence, not a VHDX compatibility
+failure. The follow-up adds explicit marker setup, native exit-code capture,
+bounded executable-lock retry, and an ownership-restricted interrupted
+uninstall recovery path. It does not rewrite the failed result as a pass.
+
 ## Win32 references
 
 - [Named Pipe Security and Access Rights](https://learn.microsoft.com/windows/win32/ipc/named-pipe-security-and-access-rights)

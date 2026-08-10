@@ -28,6 +28,32 @@ function Write-Utf8NoBom {
     )
 }
 
+function Invoke-NativeCapture {
+    param(
+        [string]$LiteralPath,
+        [string[]]$ArgumentList,
+        [string]$OutputPath
+    )
+    $PreviousPreference = $ErrorActionPreference
+    try {
+        # Windows PowerShell 5.1 wraps native stderr as non-terminating
+        # NativeCommandError records. CLI progress on stderr is not failure;
+        # the process exit code remains authoritative.
+        $ErrorActionPreference = 'Continue'
+        $Lines = @(& $LiteralPath @ArgumentList 2>&1)
+        $ExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $PreviousPreference
+    }
+    [IO.File]::WriteAllLines(
+        $OutputPath,
+        [string[]]@($Lines | ForEach-Object { $_.ToString() }),
+        [Text.UTF8Encoding]::new($false)
+    )
+    return [pscustomobject]@{ ExitCode = $ExitCode; Lines = @($Lines) }
+}
+
 function Get-FileBackedDisks {
     return @(
         Get-Disk -ErrorAction SilentlyContinue |
@@ -76,6 +102,9 @@ $Installed = $false
 $Uninstalled = $false
 $Failure = $null
 $Started = Get-Date
+$MarkerWasSet = Test-Path Env:TESTPLAY_UNITY_FIXTURE_MARKER
+$PreviousMarker = $env:TESTPLAY_UNITY_FIXTURE_MARKER
+$env:TESTPLAY_UNITY_FIXTURE_MARKER = "vhdx-diff-native-phase1-$Stamp"
 
 Start-Transcript -Path $TranscriptPath -Force | Out-Null
 try {
@@ -88,11 +117,10 @@ try {
         Pop-Location
     }
 
-    $InstallOutput = @(
-        & $ExecutablePath storage install --root $StoreRoot 2>&1
-    )
-    $InstallOutput | Set-Content -LiteralPath (Join-Path $ArtifactRoot 'storage-install.txt') -Encoding UTF8
-    if ($LASTEXITCODE -ne 0) { throw "storage install failed: exit=$LASTEXITCODE" }
+    $Install = Invoke-NativeCapture -LiteralPath $ExecutablePath `
+        -ArgumentList @('storage', 'install', '--root', $StoreRoot) `
+        -OutputPath (Join-Path $ArtifactRoot 'storage-install.txt')
+    if ($Install.ExitCode -ne 0) { throw "storage install failed: exit=$($Install.ExitCode)" }
     $Installed = $true
 
     foreach ($Platform in @('edit_mode', 'play_mode')) {
@@ -112,21 +140,18 @@ try {
                 minimum_host_free_bytes = 21474836480
             }
         })
-        $RunOutput = @(
-            & $ExecutablePath --config $ConfigPath run `
-                --workspace-backend vhdx-diff `
-                --workspace-store-root $StoreRoot `
-                --no-bridge 2>&1
-        )
-        $RunOutput | Set-Content -LiteralPath (Join-Path $ArtifactRoot "run-$Platform.txt") -Encoding UTF8
-        if ($LASTEXITCODE -ne 0) {
-            throw "$Platform fixture run failed: exit=$LASTEXITCODE"
+        $Run = Invoke-NativeCapture -LiteralPath $ExecutablePath `
+            -ArgumentList @('--config', $ConfigPath, 'run', '--workspace-backend', 'vhdx-diff', '--workspace-store-root', $StoreRoot, '--no-bridge') `
+            -OutputPath (Join-Path $ArtifactRoot "run-$Platform.txt")
+        if ($Run.ExitCode -ne 0) {
+            throw "$Platform fixture run failed: exit=$($Run.ExitCode)"
         }
     }
 
-    $StatusOutput = @(& $ExecutablePath storage status --json 2>&1)
-    $StatusOutput | Set-Content -LiteralPath (Join-Path $ArtifactRoot 'storage-status.json') -Encoding UTF8
-    if ($LASTEXITCODE -ne 0) { throw "storage status failed: exit=$LASTEXITCODE" }
+    $Status = Invoke-NativeCapture -LiteralPath $ExecutablePath `
+        -ArgumentList @('storage', 'status', '--json') `
+        -OutputPath (Join-Path $ArtifactRoot 'storage-status.json')
+    if ($Status.ExitCode -ne 0) { throw "storage status failed: exit=$($Status.ExitCode)" }
 }
 catch {
     $Failure = $_.Exception.ToString()
@@ -134,16 +159,23 @@ catch {
 finally {
     if ($Installed) {
         try {
-            $UninstallOutput = @(& $ExecutablePath storage uninstall 2>&1)
-            $UninstallOutput | Set-Content -LiteralPath (Join-Path $ArtifactRoot 'storage-uninstall.txt') -Encoding UTF8
-            $Uninstalled = $LASTEXITCODE -eq 0
+            $Uninstall = Invoke-NativeCapture -LiteralPath $ExecutablePath `
+                -ArgumentList @('storage', 'uninstall') `
+                -OutputPath (Join-Path $ArtifactRoot 'storage-uninstall.txt')
+            $Uninstalled = $Uninstall.ExitCode -eq 0
             if (-not $Uninstalled -and $null -eq $Failure) {
-                $Failure = "storage uninstall failed: exit=$LASTEXITCODE"
+                $Failure = "storage uninstall failed: exit=$($Uninstall.ExitCode)"
             }
         }
         catch {
             if ($null -eq $Failure) { $Failure = $_.Exception.ToString() }
         }
+    }
+    if ($MarkerWasSet) {
+        $env:TESTPLAY_UNITY_FIXTURE_MARKER = $PreviousMarker
+    }
+    else {
+        Remove-Item Env:TESTPLAY_UNITY_FIXTURE_MARKER -ErrorAction SilentlyContinue
     }
     Stop-Transcript | Out-Null
 }

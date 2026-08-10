@@ -10,9 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -167,6 +169,18 @@ func platformUninstallStorage(preserve bool) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	manager, service, err := openBrokerService()
+	if err != nil {
+		if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+			if preserve {
+				return map[string]any{"status": "UNINSTALLED", "dataPreserved": true, "storeRoot": receipt.StoreRoot}, nil
+			}
+			return finishInterruptedUninstall(receipt)
+		}
+		return nil, err
+	}
+	defer manager.Disconnect()
+	defer service.Close()
 	if !preserve {
 		response, statusErr := callStorageBroker(context.Background(), vhdxworkspace.OperationStatus, false, "", "")
 		if statusErr != nil {
@@ -183,12 +197,6 @@ func platformUninstallStorage(preserve bool) (any, error) {
 			return nil, fmt.Errorf("refusing data removal: %w", err)
 		}
 	}
-	manager, service, err := openBrokerService()
-	if err != nil {
-		return nil, err
-	}
-	defer manager.Disconnect()
-	defer service.Close()
 	_ = stopService(service)
 	if err := service.Delete(); err != nil {
 		return nil, err
@@ -200,7 +208,7 @@ func platformUninstallStorage(preserve bool) (any, error) {
 		} else if len(entries) != 0 {
 			return nil, fmt.Errorf("refusing to remove non-empty workspace root: %s", receipt.WorkspaceRoot)
 		}
-		if err := os.RemoveAll(receipt.StoreRoot); err != nil {
+		if err := removeAllWithRetry(receipt.StoreRoot, 15*time.Second); err != nil {
 			return nil, err
 		}
 		if err := os.Remove(receipt.WorkspaceRoot); err != nil && !os.IsNotExist(err) {
@@ -472,4 +480,101 @@ func copyExecutableDurable(source, destination string) error {
 		return fmt.Errorf("installed broker binary hash mismatch")
 	}
 	return nil
+}
+
+func finishInterruptedUninstall(receipt storageInstallReceipt) (any, error) {
+	if err := validateInstallReceiptPaths(receipt); err != nil {
+		return nil, fmt.Errorf("refusing interrupted uninstall recovery: %w", err)
+	}
+	if err := validateInterruptedUninstallResidual(receipt); err != nil {
+		return nil, fmt.Errorf("refusing interrupted uninstall recovery: %w", err)
+	}
+	count, err := fileBackedDiskCount()
+	if err != nil {
+		return nil, err
+	}
+	if count != 0 {
+		return nil, fmt.Errorf("refusing interrupted uninstall recovery with %d file-backed disks", count)
+	}
+	workspaceEntries, err := os.ReadDir(receipt.WorkspaceRoot)
+	if err != nil {
+		return nil, err
+	}
+	if len(workspaceEntries) != 0 {
+		return nil, fmt.Errorf("refusing interrupted uninstall recovery with non-empty workspace root: %s", receipt.WorkspaceRoot)
+	}
+	if err := removeAllWithRetry(receipt.StoreRoot, 15*time.Second); err != nil {
+		return nil, err
+	}
+	if err := os.Remove(receipt.WorkspaceRoot); err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	if err := os.Remove(installReceiptPath()); err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	return map[string]any{"status": "UNINSTALLED_RECOVERED", "dataPreserved": false, "storeRoot": receipt.StoreRoot}, nil
+}
+
+func validateInterruptedUninstallResidual(receipt storageInstallReceipt) error {
+	allowed := map[string]bool{
+		"broker":                                true,
+		filepath.Join("broker", "testplay.exe"): true,
+		"broker-config.json":                    true,
+	}
+	return filepath.WalkDir(receipt.StoreRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if strings.EqualFold(filepath.Clean(path), filepath.Clean(receipt.StoreRoot)) {
+			return nil
+		}
+		relative, err := filepath.Rel(receipt.StoreRoot, path)
+		if err != nil || !allowed[relative] {
+			return fmt.Errorf("unexpected residual path: %s", path)
+		}
+		info, err := entry.Info()
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("unsafe residual entry: %s: %w", path, err)
+		}
+		pointer, err := windows.UTF16PtrFromString(path)
+		if err != nil {
+			return err
+		}
+		attributes, err := windows.GetFileAttributes(pointer)
+		if err != nil || attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+			return fmt.Errorf("residual entry is a reparse point: %s: %w", path, err)
+		}
+		return nil
+	})
+}
+
+func removeAllWithRetry(path string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var err error
+	for {
+		if err = os.RemoveAll(path); err == nil {
+			if _, statErr := os.Lstat(path); os.IsNotExist(statErr) {
+				return nil
+			} else if statErr != nil {
+				return statErr
+			}
+		}
+		if time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func fileBackedDiskCount() (int, error) {
+	const script = `$ErrorActionPreference='Stop'; @(Get-Disk -ErrorAction Stop | Where-Object { $_.BusType -eq 'File Backed Virtual' }).Count`
+	output, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("measure file-backed disks: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(string(output)))
+	if err != nil {
+		return 0, fmt.Errorf("decode file-backed disk count: %w", err)
+	}
+	return value, nil
 }

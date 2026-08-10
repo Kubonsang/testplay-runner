@@ -158,8 +158,12 @@ func Prepare(ctx context.Context, sourcePath, runID string, opts PrepareOptions)
 	// Clean Temp/ so Unity starts fresh each run.
 	_ = os.RemoveAll(filepath.Join(shadowPath, "Temp"))
 
-	// Patch .gitignore — non-fatal.
-	_ = EnsureIgnored(abs, ".testplay-shadow-*/")
+	// Project-local shadows need ignore coverage. Broker workspaces live outside
+	// the source tree, so mutating the source .gitignore would violate their
+	// physical source-isolation contract and serves no purpose.
+	if opts.WorkspaceRoot == "" {
+		_ = EnsureIgnored(abs, ".testplay-shadow-*/")
+	}
 
 	succeeded = true
 	return ws, nil
