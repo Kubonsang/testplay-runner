@@ -601,3 +601,61 @@ hardware gate and two NTFS GNF_ reference runs. AMD/NVIDIA device transitions
 remain explicit user-administered actions; the repository gate only records
 exact PnP identities and restore commands. Fixture 4/8 and GNF_ 1/2/4/8 remain
 `NOT MEASURED` until that gate and every preceding native stage pass.
+
+The native worker ladder at implementation commit
+`2a6e0067ce6f8b0c32ac1f748c68a4c017d2b20a` passed its NVIDIA-only gate,
+two-run GNF_ NTFS reference gate, standalone Managed ReFS Phase 1, fixture
+single-worker regression, fixture sizing, and fixture 2/4/8-worker runs. The
+fixture 2/4/8 ZIP SHA-256 values are respectively
+`C83E0EC663F642BA3D1B1FF617BEDCA38DE94F2FC1743FFE0B580B23A2179EFB`,
+`9E7CA570FE16486B79CC09D0B57B9EEA06E8283D11134BF10369C38D58505D55`,
+and `29F8F05C992BCB9D3C71BC474D56C193FDD23D21E5DF020FEABFB9534158D37C`.
+The fixture 8-worker result is
+`UNITY_PHASE2_EIGHT_WORKERS_COMPATIBLE`; its concurrent clone and Unity,
+semantic parity, isolation, sequential release durability, pool removal, and
+outer residual gates all passed.
+
+GNF_ sizing measured 6,356,467,712 used bytes after the baseline. The baseline
+contained 45,388 files and 4,553,119,822 logical/allocated bytes; sizing ZIP
+SHA-256 is
+`7DAA90151A73FFF5726F1982FBEBFCB53F36A91143B94C79D1E26A075F70BE2B`.
+GNF_ single-worker, 2-worker, and 4-worker lifecycles then passed with exact
+reference/worker test parity, source and baseline isolation, durable release,
+normal pool removal, and measured-zero outer residuals. Their artifact ZIP
+SHA-256 values are respectively
+`C967DC4D49066AF2AEF95485019F706A4CF12F75BD20F72522F8362B0D579430`,
+`5E2C397E7295637DDB7F419B91A50FFD34FF0EE10D0280871AB19641BD0DCF62`,
+and `6F531CD459CC46A1356C95D527CF71C8341A39C1CCF79C650E342FB0BE1EBEB8`.
+
+The final GNF_ 8-worker stage is `FAILED`, code `clone-failed`, operation
+`verify-concurrent-gnf-worker-clone`. This is a concurrency-gate failure, not a
+Block Clone IOCTL failure: all eight workers issued the ReFS Block Clone IOCTL,
+each cloned 4,500,168,704 bytes without fallback, and the aggregate cloned bytes
+were 36,001,349,632. The earliest completed clone ended at
+`2026-08-10T12:17:52.4999254Z`, while the last clone began at
+`2026-08-10T12:18:56.8315792Z`; the required all-eight common interval was
+therefore -64.3316538 seconds. Peak measured clone concurrency was seven at
+`2026-08-10T12:17:09.1132282Z`. The fail-closed gate stopped before any worker
+Unity process, so GNF_ 8-worker Unity correctness, semantic parity, worker
+mutation, and isolation are `NOT MEASURED`.
+
+All eight acquired workers were released after that gate failure. Normal pool
+remove passed with internal residual `MEASURED_ZERO`, cleanup state `released`,
+and the outer storage root, VHDX, mount, owner records, file-backed disks, drive
+letters, and owned processes measured absent. There was no BSOD and no retained
+pool. The GNF_ 8-worker artifact ZIP SHA-256 is
+`3605F1804F3E07A914F5565AADF1E985234E68295A4069297F534C56BB428A8F`.
+Per the fail-closed plan, no gate relaxation or immediate retry was performed;
+the overall ladder verdict remains `FAILED`.
+
+After the stopped ladder, the exact AMD adapter was explicitly re-enabled and
+both AMD and NVIDIA reported `OK` with problem code zero before reboot. The
+restore artifact ZIP SHA-256 is
+`30C2A6C18819F9EF4C697FC176B6751F9980244C6715E23E8E63B97D12A40180`.
+Post-reboot verification again measured both adapters healthy, with zero
+file-backed disks and zero related Unity/TestPlay processes. Its artifact ZIP
+SHA-256 is
+`336814F14849BDAA9EAFD34D5A3E3B086575E5F946E20FDA26AB6340F5E23822`.
+GNF_ 8-worker compatibility, general forced-termination recovery, large-project
+performance superiority, product CLI integration, production readiness, and
+release readiness remain `NOT MEASURED`.
