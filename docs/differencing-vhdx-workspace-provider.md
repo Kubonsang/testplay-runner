@@ -307,9 +307,27 @@ The raw four-worker artifact inherited a harness reporting bug that listed
 instances and verdict passed. The follow-up makes that field count-aware;
 the raw worker, parity, overlap, storage, and residual evidence is unaffected.
 
-GNF eight-worker, forced-termination, broker-restart, reboot-recovery,
-quota/LRU, and production/release readiness gates remain **NOT MEASURED**.
-`auto` promotion therefore remains blocked.
+The fixture client/Unity forced-termination gate at commit `4786fd9` passed as
+`VHDX_DIFF_FIXTURE_FORCED_TERMINATION_RECOVERY_PASS`:
+
+- artifact SHA-256:
+  `9D5BBE6F395F0C041EF3D1CEBCBF73C22B3C9FF292F9C5C86AB55F92FC486F3C`;
+- the harness durably captured and hashed the exact broker-authored lease
+  journal and workspace ownership marker before termination;
+- only the journal's client PID 32688 and Unity PID 39008 were terminated,
+  after their executable paths, lease ID, ownership token, workspace, mount,
+  and child VHDX identities were verified;
+- after the 30-second client-loss grace, the broker removed the exact orphan
+  child, journal, and physical workspace. The recovered store retained its one
+  immutable parent and reported active, retained, pending, and quarantined
+  counts of zero with `manualRecoveryRequired: false`;
+- normal uninstall then removed the service, receipt, store, workspace root,
+  file-backed disk, drive-letter, and process residuals to measured zero.
+
+This is fixture evidence for simultaneous CLI/Unity termination. GNF
+forced-termination, broker-process termination/restart, Windows reboot
+recovery, GNF eight-worker, quota/LRU, and production/release readiness gates
+remain **NOT MEASURED**. `auto` promotion therefore remains blocked.
 
 ## Win32 references
 

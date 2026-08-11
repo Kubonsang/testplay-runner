@@ -524,10 +524,12 @@ afterward. `--keep-workspace` detaches but retains the exact child; use
 to manage it. The default allocated-byte quota is 32 GiB, the host-free floor
 is 20 GiB, and each newly admitted child reserves 2 GiB.
 
-This provider remains explicit opt-in until the 1/2/4-worker, forced-termination,
-broker-restart, and Windows-reboot native gates pass. The Managed ReFS pool and
-its evidence remain available as a separate experimental/legacy backend; no
-ReFS, Dev Drive, partition, Defender, or registry setting is changed here. See
+This provider remains explicit opt-in. Fixture and GNF 1/2/4-worker gates and
+the fixture CLI/Unity forced-termination recovery gate have passed; GNF
+forced-termination, broker restart, Windows reboot, and quota/LRU native gates
+remain. The Managed ReFS pool and its evidence remain available as a separate
+experimental/legacy backend; no ReFS, Dev Drive, partition, Defender, or
+registry setting is changed here. See
 [the provider contract](docs/differencing-vhdx-workspace-provider.md).
 
 The v0.12.0 release assets include the separate `testplay-storage-helper` as an
