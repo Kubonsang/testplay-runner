@@ -27,7 +27,6 @@ function New-Worker {
             childReleasedAllocatedMeasured = $true
             childReadyAllocatedBytes = 1
             childPeakAllocatedBytes = 1
-            childReleasedAllocatedBytes = 0
             unityProcessPid = 1000 + $Index
             unityProcessStartedAt = $Start
             unityProcessFinishedAt = $Finish

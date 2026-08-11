@@ -53,7 +53,9 @@ function Assert-VHDXDiffFixtureParallelResult {
         if ([long]$Metrics.childPeakAllocatedBytes -lt [long]$Metrics.childReadyAllocatedBytes) {
             throw "Worker child peak is smaller than its ready allocation: role=$($Instance.role)"
         }
-        if ([long]$Metrics.childReleasedAllocatedBytes -ne 0) {
+        $ReleasedBytes = Get-VHDXDiffMetric -Metrics $Metrics -Name 'childReleasedAllocatedBytes'
+        if ($null -eq $ReleasedBytes) { $ReleasedBytes = 0 }
+        if ([long]$ReleasedBytes -ne 0) {
             throw "Worker child allocation remains after release: role=$($Instance.role)"
         }
         if ([int]$Metrics.unityProcessPid -le 0) { throw "Worker Unity PID is missing: role=$($Instance.role)" }
