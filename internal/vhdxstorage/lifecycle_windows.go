@@ -48,8 +48,20 @@ var (
 	procGetVirtualDiskInformation  = virtDiskDLL.NewProc("GetVirtualDiskInformation")
 	kernel32DLL                    = syscall.NewLazyDLL("kernel32.dll")
 	procGetCompressedFileSizeW     = kernel32DLL.NewProc("GetCompressedFileSizeW")
+	procGetVolumeNameForMountPoint = kernel32DLL.NewProc("GetVolumeNameForVolumeMountPointW")
+	procDeleteVolumeMountPoint     = kernel32DLL.NewProc("DeleteVolumeMountPointW")
 	physicalDrivePattern           = regexp.MustCompile(`(?i)^\\\\\.\\PhysicalDrive([0-9]+)$`)
 )
+
+const detachedImageQueryScript = `
+$ErrorActionPreference = 'Stop'
+$images = @(Get-DiskImage -ImagePath $env:TESTPLAY_VHDX_IMAGE_PATH -ErrorAction Stop)
+if ($images.Count -ne 1) { throw "expected one exact disk image; found $($images.Count)" }
+[pscustomobject]@{
+  imagePath = [IO.Path]::GetFullPath([string]$images[0].ImagePath)
+  attached = [bool]$images[0].Attached
+} | ConvertTo-Json -Compress
+`
 
 const adminCheckScript = `
 $principal = [Security.Principal.WindowsPrincipal](
@@ -758,6 +770,102 @@ func FileUsageOf(path string) (FileUsage, error) {
 		return FileUsage{}, err
 	}
 	return FileUsage{LogicalBytes: *logical, AllocatedBytes: *allocated}, nil
+}
+
+// PrepareDetachedStaleMount removes only a directory volume-mount reparse
+// point whose target is the journal's exact volume GUID and whose exact child
+// VHDX is currently detached. A broker process crash closes the VirtDisk
+// handle and detaches the disk, but Windows can leave this access point behind.
+// The directory itself is retained as an empty, real mount parent for the
+// subsequent AttachExisting call.
+func PrepareDetachedStaleMount(ctx context.Context, childPath, mountPath, expectedVolumeGUID string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if !filepath.IsAbs(childPath) || !filepath.IsAbs(mountPath) || strings.TrimSpace(expectedVolumeGUID) == "" {
+		return false, newError(CodeMountFailed, "validate-stale-mount", mountPath, fmt.Errorf("absolute child, mount, and expected volume GUID are required"))
+	}
+	info, err := os.Lstat(mountPath)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, newError(CodeMountFailed, "stat-stale-mount", mountPath, err)
+	}
+	if !info.IsDir() {
+		return false, newError(CodeMountFailed, "validate-stale-mount", mountPath, fmt.Errorf("mount path is not a directory"))
+	}
+	mountPtr, err := windows.UTF16PtrFromString(ensureTrailingSeparator(mountPath))
+	if err != nil {
+		return false, err
+	}
+	attributes, err := windows.GetFileAttributes(mountPtr)
+	if err != nil {
+		return false, newError(CodeMountFailed, "attributes-stale-mount", mountPath, err)
+	}
+	if attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+		return false, nil
+	}
+	buffer := make([]uint16, 1024)
+	ok, _, callErr := procGetVolumeNameForMountPoint.Call(uintptr(unsafe.Pointer(mountPtr)), uintptr(unsafe.Pointer(&buffer[0])), uintptr(len(buffer)))
+	if ok == 0 {
+		return false, newError(CodeMountFailed, "resolve-stale-mount-target", mountPath, callErr)
+	}
+	actualVolumeGUID := windows.UTF16ToString(buffer)
+	if !sameVolumeGUID(actualVolumeGUID, expectedVolumeGUID) {
+		return false, newError(CodeMountFailed, "validate-stale-mount-target", mountPath, fmt.Errorf("target=%q expected=%q", actualVolumeGUID, expectedVolumeGUID))
+	}
+	childInfo, err := os.Lstat(childPath)
+	if err != nil || !childInfo.Mode().IsRegular() || childInfo.Mode()&os.ModeSymlink != 0 {
+		return false, newError(CodeChildOpenFailed, "validate-stale-mount-child", childPath, err)
+	}
+	query := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", detachedImageQueryScript)
+	query.Env = append(os.Environ(), "TESTPLAY_VHDX_IMAGE_PATH="+childPath)
+	output, err := query.CombinedOutput()
+	if err != nil {
+		return false, newError(CodeMountFailed, "query-stale-mount-image", childPath, fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output))))
+	}
+	var image struct {
+		ImagePath string `json:"imagePath"`
+		Attached  bool   `json:"attached"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(output))), &image); err != nil {
+		return false, newError(CodeMountFailed, "decode-stale-mount-image", childPath, err)
+	}
+	if image.Attached || !strings.EqualFold(filepath.Clean(image.ImagePath), filepath.Clean(childPath)) {
+		return false, newError(CodeMountFailed, "validate-stale-mount-image", childPath, fmt.Errorf("attached=%t image=%q", image.Attached, image.ImagePath))
+	}
+	ok, _, callErr = procDeleteVolumeMountPoint.Call(uintptr(unsafe.Pointer(mountPtr)))
+	if ok == 0 {
+		return false, newError(CodeUnmountFailed, "delete-stale-mount-point", mountPath, callErr)
+	}
+	info, err = os.Lstat(mountPath)
+	if os.IsNotExist(err) {
+		if err := os.Mkdir(mountPath, 0700); err != nil {
+			return false, newError(CodeMountFailed, "recreate-stale-mount-directory", mountPath, err)
+		}
+		info, err = os.Lstat(mountPath)
+	}
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return false, newError(CodeMountFailed, "verify-stale-mount-directory", mountPath, err)
+	}
+	attributes, err = windows.GetFileAttributes(mountPtr)
+	if err != nil || attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		return false, newError(CodeMountFailed, "verify-stale-mount-cleared", mountPath, err)
+	}
+	entries, err := os.ReadDir(mountPath)
+	if err != nil || len(entries) != 0 {
+		return false, newError(CodeMountFailed, "verify-stale-mount-empty", mountPath, errors.Join(err, fmt.Errorf("entries=%d", len(entries))))
+	}
+	return true, nil
+}
+
+func ensureTrailingSeparator(path string) string {
+	return strings.TrimRight(path, `\\/`) + `\\`
+}
+
+func sameVolumeGUID(left, right string) bool {
+	return strings.EqualFold(strings.TrimRight(strings.TrimSpace(left), `\\/`), strings.TrimRight(strings.TrimSpace(right), `\\/`))
 }
 
 type windowsBackend struct{}

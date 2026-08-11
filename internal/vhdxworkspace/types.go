@@ -136,6 +136,8 @@ type LeaseJournal struct {
 	FileIdentity   FileIdentity `json:"fileIdentity"`
 	PhysicalPath   string       `json:"physicalPath,omitempty"`
 	VolumeGUID     string       `json:"volumeGuid,omitempty"`
+	RecoveryAt     *time.Time   `json:"recoveryAt,omitempty"`
+	RecoveryError  string       `json:"recoveryError,omitempty"`
 }
 
 type WorkspaceOwner struct {

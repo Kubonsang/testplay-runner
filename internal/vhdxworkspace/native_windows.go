@@ -323,6 +323,9 @@ func (native windowsNative) AttachChild(ctx context.Context, parent ParentMetada
 	if actual != journal.FileIdentity {
 		return nil, Metrics{}, ErrOwnershipMismatch
 	}
+	if _, err := vhdxstorage.PrepareDetachedStaleMount(ctx, journal.ChildPath, journal.MountPath, journal.VolumeGUID); err != nil {
+		return nil, Metrics{}, err
+	}
 	lease, raw, err := vhdxstorage.AttachExisting(ctx, vhdxstorage.AcquireRequest{ParentPath: parent.VHDXPath, ChildPath: journal.ChildPath, MountPath: journal.MountPath, StoreRoot: filepath.Dir(filepath.Dir(journal.ChildPath)), LeaseID: journal.LeaseID}, nil)
 	metrics := Metrics{ParentStatus: ParentStatusValid, ParentReused: true, ParentVirtualBytes: parent.VirtualBytes, ParentAllocatedBytes: parent.AllocatedBytes}
 	if raw.AttachCallMs != nil {

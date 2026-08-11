@@ -92,6 +92,7 @@ func (b *Broker) Recover(ctx context.Context, grace time.Duration) (RecoverySumm
 		}
 		if verifyErr := b.native.VerifyParent(ctx, *resolved.Metadata); verifyErr != nil {
 			journal.State = "quarantined"
+			journal.RecoveryError = verifyErr.Error()
 			_ = b.store.WriteLease(journal)
 			summary.Quarantined++
 			continue
@@ -100,10 +101,18 @@ func (b *Broker) Recover(ctx context.Context, grace time.Duration) (RecoverySumm
 		session := b.children[journal.LeaseID]
 		b.mu.Unlock()
 		if session == nil {
+			recoveryAt := b.now().UTC()
+			journal.State = "recovering"
+			journal.RecoveryAt = &recoveryAt
+			journal.RecoveryError = ""
+			if writeErr := b.store.WriteLease(journal); writeErr != nil {
+				return summary, writeErr
+			}
 			var attachErr error
 			session, _, attachErr = b.native.AttachChild(ctx, *resolved.Metadata, journal)
 			if attachErr != nil {
 				journal.State = "quarantined"
+				journal.RecoveryError = attachErr.Error()
 				_ = b.store.WriteLease(journal)
 				summary.Quarantined++
 				continue
@@ -112,12 +121,14 @@ func (b *Broker) Recover(ctx context.Context, grace time.Duration) (RecoverySumm
 		_, releaseErr := session.Release(ctx, true)
 		if releaseErr != nil {
 			journal.State = "quarantined"
+			journal.RecoveryError = releaseErr.Error()
 			_ = b.store.WriteLease(journal)
 			summary.Quarantined++
 			continue
 		}
 		if cleanupErr := b.cleanupOwnedWorkspace(journal); cleanupErr != nil {
 			journal.State = "quarantined"
+			journal.RecoveryError = cleanupErr.Error()
 			_ = b.store.WriteLease(journal)
 			summary.Quarantined++
 			continue

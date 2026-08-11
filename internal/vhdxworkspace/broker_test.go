@@ -21,6 +21,7 @@ type fakeNative struct {
 	maxAcquire  int
 	acquireGate chan struct{}
 	verifyErr   error
+	attachErr   error
 }
 
 func (native *fakeNative) event(value string) {
@@ -71,6 +72,9 @@ func (native *fakeNative) AcquireChild(_ context.Context, parent ParentMetadata,
 	return &fakeChildSession{lease: lease, childPath: journal.ChildPath, identity: FileIdentity{FileID: "fake:" + journal.LeaseID}}, Metrics{ChildCreateMs: 1, ChildAttachMs: 2, ChildMountMs: 3, ChildReadyBytes: 5}, nil
 }
 func (native *fakeNative) AttachChild(_ context.Context, parent ParentMetadata, journal LeaseJournal) (ChildSession, Metrics, error) {
+	if native.attachErr != nil {
+		return nil, Metrics{}, native.attachErr
+	}
 	if _, err := os.Stat(journal.ChildPath); err != nil {
 		return nil, Metrics{}, err
 	}
@@ -79,6 +83,44 @@ func (native *fakeNative) AttachChild(_ context.Context, parent ParentMetadata, 
 	}
 	lease := Lease{LeaseID: journal.LeaseID, RunID: journal.RunID, ParentKey: parent.CompatibilityKey.Digest, MountPath: journal.MountPath, State: "ready", CreatedAt: journal.CreatedAt, Retained: true}
 	return &fakeChildSession{lease: lease, childPath: journal.ChildPath, identity: journal.FileIdentity}, Metrics{ChildAttachMs: 1, ChildMountMs: 1}, nil
+}
+
+func TestRecoverRecordsAttachFailureEvidence(t *testing.T) {
+	native := &fakeNative{}
+	broker, key, workspaces := testBroker(t, native)
+	commitTestParent(t, broker, key, workspaces)
+	workspace := filepath.Join(workspaces, "attach-failure")
+	if err := os.Mkdir(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	acquire := request(OperationAcquire, "acquire-attach-failure")
+	acquire.ParentKey = &key
+	acquire.RunID = "attach-failure"
+	acquire.WorkspaceID = "attach-failure"
+	ready := broker.Handle(context.Background(), "S-1-5-21-test", acquire)
+	if !ready.OK {
+		t.Fatalf("acquire=%+v", ready)
+	}
+	native.attachErr = fmt.Errorf("stale mount target mismatch")
+	restarted, err := NewBroker(broker.config, native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.now = func() time.Time { return time.Now().Add(time.Minute) }
+	summary, err := restarted.Recover(context.Background(), 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Quarantined != 1 || summary.Released != 0 {
+		t.Fatalf("summary=%+v", summary)
+	}
+	journal, err := restarted.store.ReadLease(ready.Lease.LeaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if journal.State != "quarantined" || journal.RecoveryAt == nil || !strings.Contains(journal.RecoveryError, "stale mount target mismatch") {
+		t.Fatalf("journal=%+v", journal)
+	}
 }
 
 type fakeParentSession struct {

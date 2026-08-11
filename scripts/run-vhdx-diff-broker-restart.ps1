@@ -123,6 +123,25 @@ function Get-DirectoryEntryCount {
     return @(Get-ChildItem -LiteralPath $LiteralPath -Force -ErrorAction Stop).Count
 }
 
+function Get-StaleMountEvidence {
+    param([object]$Journal)
+    $MountItem = Get-Item -LiteralPath $Journal.mountPath -Force -ErrorAction Stop
+    $Images = @(Get-DiskImage -ImagePath $Journal.childPath -ErrorAction Stop)
+    if ($Images.Count -ne 1) { throw "Expected one exact child disk image; found $($Images.Count)" }
+    return [ordered]@{
+        mountPath = [string]$Journal.mountPath
+        expectedVolumeGuid = [string]$Journal.volumeGuid
+        attributes = [string]$MountItem.Attributes
+        reparsePoint = (($MountItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)
+        linkType = [string]$MountItem.LinkType
+        target = @($MountItem.Target)
+        childPath = [string]$Journal.childPath
+        childImagePath = [string]$Images[0].ImagePath
+        childAttached = [bool]$Images[0].Attached
+        fileBackedDisks = @(Get-FileBackedDisks)
+    }
+}
+
 if (-not $InstallApproved) { throw 'Pass -InstallApproved after reviewing the unique store contract.' }
 if (-not $BrokerTerminationApproved) { throw 'Pass -BrokerTerminationApproved to terminate only the exact installed broker service PID.' }
 if (-not (Test-Administrator)) { throw 'Administrator PowerShell is required.' }
@@ -185,6 +204,7 @@ $CleanupState = 'not-started'
 $Failure = $null
 $Warmup = $null
 $CrashJournal = $null
+$FinalJournal = $null
 $CrashMarker = $null
 $OriginalBroker = $null
 $RestartedBroker = $null
@@ -192,6 +212,7 @@ $ClientIdentity = $null
 $UnityIdentity = $null
 $CrashClientExitCode = $null
 $RecoveredStatus = $null
+$StaleMountEvidence = $null
 $StartedClient = $null
 $HarnessProcessCleanup = [ordered]@{ attempted = $false; clientStopped = $null; unityStopped = $null }
 $PreviousMarkerWasSet = Test-Path Env:TESTPLAY_UNITY_FIXTURE_MARKER
@@ -278,6 +299,12 @@ try {
     if (-not (Wait-ProcessAbsent ([int]$OriginalService.processId) 15)) { throw 'Exact broker process did not terminate.' }
     $StoppedService = Wait-ServiceState 'Stopped' 30
     if ($null -eq $StoppedService) { throw 'Service Control Manager did not report the broker stopped.' }
+
+    $StaleMountEvidence = Get-StaleMountEvidence $CrashJournal
+    if (-not $StaleMountEvidence.reparsePoint -or $StaleMountEvidence.childAttached -or @($StaleMountEvidence.fileBackedDisks).Count -ne 0) {
+        throw 'Post-crash stale mount did not have the expected detached ownership shape.'
+    }
+    Write-JsonFile -LiteralPath (Join-Path $ArtifactRoot 'stale-mount-after-broker-exit.json') -Value $StaleMountEvidence
 
     Start-Service -Name $ServiceName -ErrorAction Stop
     $RunningService = Wait-ServiceState 'Running' 30
@@ -370,6 +397,13 @@ $PreProcessIDs = @($PreProcesses | ForEach-Object { $_.Id })
 $NewDisks = @($PostDisks | Where-Object { $PreDiskIDs -notcontains $_.Number })
 $NewLetters = @($PostLetters | Where-Object { $PreLetterIDs -notcontains $_.UniqueId })
 $NewProcesses = @($PostProcesses | Where-Object { $PreProcessIDs -notcontains $_.Id })
+if ($null -ne $CrashJournal) {
+    $FinalJournalPath = Join-Path $LeaseRoot "$($CrashJournal.leaseId).json"
+    if (Test-Path -LiteralPath $FinalJournalPath) {
+        try { $FinalJournal = [IO.File]::ReadAllText($FinalJournalPath) | ConvertFrom-Json }
+        catch { $FinalJournal = [ordered]@{ decodeError = $_.Exception.Message; path = $FinalJournalPath } }
+    }
+}
 $ResidualZero = $NewDisks.Count -eq 0 -and $NewLetters.Count -eq 0 -and $NewProcesses.Count -eq 0 -and -not (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) -and -not (Test-Path $ReceiptPath) -and -not (Test-Path $StoreRoot) -and -not (Test-Path $WorkspaceRoot)
 if ($RecoveryVerified -and $Uninstalled -and -not $ResidualZero -and $null -eq $Failure) { $Failure = 'Final outer residual is nonzero.' }
 $Passed = $null -eq $Failure -and $BrokerKilled -and $BrokerRestarted -and $RecoveryVerified -and $Uninstalled -and $ResidualZero
@@ -387,9 +421,11 @@ $Summary = [ordered]@{
     workspaceRoot = $WorkspaceRoot
     warmup = $Warmup
     crashJournal = $CrashJournal
+    finalJournal = $FinalJournal
     crashWorkspaceOwner = $CrashMarker
     originalBroker = $OriginalBroker
     restartedBroker = $RestartedBroker
+    staleMountAfterBrokerExit = $StaleMountEvidence
     clientProcess = $ClientIdentity
     unityProcess = $UnityIdentity
     crashClientExitCode = $CrashClientExitCode

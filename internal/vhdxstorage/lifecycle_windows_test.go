@@ -72,6 +72,23 @@ func TestCloseZeroHandle(t *testing.T) {
 	}
 }
 
+func TestSameVolumeGUIDNormalizesCaseAndTrailingSlash(t *testing.T) {
+	if !sameVolumeGUID(`\\?\Volume{ABCDEF}\`, `\\?\volume{abcdef}`) {
+		t.Fatal("equivalent volume GUID paths did not match")
+	}
+	if sameVolumeGUID(`\\?\Volume{abcdef}\`, `\\?\Volume{other}\`) {
+		t.Fatal("different volume GUID paths matched")
+	}
+}
+
+func TestDetachedImageQueryContract(t *testing.T) {
+	for _, contract := range []string{"Get-DiskImage -ImagePath", "$images.Count -ne 1", "attached = [bool]$images[0].Attached", "[IO.Path]::GetFullPath"} {
+		if !strings.Contains(detachedImageQueryScript, contract) {
+			t.Fatalf("detached image query does not enforce %q", contract)
+		}
+	}
+}
+
 func TestStoragePowerShellParses(t *testing.T) {
 	parser := `
 $tokens = $null
