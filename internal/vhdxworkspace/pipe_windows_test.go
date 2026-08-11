@@ -62,17 +62,57 @@ func TestOpenNamedPipeRetriesTransientBusyInstance(t *testing.T) {
 	}
 }
 
-func TestOpenNamedPipeDoesNotRetryNonBusyFailure(t *testing.T) {
+func TestOpenNamedPipeRetriesBusyInstanceWhenWaitTemporarilyLosesName(t *testing.T) {
+	path, err := windows.UTF16PtrFromString(`\\.\pipe\busy-missing-test`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	openCalls := 0
+	handle, err := openNamedPipeWithRetry(context.Background(), path, time.Second, func(*uint16) (windows.Handle, error) {
+		openCalls++
+		if openCalls == 1 {
+			return 0, windows.ERROR_PIPE_BUSY
+		}
+		return windows.Handle(44), nil
+	}, func(*uint16, uint32) error {
+		return windows.ERROR_FILE_NOT_FOUND
+	})
+	if err != nil || handle != windows.Handle(44) || openCalls != 2 {
+		t.Fatalf("handle=%v err=%v openCalls=%d", handle, err, openCalls)
+	}
+}
+
+func TestOpenNamedPipeRetriesTransientMissingInstance(t *testing.T) {
 	path, _ := windows.UTF16PtrFromString(`\\.\pipe\missing-test`)
+	openCalls := 0
 	waitCalls := 0
-	_, err := openNamedPipeWithRetry(context.Background(), path, time.Second, func(*uint16) (windows.Handle, error) {
-		return 0, windows.ERROR_FILE_NOT_FOUND
+	handle, err := openNamedPipeWithRetry(context.Background(), path, time.Second, func(*uint16) (windows.Handle, error) {
+		openCalls++
+		if openCalls == 1 {
+			return 0, windows.ERROR_FILE_NOT_FOUND
+		}
+		return windows.Handle(43), nil
 	}, func(*uint16, uint32) error {
 		waitCalls++
 		return nil
 	})
-	if !errors.Is(err, windows.ERROR_FILE_NOT_FOUND) || waitCalls != 0 {
-		t.Fatalf("err=%v waitCalls=%d", err, waitCalls)
+	if err != nil || handle != windows.Handle(43) || openCalls != 2 || waitCalls != 0 {
+		t.Fatalf("handle=%v err=%v openCalls=%d waitCalls=%d", handle, err, openCalls, waitCalls)
+	}
+}
+
+func TestOpenNamedPipeDoesNotRetryPermanentFailure(t *testing.T) {
+	path, _ := windows.UTF16PtrFromString(`\\.\pipe\denied-test`)
+	openCalls := 0
+	_, err := openNamedPipeWithRetry(context.Background(), path, time.Second, func(*uint16) (windows.Handle, error) {
+		openCalls++
+		return 0, windows.ERROR_ACCESS_DENIED
+	}, func(*uint16, uint32) error {
+		t.Fatal("wait must not be called for a permanent error")
+		return nil
+	})
+	if !errors.Is(err, windows.ERROR_ACCESS_DENIED) || openCalls != 1 {
+		t.Fatalf("err=%v openCalls=%d", err, openCalls)
 	}
 }
 
@@ -195,5 +235,21 @@ func TestNamedPipeConcurrentRoundTripsRetryBusyInstances(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("pipe server did not stop")
+	}
+}
+
+func TestRetryableStalePipeWrite(t *testing.T) {
+	for _, err := range []error{
+		windows.ERROR_NO_DATA,
+		windows.ERROR_PIPE_NOT_CONNECTED,
+		windows.ERROR_BROKEN_PIPE,
+		fmt.Errorf("wrapped: %w", windows.ERROR_NO_DATA),
+	} {
+		if !retryableStalePipeWrite(err) {
+			t.Fatalf("expected retryable error: %v", err)
+		}
+	}
+	if retryableStalePipeWrite(windows.ERROR_ACCESS_DENIED) {
+		t.Fatal("access denied must not be retried")
 	}
 }

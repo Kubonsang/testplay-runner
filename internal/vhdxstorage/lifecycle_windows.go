@@ -189,24 +189,49 @@ const unmountDiskScript = `
 $ErrorActionPreference = 'Stop'
 $diskNumber = [int]$env:TESTPLAY_VHDX_DISK_NUMBER
 $partitionNumber = [int]$env:TESTPLAY_VHDX_PARTITION_NUMBER
-$mountPath = $env:TESTPLAY_VHDX_MOUNT_PATH.TrimEnd('\') + '\'
+$mountPath = $env:TESTPLAY_VHDX_MOUNT_PATH
+function Normalize-AccessPath([string]$path) {
+  if ([string]::IsNullOrWhiteSpace($path)) { return '' }
+  return [IO.Path]::GetFullPath($path).TrimEnd('\')
+}
+function Find-OwnedAccessPaths($partition, [string]$expectedPath) {
+  return @($partition.AccessPaths | Where-Object {
+    [string]::Equals(
+      (Normalize-AccessPath $_),
+      $expectedPath,
+      [StringComparison]::OrdinalIgnoreCase
+    )
+  })
+}
+$expectedMountPath = Normalize-AccessPath $mountPath
 $disk = Get-Disk -Number $diskNumber -ErrorAction Stop
 if ($disk.BusType.ToString() -ne 'File Backed Virtual') {
   throw "unsafe bus type for disk ${diskNumber}: $($disk.BusType)"
 }
-$partition = Get-Partition -DiskNumber $diskNumber -PartitionNumber $partitionNumber -ErrorAction Stop
-if (-not (@($partition.AccessPaths) -contains $mountPath)) { throw "mount path is not owned by this partition: $mountPath" }
+$ownershipDeadline = [DateTime]::UtcNow.AddSeconds(15)
+do {
+  $partition = Get-Partition -DiskNumber $diskNumber -PartitionNumber $partitionNumber -ErrorAction Stop
+  $ownedAccessPaths = @(Find-OwnedAccessPaths $partition $expectedMountPath)
+  if ($ownedAccessPaths.Count -eq 1) { break }
+  if ($ownedAccessPaths.Count -gt 1) {
+    throw "mount path has ambiguous ownership on this partition: $mountPath"
+  }
+  Start-Sleep -Milliseconds 100
+} while ([DateTime]::UtcNow -lt $ownershipDeadline)
+if ($ownedAccessPaths.Count -ne 1) { throw "mount path is not owned by this partition: $mountPath" }
+$ownedAccessPath = [string]$ownedAccessPaths[0]
 $call = [Diagnostics.Stopwatch]::StartNew()
-Remove-PartitionAccessPath -InputObject $partition -AccessPath $mountPath
+Remove-PartitionAccessPath -InputObject $partition -AccessPath $ownedAccessPath
 $callMs = $call.ElapsedMilliseconds
 $visible = [Diagnostics.Stopwatch]::StartNew()
 $deadline = [DateTime]::UtcNow.AddSeconds(15)
 do {
   $current = Get-Partition -DiskNumber $diskNumber -PartitionNumber $partitionNumber -ErrorAction Stop
-  if (-not (@($current.AccessPaths) -contains $mountPath)) { break }
+  $remainingAccessPaths = @(Find-OwnedAccessPaths $current $expectedMountPath)
+  if ($remainingAccessPaths.Count -eq 0) { break }
   Start-Sleep -Milliseconds 100
 } while ([DateTime]::UtcNow -lt $deadline)
-if (@($current.AccessPaths) -contains $mountPath) { throw 'unmount visibility timeout' }
+if ($remainingAccessPaths.Count -ne 0) { throw 'unmount visibility timeout' }
 [pscustomobject]@{
   unmountCallMs = $callMs
   detachVisibilityWaitMs = $visible.ElapsedMilliseconds

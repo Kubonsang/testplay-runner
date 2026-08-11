@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"strings"
@@ -46,26 +47,57 @@ func (client PipeClient) Call(ctx context.Context, request Request) (Response, e
 	if err != nil {
 		return Response{}, err
 	}
-	handle, err := openNamedPipeWithRetry(ctx, path, pipeOpenTimeout, createPipeFile, waitNamedPipe)
+	payload, err := json.Marshal(request)
 	if err != nil {
-		return Response{}, fmt.Errorf("%w: open named pipe: %w", ErrBrokerUnavailable, err)
-	}
-	file := os.NewFile(uintptr(handle), name)
-	defer file.Close()
-	if err := json.NewEncoder(file).Encode(request); err != nil {
 		return Response{}, err
 	}
-	var response Response
-	if err := json.NewDecoder(bufio.NewReader(file)).Decode(&response); err != nil {
-		return Response{}, err
+	payload = append(payload, '\n')
+	deadline := time.Now().Add(pipeOpenTimeout)
+	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
+		deadline = contextDeadline
 	}
-	if !response.OK {
-		if response.Error != nil {
-			return response, response.Error
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return Response{}, fmt.Errorf("%w: open named pipe: %w", ErrBrokerUnavailable, windows.ERROR_SEM_TIMEOUT)
 		}
-		return response, fmt.Errorf("broker request failed")
+		handle, err := openNamedPipeWithRetry(ctx, path, remaining, createPipeFile, waitNamedPipe)
+		if err != nil {
+			return Response{}, fmt.Errorf("%w: open named pipe: %w", ErrBrokerUnavailable, err)
+		}
+		file := os.NewFile(uintptr(handle), name)
+		written, writeErr := file.Write(payload)
+		if writeErr != nil {
+			_ = file.Close()
+			if written == 0 && retryableStalePipeWrite(writeErr) {
+				continue
+			}
+			return Response{}, writeErr
+		}
+		if written != len(payload) {
+			_ = file.Close()
+			return Response{}, io.ErrShortWrite
+		}
+		var response Response
+		decodeErr := json.NewDecoder(bufio.NewReader(file)).Decode(&response)
+		_ = file.Close()
+		if decodeErr != nil {
+			return Response{}, decodeErr
+		}
+		if !response.OK {
+			if response.Error != nil {
+				return response, response.Error
+			}
+			return response, fmt.Errorf("broker request failed")
+		}
+		return response, nil
 	}
-	return response, nil
+}
+
+func retryableStalePipeWrite(err error) bool {
+	return errors.Is(err, windows.ERROR_NO_DATA) ||
+		errors.Is(err, windows.ERROR_PIPE_NOT_CONNECTED) ||
+		errors.Is(err, windows.ERROR_BROKEN_PIPE)
 }
 
 type pipeOpenFunc func(*uint16) (windows.Handle, error)
@@ -90,7 +122,9 @@ func openNamedPipeWithRetry(ctx context.Context, path *uint16, maxWait time.Dura
 		if err == nil {
 			return handle, nil
 		}
-		if !errors.Is(err, windows.ERROR_PIPE_BUSY) {
+		pipeBusy := errors.Is(err, windows.ERROR_PIPE_BUSY)
+		pipeNotYetVisible := errors.Is(err, windows.ERROR_FILE_NOT_FOUND)
+		if !pipeBusy && !pipeNotYetVisible {
 			return 0, err
 		}
 		remaining := time.Until(deadline)
@@ -98,8 +132,20 @@ func openNamedPipeWithRetry(ctx context.Context, path *uint16, maxWait time.Dura
 			return 0, windows.ERROR_SEM_TIMEOUT
 		}
 		waitFor := min(remaining, pipeWaitSlice)
+		if pipeNotYetVisible {
+			timer := time.NewTimer(waitFor)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return 0, ctx.Err()
+			case <-timer.C:
+			}
+			continue
+		}
 		waitMilliseconds := uint32((waitFor + time.Millisecond - 1) / time.Millisecond)
-		if err := wait(path, waitMilliseconds); err != nil && !errors.Is(err, windows.ERROR_SEM_TIMEOUT) {
+		if err := wait(path, waitMilliseconds); err != nil &&
+			!errors.Is(err, windows.ERROR_SEM_TIMEOUT) &&
+			!errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
 			return 0, err
 		}
 	}
@@ -152,10 +198,11 @@ func (server *PipeServer) Serve(ctx context.Context) error {
 		server.wait.Add(1)
 		go func(pipe windows.Handle) {
 			defer server.wait.Done()
-			defer windows.DisconnectNamedPipe(pipe)
 			file := os.NewFile(uintptr(pipe), name)
-			defer file.Close()
 			server.serveConnection(ctx, pipe, file)
+			_ = file.Sync()
+			_ = windows.DisconnectNamedPipe(pipe)
+			_ = file.Close()
 		}(handle)
 	}
 }

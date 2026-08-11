@@ -101,6 +101,33 @@ if ($parseErrors.Count -ne 0) {
 	}
 }
 
+func TestUnmountUsesNormalizedExactPartitionAccessPath(t *testing.T) {
+	busCheck := strings.Index(unmountDiskScript, "'File Backed Virtual'")
+	ownershipPoll := strings.Index(unmountDiskScript, "$ownershipDeadline")
+	remove := strings.Index(unmountDiskScript, "Remove-PartitionAccessPath")
+	visibilityPoll := strings.Index(unmountDiskScript, "$remainingAccessPaths")
+	if busCheck < 0 || ownershipPoll < 0 || remove < 0 || visibilityPoll < 0 {
+		t.Fatal("unmount script is missing an ownership or visibility boundary")
+	}
+	if !(busCheck < ownershipPoll && ownershipPoll < remove && remove < visibilityPoll) {
+		t.Fatal("unmount safety gates must precede removal and post-remove visibility polling")
+	}
+	for _, contract := range []string{
+		"[IO.Path]::GetFullPath($path)",
+		"[StringComparison]::OrdinalIgnoreCase",
+		"$ownedAccessPaths.Count -eq 1",
+		"-AccessPath $ownedAccessPath",
+		"$remainingAccessPaths.Count -ne 0",
+	} {
+		if !strings.Contains(unmountDiskScript, contract) {
+			t.Fatalf("unmount script does not enforce %q", contract)
+		}
+	}
+	if strings.Contains(unmountDiskScript, "Remove-PartitionAccessPath -InputObject $partition -AccessPath $mountPath") {
+		t.Fatal("unmount must use the exact access path returned by the owned partition")
+	}
+}
+
 func TestAllocatedFileSize(t *testing.T) {
 	path := t.TempDir() + `\file.bin`
 	if err := os.WriteFile(path, make([]byte, 4096), 0600); err != nil {
