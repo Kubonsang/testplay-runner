@@ -769,6 +769,15 @@ func TestRunScenario_DispatchesScenarioRunner(t *testing.T) {
 				ExitCode:      0,
 				Tests:         []parser.TestCase{},
 				Errors:        []history.CompileError{},
+				WorkspaceMetrics: &history.WorkspaceMetrics{
+					WorkspaceBackend:       runsvc.WorkspaceBackendVHDXDiff,
+					Provider:               "vhdx-differencing",
+					ParentKey:              "fixture-parent",
+					UnityProcessPID:        4242,
+					UnityProcessStartedAt:  "2026-08-11T01:02:03Z",
+					UnityProcessFinishedAt: "2026-08-11T01:02:04Z",
+					CleanupState:           "released",
+				},
 			},
 		}, nil
 	}
@@ -793,6 +802,16 @@ func TestRunScenario_DispatchesScenarioRunner(t *testing.T) {
 	instances, ok := out["instances"].([]any)
 	if !ok || len(instances) != 2 {
 		t.Errorf("expected 2 instances in output, got: %v", out["instances"])
+	}
+	for _, raw := range instances {
+		instance := raw.(map[string]any)
+		metrics, ok := instance["workspace_metrics"].(map[string]any)
+		if !ok {
+			t.Fatalf("scenario instance workspace_metrics missing: %v", instance)
+		}
+		if metrics["parentKey"] != "fixture-parent" || metrics["unityProcessPid"] != float64(4242) {
+			t.Fatalf("scenario instance workspace_metrics incomplete: %v", metrics)
+		}
 	}
 }
 

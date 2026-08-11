@@ -324,6 +324,8 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 			ExtraArgs:    extraArgs,
 		}
 		unityStarted := time.Now()
+		var unityProcessPID int
+		var unityProcessStartedAt time.Time
 		unityCtx := ctx
 		stopStorageMonitor := func() error { return nil }
 		runRunner := s.Runner
@@ -336,6 +338,8 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 				isolatedRunner := *processRunner
 				previous := isolatedRunner.OnStart
 				isolatedRunner.OnStart = func(pid int, started time.Time) {
+					unityProcessPID = pid
+					unityProcessStartedAt = started.UTC()
 					if previous != nil {
 						previous(pid, started)
 					}
@@ -345,11 +349,17 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 			}
 		}
 		result, exitCode = unity.Execute(unityCtx, runRunner, execOpts)
+		unityProcessFinishedAt := time.Now().UTC()
 		if monitorErr := stopStorageMonitor(); monitorErr != nil {
 			warnings = append(warnings, fmt.Sprintf("VHDX workspace safety monitor stopped the run: %v", monitorErr))
 		}
 		if workspaceMetrics != nil {
 			workspaceMetrics.UnityExecutionMs = time.Since(unityStarted).Milliseconds()
+			workspaceMetrics.UnityProcessPID = unityProcessPID
+			if !unityProcessStartedAt.IsZero() {
+				workspaceMetrics.UnityProcessStartedAt = unityProcessStartedAt.Format(time.RFC3339Nano)
+				workspaceMetrics.UnityProcessFinishedAt = unityProcessFinishedAt.Format(time.RFC3339Nano)
+			}
 			workspaceMetrics.TestExecutionMs = testExecutionMilliseconds(result)
 			workspaceMetrics.UnityStartupMs = workspaceMetrics.UnityExecutionMs - workspaceMetrics.TestExecutionMs
 			if workspaceMetrics.UnityStartupMs < 0 {

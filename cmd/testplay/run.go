@@ -387,6 +387,9 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 		if r.Hint != "" {
 			m["hint"] = r.Hint
 		}
+		if r.WorkspaceMetrics != nil {
+			m["workspace_metrics"] = r.WorkspaceMetrics
+		}
 		if len(inst.Response.Warnings) > 0 {
 			m["warnings"] = inst.Response.Warnings
 		}

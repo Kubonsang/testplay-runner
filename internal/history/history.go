@@ -79,6 +79,9 @@ type WorkspaceMetrics struct {
 	WorkspaceVerifyMs                   int64  `json:"workspaceVerifyMs,omitempty"`
 	UnityStartupMs                      int64  `json:"unityStartupMs"`
 	UnityExecutionMs                    int64  `json:"unityExecutionMs"`
+	UnityProcessPID                     int    `json:"unityProcessPid,omitempty"`
+	UnityProcessStartedAt               string `json:"unityProcessStartedAt,omitempty"`
+	UnityProcessFinishedAt              string `json:"unityProcessFinishedAt,omitempty"`
 	TestExecutionMs                     int64  `json:"testExecutionMs"`
 	CleanupMs                           int64  `json:"cleanupMs"`
 	CacheWriteBackMs                    int64  `json:"cacheWriteBackMs"`
