@@ -166,6 +166,7 @@ if (-not (Test-Administrator)) { throw 'Administrator PowerShell is required.' }
 
 $RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $ReceiptPath = Join-Path $env:ProgramData 'TestPlay\storage-install.json'
+$PointerPath = Join-Path $env:ProgramData 'TestPlay\vhdx-diff-reboot-recovery-pointer.json'
 
 if ($Phase -eq 'Prepare') {
     if (-not $InstallApproved) { throw 'Pass -InstallApproved after reviewing the unique store contract.' }
@@ -193,7 +194,7 @@ if ($Phase -eq 'Prepare') {
     $Failure = $null
 
     if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) { throw "$ServiceName already exists; refusing to replace it." }
-    foreach ($Path in @($ReceiptPath, $StoreRoot, $ArtifactRoot, $WorkspaceRoot)) {
+    foreach ($Path in @($ReceiptPath, $PointerPath, $StoreRoot, $ArtifactRoot, $WorkspaceRoot)) {
         if (Test-Path -LiteralPath $Path) { throw "Pre-existing state is outside this harness ownership: $Path" }
     }
     $PreDisks = @(Get-FileBackedDisks)
@@ -306,6 +307,7 @@ if ($Phase -eq 'Prepare') {
             storeRoot = $StoreRoot
             workspaceRoot = $WorkspaceRoot
             receiptPath = $ReceiptPath
+            pointerPath = $PointerPath
             userSid = $UserSID
             unityEditorPath = $UnityEditorPath
             selectedTest = $RebootTest
@@ -343,12 +345,25 @@ if ($Phase -eq 'Prepare') {
         }
         Write-DurableJsonExclusive -LiteralPath $StatePath -Value $Contract
         $StateSHA256 = (Get-FileHash -LiteralPath $StatePath -Algorithm SHA256).Hash
+        $Pointer = [ordered]@{
+            schemaVersion = 1
+            statePath = $StatePath
+            stateSHA256 = $StateSHA256
+            harnessPath = $PSCommandPath
+            harnessSHA256 = (Get-FileHash $PSCommandPath -Algorithm SHA256).Hash
+            createdAt = (Get-Date).ToUniversalTime().ToString('o')
+        }
+        Write-DurableJsonExclusive -LiteralPath $PointerPath -Value $Pointer
+        Copy-Item -LiteralPath $PointerPath -Destination (Join-Path $ArtifactRoot 'reboot-pointer.json')
+        $PointerSHA256 = (Get-FileHash -LiteralPath $PointerPath -Algorithm SHA256).Hash
         Write-JsonFile -LiteralPath (Join-Path $ArtifactRoot 'prepare-summary.json') -Value ([ordered]@{
             schemaVersion = 1
             status = 'REBOOT_REQUIRED'
             verdict = 'PENDING_REBOOT'
             statePath = $StatePath
             stateSHA256 = $StateSHA256
+            pointerPath = $PointerPath
+            pointerSHA256 = $PointerSHA256
             bootSessionIdBefore = $Journal.bootSessionId
             leaseId = $Journal.leaseId
             cleanupState = 'preserved-for-reboot'
@@ -369,6 +384,15 @@ if ($Phase -eq 'Prepare') {
             if ($Installed) {
                 try { [void](Invoke-NativeCapture -LiteralPath $ExecutablePath -ArgumentList @('storage', 'uninstall') -OutputPath (Join-Path $ArtifactRoot 'failed-prepare-uninstall.txt') -WorkingDirectory $ArtifactRoot) } catch { }
             }
+            if ((Test-Path -LiteralPath $PointerPath -PathType Leaf) -and (Test-Path -LiteralPath $StatePath -PathType Leaf)) {
+                try {
+                    $FailedPointer = [IO.File]::ReadAllText($PointerPath) | ConvertFrom-Json
+                    if ([int]$FailedPointer.schemaVersion -eq 1 -and (Test-SamePath ([string]$FailedPointer.statePath) $StatePath) -and [string]$FailedPointer.stateSHA256 -eq (Get-FileHash $StatePath -Algorithm SHA256).Hash) {
+                        Remove-Item -LiteralPath $PointerPath -Force
+                    }
+                }
+                catch { }
+            }
         }
         Remove-Item Env:TESTPLAY_UNITY_FIXTURE_MARKER -ErrorAction SilentlyContinue
         Remove-Item Env:TESTPLAY_UNITY_FIXTURE_REBOOT_READY_FILE -ErrorAction SilentlyContinue
@@ -387,6 +411,8 @@ if ($Phase -eq 'Prepare') {
     Write-Output 'VHDX_DIFF_REBOOT_PREPARE_STATUS=REBOOT_REQUIRED'
     Write-Output "VHDX_DIFF_REBOOT_STATE=$StatePath"
     Write-Output "VHDX_DIFF_REBOOT_STATE_SHA256=$StateSHA256"
+    Write-Output "VHDX_DIFF_REBOOT_POINTER=$PointerPath"
+    Write-Output "VHDX_DIFF_REBOOT_POINTER_SHA256=$PointerSHA256"
     Write-Output "VHDX_DIFF_REBOOT_VERIFY_COMMAND=powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Phase Verify -StatePath `"$StatePath`" -StateSHA256 $StateSHA256 -CleanupApproved"
     exit 0
 }
@@ -408,6 +434,10 @@ $ExpectedStoreParent = Join-Path $env:ProgramData 'TestPlay'
 if ([string]$Contract.userSid -ne $CurrentSID) { throw 'Reboot state belongs to a different Windows user SID.' }
 if (-not (Test-SamePath $WorkspaceRoot (Join-Path $env:LOCALAPPDATA 'TestPlay\Workspaces'))) { throw 'Recorded workspace root is outside the reboot harness contract.' }
 if (-not (Test-SamePath $ReceiptPath (Join-Path $env:ProgramData 'TestPlay\storage-install.json'))) { throw 'Recorded receipt path is outside the reboot harness contract.' }
+if (-not (Test-SamePath ([string]$Contract.pointerPath) $PointerPath)) { throw 'Recorded reboot pointer path is outside the harness contract.' }
+if (-not (Test-Path -LiteralPath $PointerPath -PathType Leaf)) { throw 'Durable reboot pointer is missing.' }
+$PointerEvidence = [IO.File]::ReadAllText($PointerPath) | ConvertFrom-Json
+if ([int]$PointerEvidence.schemaVersion -ne 1 -or -not (Test-SamePath ([string]$PointerEvidence.statePath) $StatePath) -or [string]$PointerEvidence.stateSHA256 -ne $ActualStateSHA256 -or -not (Test-SamePath ([string]$PointerEvidence.harnessPath) $PSCommandPath) -or [string]$PointerEvidence.harnessSHA256 -ne (Get-FileHash $PSCommandPath -Algorithm SHA256).Hash) { throw 'Durable reboot pointer identity mismatch.' }
 if (-not (Test-SamePath (Split-Path -Parent $StoreRoot) $ExpectedStoreParent) -or (Split-Path -Leaf $StoreRoot) -notlike 'VHDXDiffRebootRecovery-*') { throw 'Recorded store root is outside the reboot harness contract.' }
 if (-not (Test-SamePath (Split-Path -Parent $ExecutablePath) $ArtifactRoot)) { throw 'Recorded executable is outside the artifact root.' }
 if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf) -or (Get-FileHash $ExecutablePath -Algorithm SHA256).Hash -ne [string]$Contract.executableSha256) { throw 'Recorded executable hash mismatch.' }
@@ -472,6 +502,19 @@ $NewLetters = @($PostLetters | Where-Object { $PreLetterIDs -notcontains $_.Uniq
 $ResidualZero = $PostDisks.Count -eq 0 -and $NewLetters.Count -eq 0 -and $PostProcesses.Count -eq 0 -and -not (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) -and -not (Test-Path -LiteralPath $ReceiptPath) -and -not (Test-Path -LiteralPath $StoreRoot) -and -not (Test-Path -LiteralPath $WorkspaceRoot)
 if ($Uninstalled -and -not $ResidualZero -and $null -eq $Failure) { $Failure = 'Final outer residual is nonzero.'; $CleanupState = 'uncertain' }
 $Passed = $null -eq $Failure -and $RecoveryVerified -and $Uninstalled -and $ResidualZero
+if ($Passed -and (Test-Path -LiteralPath $PointerPath -PathType Leaf)) {
+    $Pointer = [IO.File]::ReadAllText($PointerPath) | ConvertFrom-Json
+    if ([int]$Pointer.schemaVersion -ne 1 -or -not (Test-SamePath ([string]$Pointer.statePath) $StatePath) -or [string]$Pointer.stateSHA256 -ne $ActualStateSHA256) {
+        $Passed = $false
+        $Failure = 'Refusing to remove mismatched reboot pointer.'
+        $CleanupState = 'preserved'
+    }
+    else {
+        Remove-Item -LiteralPath $PointerPath -Force
+    }
+}
+$ResidualZero = $ResidualZero -and -not (Test-Path -LiteralPath $PointerPath)
+$Passed = $Passed -and $ResidualZero
 $Summary = [ordered]@{
     schemaVersion = 1
     status = if ($Passed) { 'PASS' } else { 'FAILED' }
