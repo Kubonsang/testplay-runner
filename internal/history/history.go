@@ -112,6 +112,9 @@ type WorkspaceMetrics struct {
 	ChildReadyAllocatedBytes            int64  `json:"childReadyAllocatedBytes,omitempty"`
 	ChildPeakAllocatedBytes             int64  `json:"childPeakAllocatedBytes,omitempty"`
 	ChildReleasedAllocatedBytes         int64  `json:"childReleasedAllocatedBytes,omitempty"`
+	ChildReadyAllocatedMeasured         bool   `json:"childReadyAllocatedMeasured,omitempty"`
+	ChildPeakAllocatedMeasured          bool   `json:"childPeakAllocatedMeasured,omitempty"`
+	ChildReleasedAllocatedMeasured      bool   `json:"childReleasedAllocatedMeasured,omitempty"`
 	MountPath                           string `json:"mountPath,omitempty"`
 	PhysicalDiskPath                    string `json:"physicalDiskPath,omitempty"`
 	VolumeGUID                          string `json:"volumeGuid,omitempty"`
@@ -121,6 +124,8 @@ type WorkspaceMetrics struct {
 	StoreAllocatedBytes                 int64  `json:"storeAllocatedBytes,omitempty"`
 	HostFreeBytes                       int64  `json:"hostFreeBytes,omitempty"`
 	HostFreeFloorBytes                  int64  `json:"hostFreeFloorBytes,omitempty"`
+	LocalPackageOverrideCount           int    `json:"localPackageOverrideCount,omitempty"`
+	LocalPackagesDigest                 string `json:"localPackagesDigest,omitempty"`
 }
 
 // CompileError represents a C# compile error from Unity stderr.

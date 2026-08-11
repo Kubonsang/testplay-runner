@@ -262,8 +262,11 @@ func (s *windowsChildSession) Release(ctx context.Context, deleteChild bool) (Me
 	}
 	if usage, usageErr := vhdxstorage.FileUsageOf(s.path); usageErr == nil {
 		metrics.ChildReleasedBytes = usage.AllocatedBytes
+		metrics.ChildReleasedMeasured = true
 	} else if deleteChild && !os.IsNotExist(usageErr) {
 		return metrics, usageErr
+	} else if deleteChild && os.IsNotExist(usageErr) {
+		metrics.ChildReleasedMeasured = true
 	}
 	return metrics, nil
 }
@@ -292,6 +295,8 @@ func (native windowsNative) AcquireChild(ctx context.Context, parent ParentMetad
 	if raw.ChildReadyAllocatedBytes != nil {
 		metrics.ChildReadyBytes = *raw.ChildReadyAllocatedBytes
 		metrics.ChildPeakBytes = *raw.ChildReadyAllocatedBytes
+		metrics.ChildReadyMeasured = true
+		metrics.ChildPeakMeasured = true
 	}
 	if err != nil {
 		return nil, metrics, err
@@ -329,6 +334,8 @@ func (native windowsNative) AttachChild(ctx context.Context, parent ParentMetada
 	if raw.ChildReadyAllocatedBytes != nil {
 		metrics.ChildReadyBytes = *raw.ChildReadyAllocatedBytes
 		metrics.ChildPeakBytes = *raw.ChildReadyAllocatedBytes
+		metrics.ChildReadyMeasured = true
+		metrics.ChildPeakMeasured = true
 	}
 	if err != nil {
 		return nil, metrics, err

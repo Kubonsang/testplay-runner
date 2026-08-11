@@ -76,6 +76,33 @@ func TestVHDXMonitorCancelsAtHostSafetyFloor(t *testing.T) {
 	}
 }
 
+func TestApplyVHDXMetricsReleaseDoesNotEraseAcquireOrPeakEvidence(t *testing.T) {
+	metrics := &history.WorkspaceMetrics{}
+	applyVHDXMetrics(metrics, &vhdxworkspace.Metrics{
+		ParentStatus: vhdxworkspace.ParentStatusValid, ParentVirtualBytes: 64 << 30, ParentAllocatedBytes: 4 << 30,
+		ChildCreateMs: 11, ChildAttachMs: 12, ChildMountMs: 13,
+		ChildReadyBytes: 4 << 20, ChildPeakBytes: 900 << 20,
+		ChildReadyMeasured: true, ChildPeakMeasured: true,
+	})
+	applyVHDXMetrics(metrics, &vhdxworkspace.Metrics{ChildPeakBytes: 800 << 20, ChildPeakMeasured: true})
+	applyVHDXMetrics(metrics, &vhdxworkspace.Metrics{ChildReleaseMs: 14, ChildReleasedBytes: 0, ChildReleasedMeasured: true, CleanupState: vhdxworkspace.CleanupReleased})
+	if metrics.ParentStatus != vhdxworkspace.ParentStatusValid || metrics.ParentVirtualBytes != 64<<30 || metrics.ParentAllocatedBytes != 4<<30 {
+		t.Fatalf("parent evidence erased: %+v", metrics)
+	}
+	if metrics.ChildCreateMs != 11 || metrics.ChildAttachMs != 12 || metrics.ChildMountMs != 13 || metrics.ChildReleaseMs != 14 {
+		t.Fatalf("lifecycle timing evidence erased: %+v", metrics)
+	}
+	if metrics.ChildReadyAllocatedBytes != 4<<20 || !metrics.ChildReadyAllocatedMeasured {
+		t.Fatalf("ready evidence=%+v", metrics)
+	}
+	if metrics.ChildPeakAllocatedBytes != 900<<20 || !metrics.ChildPeakAllocatedMeasured {
+		t.Fatalf("peak evidence did not preserve maximum: %+v", metrics)
+	}
+	if metrics.ChildReleasedAllocatedBytes != 0 || !metrics.ChildReleasedAllocatedMeasured || metrics.CleanupState != vhdxworkspace.CleanupReleased {
+		t.Fatalf("release evidence=%+v", metrics)
+	}
+}
+
 func TestWorkspaceLeaseReleasesChildBeforeRemovingShell(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "workspace")
 	if err := os.Mkdir(root, 0700); err != nil {

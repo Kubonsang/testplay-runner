@@ -534,6 +534,7 @@ func (b *Broker) heartbeat(request Request, fail failureBuilder) Response {
 	metrics := &Metrics{}
 	if usage, usageErr := session.Usage(); usageErr == nil {
 		metrics.ChildPeakBytes = usage
+		metrics.ChildPeakMeasured = true
 	}
 	return Response{SchemaVersion: ProtocolSchemaVersion, RequestID: request.RequestID, OK: true, Provider: Provider, Lease: &lease, Metrics: metrics}
 }

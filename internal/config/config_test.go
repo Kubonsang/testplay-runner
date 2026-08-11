@@ -41,6 +41,20 @@ func TestWorkspaceConfigBackendsAndDefaultsAreAdditive(t *testing.T) {
 	}
 }
 
+func TestWorkspaceLocalPackageOverridesRequireNamesAndAbsolutePaths(t *testing.T) {
+	absolute := filepath.Join(t.TempDir(), "package")
+	cfg := &config.Config{SchemaVersion: "1", ProjectPath: t.TempDir(), Workspace: &config.WorkspaceConfig{Backend: "vhdx-diff", LocalPackageOverrides: map[string]string{"com.example.package": absolute}}}
+	if err := cfg.Validate(false); err != nil {
+		t.Fatalf("absolute local package override rejected: %v", err)
+	}
+	for name, path := range map[string]string{"": absolute, "com.example.package": "relative-package"} {
+		cfg := &config.Config{SchemaVersion: "1", ProjectPath: t.TempDir(), Workspace: &config.WorkspaceConfig{Backend: "vhdx-diff", LocalPackageOverrides: map[string]string{name: path}}}
+		if err := cfg.Validate(false); err == nil {
+			t.Fatalf("unsafe override accepted: name=%q path=%q", name, path)
+		}
+	}
+}
+
 func TestLoad_FileNotFound(t *testing.T) {
 	_, err := config.Load("testdata/nonexistent.json")
 	if !errors.Is(err, config.ErrConfigNotFound) {

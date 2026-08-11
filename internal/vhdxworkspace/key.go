@@ -16,26 +16,32 @@ import (
 )
 
 type CompatibilityKey struct {
-	SchemaVersion int              `json:"schemaVersion"`
-	Digest        string           `json:"digest"`
-	LibraryKey    libraryimage.Key `json:"libraryKey"`
-	Provider      string           `json:"provider"`
-	Filesystem    string           `json:"filesystem"`
-	VirtualBytes  int64            `json:"virtualBytes"`
-	BlockBytes    int64            `json:"blockBytes"`
-	SectorBytes   int64            `json:"sectorBytes"`
+	SchemaVersion       int              `json:"schemaVersion"`
+	Digest              string           `json:"digest"`
+	LibraryKey          libraryimage.Key `json:"libraryKey"`
+	Provider            string           `json:"provider"`
+	Filesystem          string           `json:"filesystem"`
+	VirtualBytes        int64            `json:"virtualBytes"`
+	BlockBytes          int64            `json:"blockBytes"`
+	SectorBytes         int64            `json:"sectorBytes"`
+	LocalPackagesDigest string           `json:"localPackagesDigest,omitempty"`
 }
 
 type SourceSnapshot struct {
-	Digest         string `json:"digest"`
-	AssetsDigest   string `json:"assetsDigest"`
-	PackagesDigest string `json:"packagesDigest"`
-	SettingsDigest string `json:"projectSettingsDigest"`
-	FileCount      int64  `json:"fileCount"`
-	LogicalBytes   int64  `json:"logicalBytes"`
+	Digest              string `json:"digest"`
+	AssetsDigest        string `json:"assetsDigest"`
+	PackagesDigest      string `json:"packagesDigest"`
+	SettingsDigest      string `json:"projectSettingsDigest"`
+	FileCount           int64  `json:"fileCount"`
+	LogicalBytes        int64  `json:"logicalBytes"`
+	LocalPackagesDigest string `json:"localPackagesDigest,omitempty"`
 }
 
 func ComputeCompatibilityKey(projectPath, unityPath string) (CompatibilityKey, error) {
+	return ComputeCompatibilityKeyWithLocalPackages(projectPath, unityPath, "")
+}
+
+func ComputeCompatibilityKeyWithLocalPackages(projectPath, unityPath, localPackagesDigest string) (CompatibilityKey, error) {
 	base, err := libraryimage.ComputeKey(projectPath, unityPath)
 	if err != nil {
 		return CompatibilityKey{}, err
@@ -44,7 +50,7 @@ func ComputeCompatibilityKey(projectPath, unityPath string) (CompatibilityKey, e
 		SchemaVersion: ParentSchemaVersion,
 		LibraryKey:    base, Provider: Provider, Filesystem: "NTFS",
 		VirtualBytes: DefaultVirtualBytes, BlockBytes: DefaultBlockBytes,
-		SectorBytes: DefaultSectorBytes,
+		SectorBytes: DefaultSectorBytes, LocalPackagesDigest: localPackagesDigest,
 	}
 	payload := key
 	payload.Digest = ""
@@ -57,6 +63,10 @@ func ComputeCompatibilityKey(projectPath, unityPath string) (CompatibilityKey, e
 }
 
 func ComputeSourceSnapshot(projectPath string) (SourceSnapshot, error) {
+	return ComputeSourceSnapshotWithLocalPackages(projectPath, "")
+}
+
+func ComputeSourceSnapshotWithLocalPackages(projectPath, localPackagesDigest string) (SourceSnapshot, error) {
 	assets, ac, ab, err := digestTree(filepath.Join(projectPath, "Assets"))
 	if err != nil {
 		return SourceSnapshot{}, fmt.Errorf("snapshot Assets: %w", err)
@@ -69,11 +79,16 @@ func ComputeSourceSnapshot(projectPath string) (SourceSnapshot, error) {
 	if err != nil {
 		return SourceSnapshot{}, fmt.Errorf("snapshot ProjectSettings: %w", err)
 	}
-	payload := strings.Join([]string{assets, packages, settings}, "\x00")
+	digestParts := []string{assets, packages, settings}
+	if localPackagesDigest != "" {
+		digestParts = append(digestParts, localPackagesDigest)
+	}
+	payload := strings.Join(digestParts, "\x00")
 	return SourceSnapshot{
 		Digest: digestBytes([]byte(payload)), AssetsDigest: assets,
 		PackagesDigest: packages, SettingsDigest: settings,
 		FileCount: ac + pc + sc, LogicalBytes: ab + pb + sb,
+		LocalPackagesDigest: localPackagesDigest,
 	}, nil
 }
 

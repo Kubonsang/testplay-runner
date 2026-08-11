@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 var (
@@ -40,10 +41,11 @@ const (
 // additive to schema 1 so existing configuration files retain their meaning.
 // An empty Backend preserves the historical selection rules.
 type WorkspaceConfig struct {
-	Backend                string `json:"backend,omitempty"`
-	StoreRoot              string `json:"store_root,omitempty"`
-	StoreMaxAllocatedBytes int64  `json:"store_max_allocated_bytes,omitempty"`
-	MinimumHostFreeBytes   int64  `json:"minimum_host_free_bytes,omitempty"`
+	Backend                string            `json:"backend,omitempty"`
+	StoreRoot              string            `json:"store_root,omitempty"`
+	StoreMaxAllocatedBytes int64             `json:"store_max_allocated_bytes,omitempty"`
+	MinimumHostFreeBytes   int64             `json:"minimum_host_free_bytes,omitempty"`
+	LocalPackageOverrides  map[string]string `json:"local_package_overrides,omitempty"`
 }
 
 type Config struct {
@@ -173,6 +175,14 @@ func (c *Config) Validate(requireUnity bool) error {
 		}
 		if c.Workspace.StoreMaxAllocatedBytes < 0 || c.Workspace.MinimumHostFreeBytes < 0 {
 			return fmt.Errorf("%w: workspace storage limits must be non-negative", ErrConfigInvalid)
+		}
+		for name, path := range c.Workspace.LocalPackageOverrides {
+			if strings.TrimSpace(name) == "" {
+				return fmt.Errorf("%w: workspace.local_package_overrides contains an empty package name", ErrConfigInvalid)
+			}
+			if !filepath.IsAbs(path) {
+				return fmt.Errorf("%w: workspace.local_package_overrides[%q] must be an absolute path", ErrConfigInvalid, name)
+			}
 		}
 	}
 

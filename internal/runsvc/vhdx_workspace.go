@@ -153,11 +153,21 @@ func (s *Service) prepareVHDXWorkspace(ctx context.Context, req Request, runID s
 		return nil, metrics, nil, fmt.Errorf("%w: admission: %v", errVHDXPreStartUnavailable, statusErr)
 	}
 
-	key, err := vhdxworkspace.ComputeCompatibilityKey(req.Config.ProjectPath, req.Config.UnityPath)
+	var configuredPackages map[string]string
+	if req.Config.Workspace != nil {
+		configuredPackages = req.Config.Workspace.LocalPackageOverrides
+	}
+	localPackages, localPackagesDigest, err := vhdxworkspace.ResolveLocalPackageOverrides(configuredPackages)
 	if err != nil {
 		return nil, metrics, nil, err
 	}
-	snapshot, err := vhdxworkspace.ComputeSourceSnapshot(req.Config.ProjectPath)
+	metrics.LocalPackageOverrideCount = len(localPackages)
+	metrics.LocalPackagesDigest = localPackagesDigest
+	key, err := vhdxworkspace.ComputeCompatibilityKeyWithLocalPackages(req.Config.ProjectPath, req.Config.UnityPath, localPackagesDigest)
+	if err != nil {
+		return nil, metrics, nil, err
+	}
+	snapshot, err := vhdxworkspace.ComputeSourceSnapshotWithLocalPackages(req.Config.ProjectPath, localPackagesDigest)
 	if err != nil {
 		return nil, metrics, nil, err
 	}
@@ -173,6 +183,9 @@ func (s *Service) prepareVHDXWorkspace(ctx context.Context, req Request, runID s
 			_ = ws.Cleanup()
 		}
 	}()
+	if err := vhdxworkspace.ApplyLocalPackageOverrides(ctx, ws.ShadowPath, localPackages); err != nil {
+		return nil, metrics, nil, err
+	}
 	metrics.FileCopyMs = (ws.Metrics.AssetsCopy + ws.Metrics.ProjectSettingsCopy + ws.Metrics.PackagesCopy).Milliseconds()
 
 	var parentResponse vhdxworkspace.Response
@@ -267,17 +280,60 @@ func applyVHDXMetrics(target *history.WorkspaceMetrics, source *vhdxworkspace.Me
 	if target == nil || source == nil {
 		return
 	}
-	target.ParentStatus, target.ParentCreated, target.ParentReused = source.ParentStatus, target.ParentCreated || source.ParentCreated, target.ParentReused || source.ParentReused
+	if source.ParentStatus != "" {
+		target.ParentStatus = source.ParentStatus
+	}
+	target.ParentCreated = target.ParentCreated || source.ParentCreated
+	target.ParentReused = target.ParentReused || source.ParentReused
 	target.ParentBuildMs += source.ParentBuildMs
 	target.ParentVerifyMs += source.ParentVerifyMs
-	target.ParentVirtualBytes, target.ParentAllocatedBytes = source.ParentVirtualBytes, source.ParentAllocatedBytes
-	target.ChildCreateMs, target.ChildAttachMs, target.ChildMountMs, target.ChildReleaseMs = source.ChildCreateMs, source.ChildAttachMs, source.ChildMountMs, source.ChildReleaseMs
-	target.ChildReadyAllocatedBytes, target.ChildPeakAllocatedBytes, target.ChildReleasedAllocatedBytes = source.ChildReadyBytes, source.ChildPeakBytes, source.ChildReleasedBytes
+	if source.ParentVirtualBytes != 0 {
+		target.ParentVirtualBytes = source.ParentVirtualBytes
+	}
+	if source.ParentAllocatedBytes != 0 {
+		target.ParentAllocatedBytes = source.ParentAllocatedBytes
+	}
+	if source.ChildCreateMs != 0 {
+		target.ChildCreateMs = source.ChildCreateMs
+	}
+	if source.ChildAttachMs != 0 {
+		target.ChildAttachMs = source.ChildAttachMs
+	}
+	if source.ChildMountMs != 0 {
+		target.ChildMountMs = source.ChildMountMs
+	}
+	if source.ChildReleaseMs != 0 {
+		target.ChildReleaseMs = source.ChildReleaseMs
+	}
+	if source.ChildReadyMeasured || source.ChildReadyBytes != 0 {
+		target.ChildReadyAllocatedBytes = source.ChildReadyBytes
+		target.ChildReadyAllocatedMeasured = true
+	}
+	if source.ChildPeakMeasured || source.ChildPeakBytes != 0 {
+		if !target.ChildPeakAllocatedMeasured || source.ChildPeakBytes > target.ChildPeakAllocatedBytes {
+			target.ChildPeakAllocatedBytes = source.ChildPeakBytes
+		}
+		target.ChildPeakAllocatedMeasured = true
+	}
+	if source.ChildReleasedMeasured || source.ChildReleasedBytes != 0 {
+		target.ChildReleasedAllocatedBytes = source.ChildReleasedBytes
+		target.ChildReleasedAllocatedMeasured = true
+	}
 	if source.CleanupState != "" {
 		target.CleanupState = source.CleanupState
 	}
-	target.StoreQuotaBytes, target.StoreAllocatedBytes = source.Capacity.QuotaBytes, source.Capacity.AllocatedBytes
-	target.HostFreeBytes, target.HostFreeFloorBytes = source.Capacity.HostFreeBytes, source.Capacity.HostFloorBytes
+	if source.Capacity.QuotaBytes != 0 {
+		target.StoreQuotaBytes = source.Capacity.QuotaBytes
+	}
+	if source.Capacity.AllocatedBytes != 0 {
+		target.StoreAllocatedBytes = source.Capacity.AllocatedBytes
+	}
+	if source.Capacity.HostFreeBytes != 0 {
+		target.HostFreeBytes = source.Capacity.HostFreeBytes
+	}
+	if source.Capacity.HostFloorBytes != 0 {
+		target.HostFreeFloorBytes = source.Capacity.HostFloorBytes
+	}
 }
 
 func sameCleanPath(left, right string) bool {

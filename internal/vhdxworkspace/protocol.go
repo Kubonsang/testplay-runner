@@ -60,22 +60,25 @@ type Lease struct {
 }
 
 type Metrics struct {
-	ParentStatus         string   `json:"parentStatus,omitempty"`
-	ParentCreated        bool     `json:"parentCreated"`
-	ParentReused         bool     `json:"parentReused"`
-	ParentBuildMs        int64    `json:"parentBuildMs,omitempty"`
-	ParentVerifyMs       int64    `json:"parentVerifyMs,omitempty"`
-	ParentVirtualBytes   int64    `json:"parentVirtualBytes,omitempty"`
-	ParentAllocatedBytes int64    `json:"parentAllocatedBytes,omitempty"`
-	ChildCreateMs        int64    `json:"childCreateMs,omitempty"`
-	ChildAttachMs        int64    `json:"childAttachMs,omitempty"`
-	ChildMountMs         int64    `json:"childMountMs,omitempty"`
-	ChildReleaseMs       int64    `json:"childReleaseMs,omitempty"`
-	ChildReadyBytes      int64    `json:"childReadyAllocatedBytes,omitempty"`
-	ChildPeakBytes       int64    `json:"childPeakAllocatedBytes,omitempty"`
-	ChildReleasedBytes   int64    `json:"childReleasedAllocatedBytes,omitempty"`
-	CleanupState         string   `json:"cleanupState,omitempty"`
-	Capacity             Capacity `json:"capacity"`
+	ParentStatus          string   `json:"parentStatus,omitempty"`
+	ParentCreated         bool     `json:"parentCreated"`
+	ParentReused          bool     `json:"parentReused"`
+	ParentBuildMs         int64    `json:"parentBuildMs,omitempty"`
+	ParentVerifyMs        int64    `json:"parentVerifyMs,omitempty"`
+	ParentVirtualBytes    int64    `json:"parentVirtualBytes,omitempty"`
+	ParentAllocatedBytes  int64    `json:"parentAllocatedBytes,omitempty"`
+	ChildCreateMs         int64    `json:"childCreateMs,omitempty"`
+	ChildAttachMs         int64    `json:"childAttachMs,omitempty"`
+	ChildMountMs          int64    `json:"childMountMs,omitempty"`
+	ChildReleaseMs        int64    `json:"childReleaseMs,omitempty"`
+	ChildReadyBytes       int64    `json:"childReadyAllocatedBytes,omitempty"`
+	ChildPeakBytes        int64    `json:"childPeakAllocatedBytes,omitempty"`
+	ChildReleasedBytes    int64    `json:"childReleasedAllocatedBytes,omitempty"`
+	ChildReadyMeasured    bool     `json:"childReadyAllocatedMeasured,omitempty"`
+	ChildPeakMeasured     bool     `json:"childPeakAllocatedMeasured,omitempty"`
+	ChildReleasedMeasured bool     `json:"childReleasedAllocatedMeasured,omitempty"`
+	CleanupState          string   `json:"cleanupState,omitempty"`
+	Capacity              Capacity `json:"capacity"`
 }
 
 type Response struct {
