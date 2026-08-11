@@ -71,6 +71,12 @@ func (b *Broker) Recover(ctx context.Context, grace time.Duration) (RecoverySumm
 			continue
 		}
 		if _, statErr := os.Lstat(journal.ChildPath); os.IsNotExist(statErr) {
+			if cleanupErr := b.cleanupOwnedWorkspace(journal); cleanupErr != nil {
+				journal.State = "quarantined"
+				_ = b.store.WriteLease(journal)
+				summary.Quarantined++
+				continue
+			}
 			if removeErr := b.store.RemoveLease(journal); removeErr != nil {
 				return summary, removeErr
 			}
@@ -105,6 +111,12 @@ func (b *Broker) Recover(ctx context.Context, grace time.Duration) (RecoverySumm
 		}
 		_, releaseErr := session.Release(ctx, true)
 		if releaseErr != nil {
+			journal.State = "quarantined"
+			_ = b.store.WriteLease(journal)
+			summary.Quarantined++
+			continue
+		}
+		if cleanupErr := b.cleanupOwnedWorkspace(journal); cleanupErr != nil {
 			journal.State = "quarantined"
 			_ = b.store.WriteLease(journal)
 			summary.Quarantined++
@@ -324,6 +336,11 @@ func (b *Broker) removeRetained(ctx context.Context, request Request, fail failu
 	if err != nil {
 		return fail("retained-release-failed", "remove-retained", record.ChildPath, err)
 	}
+	if err := b.cleanupOwnedWorkspace(*journal); err != nil {
+		journal.State = "quarantined"
+		_ = b.store.WriteLease(*journal)
+		return fail("workspace-cleanup-failed", "remove-retained", journal.WorkspacePath, err)
+	}
 	if err := b.store.RemoveLease(*journal); err != nil {
 		return fail("journal-remove-failed", "remove-retained", record.ChildPath, err)
 	}
@@ -459,7 +476,7 @@ func (b *Broker) acquire(ctx context.Context, request Request, fail failureBuild
 	if err != nil {
 		return fail("lease-create-failed", "lease-id", "", err)
 	}
-	_, mount, err := b.workspaceMount(request.WorkspaceID)
+	workspace, mount, err := b.workspaceMount(request.WorkspaceID)
 	if err != nil {
 		return fail("invalid-workspace", "derive-child-mount", request.WorkspaceID, err)
 	}
@@ -468,9 +485,13 @@ func (b *Broker) acquire(ctx context.Context, request Request, fail failureBuild
 	}
 	child, _ := b.store.paths.Child(leaseID)
 	token, _ := randomID("owner")
-	journal := LeaseJournal{LeaseID: leaseID, RunID: request.RunID, UserSID: b.config.UserSID, OwnershipToken: token, ParentKey: request.ParentKey.Digest, ParentPath: resolved.Metadata.VHDXPath, ChildPath: child, MountPath: mount, State: "requested", ClientPID: request.ClientPID, CreatedAt: b.now().UTC(), UpdatedAt: b.now().UTC()}
+	journal := LeaseJournal{LeaseID: leaseID, RunID: request.RunID, UserSID: b.config.UserSID, OwnershipToken: token, ParentKey: request.ParentKey.Digest, ParentPath: resolved.Metadata.VHDXPath, ChildPath: child, WorkspaceID: request.WorkspaceID, WorkspacePath: workspace, MountPath: mount, State: "requested", ClientPID: request.ClientPID, CreatedAt: b.now().UTC(), UpdatedAt: b.now().UTC()}
 	if err := b.store.WriteLease(journal); err != nil {
 		return fail("journal-write-failed", "create-lease", child, err)
+	}
+	if err := b.writeWorkspaceOwner(journal); err != nil {
+		_ = b.store.RemoveLease(journal)
+		return fail("workspace-owner-write-failed", "create-workspace-owner", workspace, err)
 	}
 	transition := func(state, physical, volume string) error {
 		journal.State = state
@@ -485,6 +506,7 @@ func (b *Broker) acquire(ctx context.Context, request Request, fail failureBuild
 	session, metrics, err := b.native.AcquireChild(ctx, *resolved.Metadata, journal, transition)
 	if err != nil {
 		if _, childErr := os.Lstat(child); os.IsNotExist(childErr) {
+			_ = b.removeWorkspaceOwner(journal)
 			_ = b.store.RemoveLease(journal)
 		} else {
 			journal.State = "quarantined"
@@ -499,7 +521,8 @@ func (b *Broker) acquire(ctx context.Context, request Request, fail failureBuild
 	journal.VolumeGUID = info.VolumeGUID
 	if err := b.store.WriteLease(journal); err != nil {
 		_, cleanupErr := session.Release(context.Background(), true)
-		return fail("journal-write-failed", "commit-ready", child, errors.Join(err, cleanupErr))
+		workspaceErr := b.cleanupOwnedWorkspace(journal)
+		return fail("journal-write-failed", "commit-ready", child, errors.Join(err, cleanupErr, workspaceErr))
 	}
 	b.mu.Lock()
 	b.children[leaseID] = session
@@ -570,8 +593,15 @@ func (b *Broker) release(ctx context.Context, request Request, fail failureBuild
 		if err := b.store.WriteRetained(*journal); err != nil {
 			return fail("retained-record-failed", "retain-child", journal.ChildPath, err)
 		}
-	} else if err := b.store.RemoveLease(*journal); err != nil {
-		return fail("journal-remove-failed", "release-complete", journal.ChildPath, err)
+	} else {
+		if err := b.cleanupOwnedWorkspace(*journal); err != nil {
+			journal.State = "quarantined"
+			_ = b.store.WriteLease(*journal)
+			return fail("workspace-cleanup-failed", "release-complete", journal.WorkspacePath, err)
+		}
+		if err := b.store.RemoveLease(*journal); err != nil {
+			return fail("journal-remove-failed", "release-complete", journal.ChildPath, err)
+		}
 	}
 	b.mu.Lock()
 	delete(b.children, request.LeaseID)
@@ -678,6 +708,107 @@ func (b *Broker) ensureCapacityWithLimits(workers int, dryRun bool, requestedQuo
 		return capacity, nil
 	}
 	return capacity, ErrStorageUnavailable
+}
+
+const workspaceOwnerFile = ".testplay-vhdx-workspace-owner.json"
+
+func (b *Broker) writeWorkspaceOwner(journal LeaseJournal) error {
+	workspace, mount, err := b.workspaceMount(journal.WorkspaceID)
+	if err != nil || !samePath(workspace, journal.WorkspacePath) || !samePath(mount, journal.MountPath) {
+		return errors.Join(err, ErrOwnershipMismatch)
+	}
+	if err := b.validateWorkspaceMount(journal.WorkspaceID, journal.MountPath); err != nil {
+		return err
+	}
+	owner := WorkspaceOwner{
+		SchemaVersion:  WorkspaceOwnerSchemaVersion,
+		Provider:       Provider,
+		LeaseID:        journal.LeaseID,
+		RunID:          journal.RunID,
+		WorkspaceID:    journal.WorkspaceID,
+		WorkspacePath:  workspace,
+		MountPath:      mount,
+		OwnershipToken: journal.OwnershipToken,
+		CreatedAt:      journal.CreatedAt,
+	}
+	return writeJSONExclusive(filepath.Join(workspace, workspaceOwnerFile), owner)
+}
+
+func (b *Broker) readWorkspaceOwner(journal LeaseJournal) (string, error) {
+	if journal.WorkspaceID == "" || journal.WorkspacePath == "" {
+		return "", nil
+	}
+	workspace, mount, err := b.workspaceMount(journal.WorkspaceID)
+	if err != nil ||
+		!samePath(workspace, journal.WorkspacePath) ||
+		!samePath(mount, journal.MountPath) {
+		return "", errors.Join(err, ErrOwnershipMismatch)
+	}
+	if err := b.validateWorkspaceMount(journal.WorkspaceID, journal.MountPath); err != nil {
+		return "", err
+	}
+	marker := filepath.Join(workspace, workspaceOwnerFile)
+	if err := validateRegular(marker); err != nil {
+		return "", err
+	}
+	if err := validatePlatformNonReparse(marker); err != nil {
+		return "", err
+	}
+	var owner WorkspaceOwner
+	if err := readJSON(marker, &owner); err != nil {
+		return "", err
+	}
+	if owner.SchemaVersion != WorkspaceOwnerSchemaVersion ||
+		owner.Provider != Provider ||
+		owner.LeaseID != journal.LeaseID ||
+		owner.RunID != journal.RunID ||
+		owner.WorkspaceID != journal.WorkspaceID ||
+		!samePath(owner.WorkspacePath, workspace) ||
+		!samePath(owner.MountPath, mount) ||
+		owner.OwnershipToken != journal.OwnershipToken {
+		return "", ErrOwnershipMismatch
+	}
+	return marker, nil
+}
+
+func (b *Broker) removeWorkspaceOwner(journal LeaseJournal) error {
+	marker, err := b.readWorkspaceOwner(journal)
+	if err != nil || marker == "" {
+		return err
+	}
+	return os.Remove(marker)
+}
+
+func (b *Broker) cleanupOwnedWorkspace(journal LeaseJournal) error {
+	if journal.WorkspaceID == "" || journal.WorkspacePath == "" {
+		return nil
+	}
+	if _, err := os.Lstat(journal.WorkspacePath); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if _, err := b.readWorkspaceOwner(journal); err != nil {
+		return err
+	}
+	if err := filepath.Walk(journal.WorkspacePath, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%w: workspace entry is a symlink: %s", ErrOwnershipMismatch, path)
+		}
+		return validatePlatformNonReparse(path)
+	}); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(journal.WorkspacePath); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(journal.WorkspacePath); !os.IsNotExist(err) {
+		return errors.Join(err, ErrOwnershipMismatch)
+	}
+	return nil
 }
 
 func (b *Broker) workspaceMount(workspaceID string) (string, string, error) {

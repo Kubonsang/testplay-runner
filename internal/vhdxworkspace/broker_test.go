@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -263,6 +265,11 @@ func TestBrokerConcurrentChildrenAndExactRelease(t *testing.T) {
 	if !status.OK || status.Status.ActiveChildCount != 0 {
 		t.Fatalf("status=%+v", status)
 	}
+	for _, id := range []string{"run-a", "run-b"} {
+		if _, err := os.Lstat(filepath.Join(workspaces, id)); !os.IsNotExist(err) {
+			t.Fatalf("released workspace remains: id=%s err=%v", id, err)
+		}
+	}
 }
 
 func TestBrokerRetainedChildAttachAndRemove(t *testing.T) {
@@ -297,8 +304,8 @@ func TestBrokerRetainedChildAttachAndRemove(t *testing.T) {
 	if response := broker.Handle(context.Background(), "S-1-5-21-test", remove); !response.OK {
 		t.Fatalf("remove=%+v", response)
 	}
-	if _, err := os.Stat(ready.Lease.MountPath); !os.IsNotExist(err) {
-		t.Fatalf("mount residual err=%v", err)
+	if _, err := os.Stat(filepath.Join(workspaces, "retained-run")); !os.IsNotExist(err) {
+		t.Fatalf("retained workspace residual err=%v", err)
 	}
 }
 
@@ -336,6 +343,109 @@ func TestBrokerRestartRecoversOnlyExpiredEphemeralChild(t *testing.T) {
 	}
 	if _, err := restarted.store.ReadLease(ready.Lease.LeaseID); !os.IsNotExist(err) {
 		t.Fatalf("journal residual err=%v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(workspaces, "orphan-run")); !os.IsNotExist(err) {
+		t.Fatalf("workspace residual err=%v", err)
+	}
+}
+
+func TestRecoverQuarantinesTamperedWorkspaceOwner(t *testing.T) {
+	native := &fakeNative{}
+	broker, key, workspaces := testBroker(t, native)
+	commitTestParent(t, broker, key, workspaces)
+	workspace := filepath.Join(workspaces, "tampered-run")
+	if err := os.Mkdir(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	acquire := request(OperationAcquire, "acquire-tampered")
+	acquire.ParentKey = &key
+	acquire.RunID = "tampered-run"
+	acquire.WorkspaceID = "tampered-run"
+	acquire.ClientPID = 12345
+	ready := broker.Handle(context.Background(), "S-1-5-21-test", acquire)
+	if !ready.OK {
+		t.Fatalf("acquire=%+v", ready)
+	}
+	journal, err := broker.store.ReadLease(ready.Lease.LeaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markerPath := filepath.Join(workspace, workspaceOwnerFile)
+	var owner WorkspaceOwner
+	if err := readJSON(markerPath, &owner); err != nil {
+		t.Fatal(err)
+	}
+	owner.OwnershipToken = "tampered-token"
+	if err := writeJSONDurable(markerPath, owner); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted, err := NewBroker(broker.config, native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.now = func() time.Time { return time.Now().Add(time.Minute) }
+	summary, err := restarted.Recover(context.Background(), 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Quarantined != 1 || summary.Released != 0 {
+		t.Fatalf("summary=%+v", summary)
+	}
+	if _, err := os.Lstat(workspace); err != nil {
+		t.Fatalf("tampered workspace was removed: %v", err)
+	}
+	preserved, err := restarted.store.ReadLease(journal.LeaseID)
+	if err != nil || preserved.State != "quarantined" {
+		t.Fatalf("journal=%+v err=%v", preserved, err)
+	}
+	status := restarted.Handle(context.Background(), "S-1-5-21-test", request(OperationStatus, "status-tampered"))
+	if !status.OK || status.Status.QuarantineCount != 1 || !status.Status.ManualRecoveryRequired {
+		t.Fatalf("status=%+v", status)
+	}
+}
+
+func TestRecoverRejectsWorkspaceReparseEntry(t *testing.T) {
+	native := &fakeNative{}
+	broker, key, workspaces := testBroker(t, native)
+	commitTestParent(t, broker, key, workspaces)
+	workspace := filepath.Join(workspaces, "reparse-run")
+	if err := os.Mkdir(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	acquire := request(OperationAcquire, "acquire-reparse")
+	acquire.ParentKey = &key
+	acquire.RunID = "reparse-run"
+	acquire.WorkspaceID = "reparse-run"
+	acquire.ClientPID = 12345
+	ready := broker.Handle(context.Background(), "S-1-5-21-test", acquire)
+	if !ready.OK {
+		t.Fatalf("acquire=%+v", ready)
+	}
+	target := t.TempDir()
+	link := filepath.Join(workspace, "unsafe-link")
+	if err := os.Symlink(target, link); err != nil {
+		if runtime.GOOS != "windows" {
+			t.Skipf("symlink privilege unavailable: %v", err)
+		}
+		if output, junctionErr := exec.Command("cmd.exe", "/c", "mklink", "/J", link, target).CombinedOutput(); junctionErr != nil {
+			t.Fatalf("create junction fallback: %v: %s", junctionErr, output)
+		}
+	}
+	restarted, err := NewBroker(broker.config, native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.now = func() time.Time { return time.Now().Add(time.Minute) }
+	summary, err := restarted.Recover(context.Background(), 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Quarantined != 1 || summary.Released != 0 {
+		t.Fatalf("summary=%+v", summary)
+	}
+	if _, err := os.Lstat(workspace); err != nil {
+		t.Fatalf("reparse workspace was removed: %v", err)
 	}
 }
 

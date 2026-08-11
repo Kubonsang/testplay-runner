@@ -434,7 +434,15 @@ func (s *Store) Status(hostFree, quota, floor int64) (Status, error) {
 			status.QuarantineCount++
 			continue
 		}
-		if journal.Retained {
+		if journal.State == "quarantined" {
+			status.QuarantineCount++
+			if bytes, measureErr := fileAllocatedBytes(journal.ChildPath); measureErr == nil {
+				status.QuarantineAllocatedBytes += bytes
+			}
+			if info, measureErr := os.Stat(journal.ChildPath); measureErr == nil {
+				status.QuarantineLogicalBytes += info.Size()
+			}
+		} else if journal.Retained {
 			status.RetainedChildCount++
 			if bytes, measureErr := fileAllocatedBytes(journal.ChildPath); measureErr == nil {
 				status.RetainedChildAllocatedBytes += bytes
@@ -452,8 +460,10 @@ func (s *Store) Status(hostFree, quota, floor int64) (Status, error) {
 			}
 		}
 	}
-	status.QuarantineAllocatedBytes, _ = allocatedVHDXBytes(s.paths.Quarantine)
-	status.QuarantineLogicalBytes, _ = logicalVHDXBytes(s.paths.Quarantine)
+	quarantineAllocated, _ := allocatedVHDXBytes(s.paths.Quarantine)
+	quarantineLogical, _ := logicalVHDXBytes(s.paths.Quarantine)
+	status.QuarantineAllocatedBytes += quarantineAllocated
+	status.QuarantineLogicalBytes += quarantineLogical
 	status.ManualRecoveryRequired = status.QuarantineCount > 0
 	allocated, err := allocatedVHDXBytes(s.paths.UserRoot)
 	if err != nil && !os.IsNotExist(err) {

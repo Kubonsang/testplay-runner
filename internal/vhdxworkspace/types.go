@@ -19,6 +19,8 @@ const (
 	SafetyHostFloor       int64 = 5 << 30
 )
 
+const WorkspaceOwnerSchemaVersion = 1
+
 const (
 	ParentStatusMissing    = "missing"
 	ParentStatusPending    = "pending"
@@ -122,6 +124,8 @@ type LeaseJournal struct {
 	ParentKey      string       `json:"parentKey"`
 	ParentPath     string       `json:"parentPath"`
 	ChildPath      string       `json:"childPath"`
+	WorkspaceID    string       `json:"workspaceId,omitempty"`
+	WorkspacePath  string       `json:"workspacePath,omitempty"`
 	MountPath      string       `json:"mountPath"`
 	State          string       `json:"state"`
 	ClientPID      int          `json:"clientPid"`
@@ -132,6 +136,18 @@ type LeaseJournal struct {
 	FileIdentity   FileIdentity `json:"fileIdentity"`
 	PhysicalPath   string       `json:"physicalPath,omitempty"`
 	VolumeGUID     string       `json:"volumeGuid,omitempty"`
+}
+
+type WorkspaceOwner struct {
+	SchemaVersion  int       `json:"schemaVersion"`
+	Provider       string    `json:"provider"`
+	LeaseID        string    `json:"leaseId"`
+	RunID          string    `json:"runId"`
+	WorkspaceID    string    `json:"workspaceId"`
+	WorkspacePath  string    `json:"workspacePath"`
+	MountPath      string    `json:"mountPath"`
+	OwnershipToken string    `json:"ownershipToken"`
+	CreatedAt      time.Time `json:"createdAt"`
 }
 
 type RetainedRecord struct {
