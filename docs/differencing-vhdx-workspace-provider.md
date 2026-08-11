@@ -176,6 +176,49 @@ The pipe is configured with `PIPE_REJECT_REMOTE_CLIENTS`, but an attempted
 connection from a second physical machine remains **NOT MEASURED**. GNF and
 recovery promotion gates also remain outstanding.
 
+The GNF single-worker gate then passed as
+`GNF_SINGLE_WORKER_COMPATIBLE` with artifact SHA-256
+`073D47A729A9D4273F86533A24E6988B18FDADB5616B375BB2F3760C1C254DE8`.
+The pinned EditMode and PlayMode tests each passed 1/1 with semantic parity,
+one immutable parent was reused, each child released to zero measured
+allocation, source hashes were unchanged, and uninstall left zero outer
+residual. GNF multi-worker compatibility remains a later gate.
+
+The first fixture two-worker attempt at commit `aab38d4` is retained as
+**FAILED** with artifact SHA-256
+`F276A940EB7BC26C18285214B52556DFCC204D8F94DA764517A8DA5D8A495266`.
+One simultaneous client reached the server between accept and creation of the
+next unlimited named-pipe instance and received `ERROR_PIPE_BUSY`; the other
+worker passed and cleanup was residual zero. Commit `0d34e24` added a bounded,
+context-aware `WaitNamedPipeW` retry only for that transient error. Two later
+harness-only failures are also retained: SHA-256
+`68736AA9E2EB5944859F322FFE4E23A51C55A73CDCE88DD9630165264B1D0650`
+incorrectly required a small Library write to grow VHDX allocated bytes, and
+SHA-256
+`917CB8F184D9F785A8C55982C65194A179E1D4F5C7C9EF20AC2EEE82D31BD83B`
+did not account for an `omitempty` zero-byte release field. Both executions had
+two passing Unity workers, overlapping process intervals, released children,
+and zero outer residual; neither failed in the provider lifecycle.
+
+The fresh fixture two-worker rerun at commit `c2574b1` passed as
+`UNITY_VHDX_DIFF_TWO_WORKERS_COMPATIBLE`:
+
+- artifact SHA-256:
+  `4C221954048969D31177A7D7B22EABDBE3B01BCEEFC28BCD8A40A03A1F2A8465`;
+- both selected Library write/read tests passed, with the Unity process
+  intervals overlapping for 5,299 ms;
+- the workers shared one 100 MiB allocated immutable parent but used distinct
+  child mounts, physical disks, volume GUIDs, PIDs, and run IDs;
+- each child measured 37,748,736 allocated bytes at ready and peak, then a
+  measured zero after release, with `fallbackUsed: false` and
+  `cleanupState: released`;
+- the committed parent SHA-256 matched metadata, the fixture source remained
+  unchanged, and uninstall left zero new disks, drive letters, or processes.
+
+Fixture four-worker, GNF two/four-worker, forced-termination, broker-restart,
+reboot-recovery, quota/LRU, and production/release readiness gates remain
+**NOT MEASURED**.
+
 ## Win32 references
 
 - [Named Pipe Security and Access Rights](https://learn.microsoft.com/windows/win32/ipc/named-pipe-security-and-access-rights)
