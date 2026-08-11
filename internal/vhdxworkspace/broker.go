@@ -755,8 +755,14 @@ func (b *Broker) readWorkspaceOwner(journal LeaseJournal) (string, error) {
 		!samePath(mount, journal.MountPath) {
 		return "", errors.Join(err, ErrOwnershipMismatch)
 	}
-	if err := b.validateWorkspaceMount(journal.WorkspaceID, journal.MountPath); err != nil {
-		return "", err
+	for _, path := range []string{b.config.WorkspaceRoot, workspace} {
+		info, statErr := os.Lstat(path)
+		if statErr != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("%w: workspace component is not a real directory: %s: %v", ErrOwnershipMismatch, path, statErr)
+		}
+		if platformErr := validatePlatformRealDirectory(path); platformErr != nil {
+			return "", platformErr
+		}
 	}
 	marker := filepath.Join(workspace, workspaceOwnerFile)
 	if err := validateRegular(marker); err != nil {

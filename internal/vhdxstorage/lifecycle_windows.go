@@ -776,8 +776,8 @@ func FileUsageOf(path string) (FileUsage, error) {
 // point whose target is the journal's exact volume GUID and whose exact child
 // VHDX is currently detached. A broker process crash closes the VirtDisk
 // handle and detaches the disk, but Windows can leave this access point behind.
-// The directory itself is retained as an empty, real mount parent for the
-// subsequent AttachExisting call.
+// The empty directory is removed after the reparse point so AttachExisting
+// recreates it and therefore owns its complete mount/unmount lifecycle.
 func PrepareDetachedStaleMount(ctx context.Context, childPath, mountPath, expectedVolumeGUID string) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -856,6 +856,12 @@ func PrepareDetachedStaleMount(ctx context.Context, childPath, mountPath, expect
 	entries, err := os.ReadDir(mountPath)
 	if err != nil || len(entries) != 0 {
 		return false, newError(CodeMountFailed, "verify-stale-mount-empty", mountPath, errors.Join(err, fmt.Errorf("entries=%d", len(entries))))
+	}
+	if err := os.Remove(mountPath); err != nil {
+		return false, newError(CodeUnmountFailed, "remove-stale-mount-directory", mountPath, err)
+	}
+	if _, err := os.Lstat(mountPath); !os.IsNotExist(err) {
+		return false, newError(CodeUnmountFailed, "verify-stale-mount-directory-absent", mountPath, errors.Join(err, fmt.Errorf("mount directory still exists")))
 	}
 	return true, nil
 }

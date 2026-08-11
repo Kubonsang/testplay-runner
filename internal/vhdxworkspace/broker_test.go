@@ -391,6 +391,52 @@ func TestBrokerRestartRecoversOnlyExpiredEphemeralChild(t *testing.T) {
 	}
 }
 
+func TestRecoverCompletesWhenChildIsGoneAndEmptyMountDirectoryRemains(t *testing.T) {
+	native := &fakeNative{}
+	broker, key, workspaces := testBroker(t, native)
+	commitTestParent(t, broker, key, workspaces)
+	workspace := filepath.Join(workspaces, "partial-release")
+	if err := os.Mkdir(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	acquire := request(OperationAcquire, "acquire-partial-release")
+	acquire.ParentKey = &key
+	acquire.RunID = "partial-release"
+	acquire.WorkspaceID = "partial-release"
+	ready := broker.Handle(context.Background(), "S-1-5-21-test", acquire)
+	if !ready.OK {
+		t.Fatalf("acquire=%+v", ready)
+	}
+	journal, err := broker.store.ReadLease(ready.Lease.LeaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(journal.ChildPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(journal.MountPath); err != nil {
+		t.Fatalf("expected partial empty mount directory: %v", err)
+	}
+	restarted, err := NewBroker(broker.config, native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.now = func() time.Time { return time.Now().Add(time.Minute) }
+	summary, err := restarted.Recover(context.Background(), 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Released != 1 || summary.Quarantined != 0 {
+		t.Fatalf("summary=%+v", summary)
+	}
+	if _, err := os.Lstat(workspace); !os.IsNotExist(err) {
+		t.Fatalf("partial workspace residual: %v", err)
+	}
+	if _, err := restarted.store.ReadLease(journal.LeaseID); !os.IsNotExist(err) {
+		t.Fatalf("partial journal residual: %v", err)
+	}
+}
+
 func TestRecoverQuarantinesTamperedWorkspaceOwner(t *testing.T) {
 	native := &fakeNative{}
 	broker, key, workspaces := testBroker(t, native)
