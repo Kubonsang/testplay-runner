@@ -173,8 +173,8 @@ The native broker security gate then passed with artifact SHA-256
   store and scratch root, with zero new file-backed disks.
 
 The pipe is configured with `PIPE_REJECT_REMOTE_CLIENTS`, but an attempted
-connection from a second physical machine remains **NOT MEASURED**. GNF and
-recovery promotion gates also remain outstanding.
+connection from a second physical machine remains **NOT MEASURED**. Recovery
+promotion gates also remain outstanding.
 
 The GNF single-worker gate then passed as
 `GNF_SINGLE_WORKER_COMPATIBLE` with artifact SHA-256
@@ -229,8 +229,57 @@ The fixture four-worker gate at commit `692a012` then passed as
 - parent hash/metadata, fixture source isolation, storage uninstall, and outer
   disk/drive-letter/process residual checks all passed.
 
-GNF two/four-worker, forced-termination, broker-restart, reboot-recovery,
-quota/LRU, and production/release readiness gates remain **NOT MEASURED**.
+The first GNF two-worker attempt at commit `b36c107` is retained as
+**FAILED** with artifact SHA-256
+`750E898202C30F80CC001E90BEA80C932780444ED4F6727570EBC52E21C6D70B`.
+Both EditMode workers completed the selected test, but one successful Unity
+process was reported as `exec: WaitDelay expired before I/O complete` because a
+descendant still held the inherited output pipe. The result XML and Unity log
+both proved a passing test and direct exit code zero. Cleanup and outer
+residual checks were zero. Commit `9eb5539` preserves cancellation and signal
+semantics while accepting `exec.ErrWaitDelay` after the direct Unity process
+has exited successfully.
+
+The next GNF two-worker attempt at commit `9eb5539` is retained as
+**FAILED** with artifact SHA-256
+`7027BD40180B437BD2EDD4797812B3345654531E1515AC7E69966A3D047A003B`.
+Both EditMode and PlayMode worker pairs passed their selected tests, but one
+PlayMode child release observed a transient Storage cmdlet access-path view and
+rejected its directory mount as not owned. The broker subsequently recovered
+the exact ephemeral child to active/retained/pending/quarantine counts of zero;
+the exact orphaned physical workspace shell was removed only after proving the
+Library mount, reparse entries, related processes, and file-backed disks were
+absent. Normal ownership-safe uninstall then removed the one parent, service,
+receipt, store, and workspace root with zero residual. Commit `070b234`
+normalizes and boundedly re-reads the exact disk/partition access path, removes
+only the single matching path returned by that partition, flushes named-pipe
+responses before disconnect, and retries only pre-request pipe-instance
+transients.
+
+The fresh GNF two-worker rerun at commit `070b234` passed as
+`GNF_VHDX_DIFF_TWO_WORKERS_COMPATIBLE`:
+
+- artifact SHA-256:
+  `2C7D6FB53181FDC37EFFD3A918633F28B55AF0D6F25421AC48F5FC31B6D1BF50`;
+- both EditMode workers passed
+  `GNF.DungeonGen.Tests.WallPropValidatorTests.NullPrefab_Error` and
+  overlapped for 29,399 ms;
+- both PlayMode workers passed
+  `DOOR_CONSENSUS_Tests.Proximity_CountsNearestExitWithinRadius` and
+  overlapped for 43,419 ms;
+- every worker matched the pinned NTFS reference semantic digest, used the same
+  immutable parent key, a distinct child/mount/disk/volume, no fallback, and
+  `cleanupState: released`;
+- child ready allocation was 37,748,736 bytes; observed peaks ranged from
+  205,520,896 to 742,391,808 bytes and every released allocation was measured;
+- the detached read-only parent was 4,932,501,504 bytes and its full SHA-256
+  matched committed metadata;
+- source evidence was unchanged, storage status reported no active, retained,
+  pending, or quarantined child, and uninstall left zero new disks, drive
+  letters, processes, service, receipt, store, or workspace root.
+
+GNF four-worker, forced-termination, broker-restart, reboot-recovery, quota/LRU,
+and production/release readiness gates remain **NOT MEASURED**.
 
 ## Win32 references
 
