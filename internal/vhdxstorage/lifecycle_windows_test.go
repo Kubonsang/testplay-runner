@@ -89,6 +89,20 @@ func TestDetachedImageQueryContract(t *testing.T) {
 	}
 }
 
+func TestStaleMountValidationUsesWin32ReparseAttributesBeforeDirectoryMode(t *testing.T) {
+	source, err := os.ReadFile("lifecycle_windows.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	attributes := strings.Index(text, "windows.GetFileAttributes(mountPtr)")
+	reparse := strings.Index(text, "attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0")
+	directory := strings.Index(text, "non-reparse mount path is not a directory")
+	if attributes < 0 || reparse < 0 || directory < 0 || !(attributes < reparse && reparse < directory) {
+		t.Fatal("Win32 reparse classification must precede the non-reparse directory-mode gate")
+	}
+}
+
 func TestStoragePowerShellParses(t *testing.T) {
 	parser := `
 $tokens = $null

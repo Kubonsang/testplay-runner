@@ -792,9 +792,6 @@ func PrepareDetachedStaleMount(ctx context.Context, childPath, mountPath, expect
 	if err != nil {
 		return false, newError(CodeMountFailed, "stat-stale-mount", mountPath, err)
 	}
-	if !info.IsDir() {
-		return false, newError(CodeMountFailed, "validate-stale-mount", mountPath, fmt.Errorf("mount path is not a directory"))
-	}
 	mountPtr, err := windows.UTF16PtrFromString(ensureTrailingSeparator(mountPath))
 	if err != nil {
 		return false, err
@@ -804,6 +801,9 @@ func PrepareDetachedStaleMount(ctx context.Context, childPath, mountPath, expect
 		return false, newError(CodeMountFailed, "attributes-stale-mount", mountPath, err)
 	}
 	if attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+		if !info.IsDir() {
+			return false, newError(CodeMountFailed, "validate-stale-mount", mountPath, fmt.Errorf("non-reparse mount path is not a directory"))
+		}
 		return false, nil
 	}
 	buffer := make([]uint16, 1024)
