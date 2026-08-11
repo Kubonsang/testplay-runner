@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -20,6 +22,11 @@ import (
 const DefaultPipeName = `\\.\pipe\testplay-storage-broker-v2`
 
 const pipeMode = windows.PIPE_TYPE_MESSAGE | windows.PIPE_READMODE_MESSAGE | windows.PIPE_WAIT | windows.PIPE_REJECT_REMOTE_CLIENTS
+
+const (
+	pipeOpenTimeout = 5 * time.Second
+	pipeWaitSlice   = 100 * time.Millisecond
+)
 
 type PipeClient struct{ Name string }
 
@@ -39,7 +46,7 @@ func (client PipeClient) Call(ctx context.Context, request Request) (Response, e
 	if err != nil {
 		return Response{}, err
 	}
-	handle, err := windows.CreateFile(path, windows.GENERIC_READ|windows.GENERIC_WRITE, 0, nil, windows.OPEN_EXISTING, windows.SECURITY_SQOS_PRESENT|windows.SECURITY_IMPERSONATION, 0)
+	handle, err := openNamedPipeWithRetry(ctx, path, pipeOpenTimeout, createPipeFile, waitNamedPipe)
 	if err != nil {
 		return Response{}, fmt.Errorf("%w: open named pipe: %w", ErrBrokerUnavailable, err)
 	}
@@ -59,6 +66,43 @@ func (client PipeClient) Call(ctx context.Context, request Request) (Response, e
 		return response, fmt.Errorf("broker request failed")
 	}
 	return response, nil
+}
+
+type pipeOpenFunc func(*uint16) (windows.Handle, error)
+type pipeWaitFunc func(*uint16, uint32) error
+
+func createPipeFile(path *uint16) (windows.Handle, error) {
+	return windows.CreateFile(path, windows.GENERIC_READ|windows.GENERIC_WRITE, 0, nil, windows.OPEN_EXISTING, windows.SECURITY_SQOS_PRESENT|windows.SECURITY_IMPERSONATION, 0)
+}
+
+func openNamedPipeWithRetry(ctx context.Context, path *uint16, maxWait time.Duration, open pipeOpenFunc, wait pipeWaitFunc) (windows.Handle, error) {
+	deadline := time.Now().Add(maxWait)
+	if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
+		deadline = contextDeadline
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		default:
+		}
+		handle, err := open(path)
+		if err == nil {
+			return handle, nil
+		}
+		if !errors.Is(err, windows.ERROR_PIPE_BUSY) {
+			return 0, err
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return 0, windows.ERROR_SEM_TIMEOUT
+		}
+		waitFor := min(remaining, pipeWaitSlice)
+		waitMilliseconds := uint32((waitFor + time.Millisecond - 1) / time.Millisecond)
+		if err := wait(path, waitMilliseconds); err != nil && !errors.Is(err, windows.ERROR_SEM_TIMEOUT) {
+			return 0, err
+		}
+	}
 }
 
 type PipeServer struct {
@@ -143,7 +187,20 @@ func pipeSDDL(userSID string) string {
 var (
 	advapi32                       = windows.NewLazySystemDLL("advapi32.dll")
 	procImpersonateNamedPipeClient = advapi32.NewProc("ImpersonateNamedPipeClient")
+	kernel32                       = windows.NewLazySystemDLL("kernel32.dll")
+	procWaitNamedPipeW             = kernel32.NewProc("WaitNamedPipeW")
 )
+
+func waitNamedPipe(path *uint16, timeoutMilliseconds uint32) error {
+	success, _, callErr := procWaitNamedPipeW.Call(uintptr(unsafe.Pointer(path)), uintptr(timeoutMilliseconds))
+	if success != 0 {
+		return nil
+	}
+	if callErr != nil && !errors.Is(callErr, syscall.Errno(0)) {
+		return callErr
+	}
+	return windows.ERROR_SEM_TIMEOUT
+}
 
 func authenticatedPipeCallerSID(pipe windows.Handle) (string, error) {
 	runtime.LockOSThread()
