@@ -22,6 +22,8 @@ type fakeNative struct {
 	acquireGate chan struct{}
 	verifyErr   error
 	attachErr   error
+	bootSession string
+	livePIDs    map[int]bool
 }
 
 func (native *fakeNative) event(value string) {
@@ -31,7 +33,15 @@ func (native *fakeNative) event(value string) {
 }
 func (*fakeNative) Platform() string                { return "fake-windows" }
 func (*fakeNative) Available(context.Context) error { return nil }
-func (*fakeNative) ProcessAlive(int) bool           { return false }
+func (native *fakeNative) BootSessionID() string {
+	if native.bootSession == "" {
+		return "boot-1"
+	}
+	return native.bootSession
+}
+func (native *fakeNative) ProcessAlive(pid int) bool {
+	return native.livePIDs != nil && native.livePIDs[pid]
+}
 func (native *fakeNative) VerifyParent(context.Context, ParentMetadata) error {
 	return native.verifyErr
 }
@@ -388,6 +398,109 @@ func TestBrokerRestartRecoversOnlyExpiredEphemeralChild(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(workspaces, "orphan-run")); !os.IsNotExist(err) {
 		t.Fatalf("workspace residual err=%v", err)
+	}
+}
+
+func TestLeaseJournalRecordsBootSessionIdentity(t *testing.T) {
+	native := &fakeNative{bootSession: "boot-recorded"}
+	broker, key, workspaces := testBroker(t, native)
+	commitTestParent(t, broker, key, workspaces)
+	if err := os.Mkdir(filepath.Join(workspaces, "boot-recorded-run"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	acquire := request(OperationAcquire, "acquire-boot-recorded")
+	acquire.ParentKey = &key
+	acquire.RunID = "boot-recorded-run"
+	acquire.WorkspaceID = "boot-recorded-run"
+	ready := broker.Handle(context.Background(), "S-1-5-21-test", acquire)
+	if !ready.OK {
+		t.Fatalf("acquire=%+v", ready)
+	}
+	journal, err := broker.store.ReadLease(ready.Lease.LeaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if journal.BootSessionID != "boot-recorded" {
+		t.Fatalf("bootSessionId=%q", journal.BootSessionID)
+	}
+	status := broker.Handle(context.Background(), "S-1-5-21-test", request(OperationStatus, "status-boot-recorded"))
+	if !status.OK || status.Status == nil || status.Status.BootSessionID != "boot-recorded" {
+		t.Fatalf("status=%+v", status)
+	}
+}
+
+func TestRecoverPreservesLiveLeaseWithinSameBoot(t *testing.T) {
+	native := &fakeNative{bootSession: "boot-same", livePIDs: map[int]bool{12345: true}}
+	broker, key, workspaces := testBroker(t, native)
+	commitTestParent(t, broker, key, workspaces)
+	workspace := filepath.Join(workspaces, "same-boot-run")
+	if err := os.Mkdir(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	acquire := request(OperationAcquire, "acquire-same-boot")
+	acquire.ParentKey = &key
+	acquire.RunID = "same-boot-run"
+	acquire.WorkspaceID = "same-boot-run"
+	acquire.ClientPID = 12345
+	ready := broker.Handle(context.Background(), "S-1-5-21-test", acquire)
+	if !ready.OK {
+		t.Fatalf("acquire=%+v", ready)
+	}
+	restarted, err := NewBroker(broker.config, native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted.now = func() time.Time { return time.Now().Add(time.Minute) }
+	summary, err := restarted.Recover(context.Background(), 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Preserved != 1 || summary.Released != 0 {
+		t.Fatalf("summary=%+v", summary)
+	}
+	if _, err := restarted.store.ReadLease(ready.Lease.LeaseID); err != nil {
+		t.Fatalf("live lease was not preserved: %v", err)
+	}
+}
+
+func TestRecoverIgnoresReusedPIDsAndGraceAfterBootChange(t *testing.T) {
+	native := &fakeNative{bootSession: "boot-before", livePIDs: map[int]bool{12345: true}}
+	broker, key, workspaces := testBroker(t, native)
+	commitTestParent(t, broker, key, workspaces)
+	workspace := filepath.Join(workspaces, "reboot-orphan-run")
+	if err := os.Mkdir(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	acquire := request(OperationAcquire, "acquire-reboot-orphan")
+	acquire.ParentKey = &key
+	acquire.RunID = "reboot-orphan-run"
+	acquire.WorkspaceID = "reboot-orphan-run"
+	acquire.ClientPID = 12345
+	ready := broker.Handle(context.Background(), "S-1-5-21-test", acquire)
+	if !ready.OK {
+		t.Fatalf("acquire=%+v", ready)
+	}
+
+	// Simulate a reboot that immediately reuses the original PID. Recovery
+	// must use the boot-session identity and must not preserve the orphan due
+	// to either PID liveness or the normal 30-second grace period.
+	native.bootSession = "boot-after"
+	restarted, err := NewBroker(broker.config, native)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, err := restarted.Recover(context.Background(), 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Released != 1 || summary.Preserved != 0 || summary.Quarantined != 0 {
+		t.Fatalf("summary=%+v", summary)
+	}
+	if _, err := restarted.store.ReadLease(ready.Lease.LeaseID); !os.IsNotExist(err) {
+		t.Fatalf("reboot orphan journal residual: %v", err)
+	}
+	if _, err := os.Lstat(workspace); !os.IsNotExist(err) {
+		t.Fatalf("reboot orphan workspace residual: %v", err)
 	}
 }
 

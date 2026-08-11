@@ -106,6 +106,7 @@ type Client interface {
 
 type Status struct {
 	Provider                    string   `json:"provider"`
+	BootSessionID               string   `json:"bootSessionId,omitempty"`
 	UserSID                     string   `json:"userSid"`
 	ParentCount                 int      `json:"parentCount"`
 	ActiveChildCount            int      `json:"activeChildCount"`

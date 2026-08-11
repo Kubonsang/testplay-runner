@@ -55,6 +55,7 @@ func (b *Broker) Recover(ctx context.Context, grace time.Duration) (RecoverySumm
 	if grace <= 0 {
 		grace = 30 * time.Second
 	}
+	currentBootSessionID := b.native.BootSessionID()
 	preservedPending, quarantinedPending, pendingErr := b.store.RecoverPending(b.now(), grace, b.native.ProcessAlive)
 	if pendingErr != nil {
 		return summary, pendingErr
@@ -66,7 +67,8 @@ func (b *Broker) Recover(ctx context.Context, grace time.Duration) (RecoverySumm
 			summary.Preserved++
 			continue
 		}
-		if b.native.ProcessAlive(journal.ClientPID) || b.native.ProcessAlive(journal.UnityPID) || journal.UpdatedAt.After(b.now().Add(-grace)) {
+		sameOrUnknownBoot := journal.BootSessionID == "" || currentBootSessionID == "" || journal.BootSessionID == currentBootSessionID
+		if sameOrUnknownBoot && (b.native.ProcessAlive(journal.ClientPID) || b.native.ProcessAlive(journal.UnityPID) || journal.UpdatedAt.After(b.now().Add(-grace))) {
 			summary.Preserved++
 			continue
 		}
@@ -496,7 +498,7 @@ func (b *Broker) acquire(ctx context.Context, request Request, fail failureBuild
 	}
 	child, _ := b.store.paths.Child(leaseID)
 	token, _ := randomID("owner")
-	journal := LeaseJournal{LeaseID: leaseID, RunID: request.RunID, UserSID: b.config.UserSID, OwnershipToken: token, ParentKey: request.ParentKey.Digest, ParentPath: resolved.Metadata.VHDXPath, ChildPath: child, WorkspaceID: request.WorkspaceID, WorkspacePath: workspace, MountPath: mount, State: "requested", ClientPID: request.ClientPID, CreatedAt: b.now().UTC(), UpdatedAt: b.now().UTC()}
+	journal := LeaseJournal{LeaseID: leaseID, RunID: request.RunID, UserSID: b.config.UserSID, OwnershipToken: token, ParentKey: request.ParentKey.Digest, ParentPath: resolved.Metadata.VHDXPath, ChildPath: child, WorkspaceID: request.WorkspaceID, WorkspacePath: workspace, MountPath: mount, State: "requested", BootSessionID: b.native.BootSessionID(), ClientPID: request.ClientPID, CreatedAt: b.now().UTC(), UpdatedAt: b.now().UTC()}
 	if err := b.store.WriteLease(journal); err != nil {
 		return fail("journal-write-failed", "create-lease", child, err)
 	}
@@ -552,6 +554,9 @@ func (b *Broker) heartbeat(request Request, fail failureBuilder) Response {
 		return fail("lease-not-ready", "heartbeat", request.LeaseID, ErrOwnershipMismatch)
 	}
 	journal.ClientPID = request.ClientPID
+	if journal.BootSessionID == "" {
+		journal.BootSessionID = b.native.BootSessionID()
+	}
 	if request.UnityPID != 0 {
 		journal.UnityPID = request.UnityPID
 	}
@@ -634,6 +639,7 @@ func (b *Broker) status(request Request, fail failureBuilder) Response {
 	if err != nil {
 		return fail("status-failed", "measure-store", b.config.StoreRoot, err)
 	}
+	status.BootSessionID = b.native.BootSessionID()
 	active := map[string]bool{}
 	b.mu.Lock()
 	for _, child := range b.children {

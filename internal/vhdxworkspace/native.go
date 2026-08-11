@@ -34,6 +34,7 @@ type Native interface {
 	VerifyParent(context.Context, ParentMetadata) error
 	AcquireChild(context.Context, ParentMetadata, LeaseJournal, func(string, string, string) error) (ChildSession, Metrics, error)
 	AttachChild(context.Context, ParentMetadata, LeaseJournal) (ChildSession, Metrics, error)
+	BootSessionID() string
 	ProcessAlive(int) bool
 	HostFreeBytes(string) (int64, error)
 }

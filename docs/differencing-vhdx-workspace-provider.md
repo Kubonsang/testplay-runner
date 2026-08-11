@@ -377,6 +377,38 @@ now performs the parameterless process wait and refreshes the snapshot before
 capturing that field; this reporting correction does not change the native
 recovery result.
 
+The Windows reboot gate uses a separate two-phase harness:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\run-vhdx-diff-reboot-recovery.ps1 `
+  -Phase Prepare `
+  -UnityEditorPath 'C:\Program Files\Unity\Hub\Editor\6000.3.8f1\Editor\Unity.exe' `
+  -InstallApproved `
+  -RebootApproved
+```
+
+`Prepare` builds/reuses one fixture parent, waits for one exact ephemeral child
+and Unity process to reach the ready journal state, durably records their paths,
+tokens, hashes, service identity, and boot-session identity, then returns
+`REBOOT_REQUIRED`. It does not invoke the reboot and does not delete the active
+lease. After the user reboots, the exact `VHDX_DIFF_REBOOT_VERIFY_COMMAND`
+printed by the prepare phase validates that Windows and broker boot identities
+changed, waits for service-start recovery, requires the exact journal, child,
+workspace, disk, and mount to disappear, checks storage status, and only then
+runs the normal ownership-safe uninstall.
+
+Lease journals record the Windows System process creation FILETIME as
+`bootSessionId`. A broker restart during the same boot still honors live PIDs
+and the client-loss grace. After a measured boot-session change, recovery does
+not allow a coincidentally reused PID or a recent journal timestamp to preserve
+the prior-boot orphan. If Windows cannot measure this identity, the field stays
+empty and recovery conservatively retains the legacy PID/grace behavior.
+
+The reboot harness and identity logic are implemented and statically tested;
+this paragraph is a procedure contract, not native PASS evidence. The gate
+remains **NOT MEASURED** until both phases complete around a real reboot.
+
 GNF forced-termination, Windows reboot recovery, GNF eight-worker, quota/LRU,
 and production/release readiness gates remain **NOT MEASURED**. `auto`
 promotion therefore remains blocked.

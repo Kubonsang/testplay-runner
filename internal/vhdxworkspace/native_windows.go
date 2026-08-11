@@ -20,10 +20,33 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-type windowsNative struct{ backend vhdxstorage.Backend }
+type windowsNative struct {
+	backend       vhdxstorage.Backend
+	bootSessionID string
+}
 
-func NewNative() Native                { return windowsNative{backend: vhdxstorage.NewBackend()} }
-func (windowsNative) Platform() string { return "windows" }
+func NewNative() Native {
+	return windowsNative{backend: vhdxstorage.NewBackend(), bootSessionID: windowsBootSessionID()}
+}
+func (windowsNative) Platform() string             { return "windows" }
+func (native windowsNative) BootSessionID() string { return native.bootSessionID }
+
+func windowsBootSessionID() string {
+	// The System process is created once for each Windows boot. Its creation
+	// FILETIME remains stable across broker restarts but changes after reboot,
+	// unlike a PID which Windows can reuse for an unrelated process.
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, 4)
+	if err == nil {
+		defer windows.CloseHandle(handle)
+		var creation, exit, kernel, user windows.Filetime
+		if err := windows.GetProcessTimes(handle, &creation, &exit, &kernel, &user); err == nil {
+			return fmt.Sprintf("system-process-%08x%08x", creation.HighDateTime, creation.LowDateTime)
+		}
+	}
+	// An empty identity retains the conservative legacy PID/grace behavior; it
+	// never claims that a reboot was measured when Windows denied the query.
+	return ""
+}
 func (windowsNative) ProcessAlive(pid int) bool {
 	if pid <= 0 {
 		return false

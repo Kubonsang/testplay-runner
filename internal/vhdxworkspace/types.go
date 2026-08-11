@@ -128,6 +128,7 @@ type LeaseJournal struct {
 	WorkspacePath  string       `json:"workspacePath,omitempty"`
 	MountPath      string       `json:"mountPath"`
 	State          string       `json:"state"`
+	BootSessionID  string       `json:"bootSessionId,omitempty"`
 	ClientPID      int          `json:"clientPid"`
 	UnityPID       int          `json:"unityPid,omitempty"`
 	Retained       bool         `json:"retained"`
