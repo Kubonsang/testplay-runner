@@ -215,9 +215,22 @@ The fresh fixture two-worker rerun at commit `c2574b1` passed as
 - the committed parent SHA-256 matched metadata, the fixture source remained
   unchanged, and uninstall left zero new disks, drive letters, or processes.
 
-Fixture four-worker, GNF two/four-worker, forced-termination, broker-restart,
-reboot-recovery, quota/LRU, and production/release readiness gates remain
-**NOT MEASURED**.
+The fixture four-worker gate at commit `692a012` then passed as
+`UNITY_VHDX_DIFF_FOUR_WORKERS_COMPATIBLE`:
+
+- artifact SHA-256:
+  `0424CA627AD0E1017B9DD58A8A5D915FC6E81D184D7EE3F1333376776B500AF0`;
+- all four selected Library write/read tests passed and all four Unity process
+  intervals shared a 6,730 ms common interval;
+- one 100 MiB allocated immutable parent was shared by four distinct child
+  mounts, physical disks, volume GUIDs, PIDs, and run IDs;
+- every child measured 37,748,736 allocated bytes at ready and peak and zero
+  after release, with no fallback and `cleanupState: released`;
+- parent hash/metadata, fixture source isolation, storage uninstall, and outer
+  disk/drive-letter/process residual checks all passed.
+
+GNF two/four-worker, forced-termination, broker-restart, reboot-recovery,
+quota/LRU, and production/release readiness gates remain **NOT MEASURED**.
 
 ## Win32 references
 
