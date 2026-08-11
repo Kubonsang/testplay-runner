@@ -20,6 +20,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'vhdx-diff-gnf-evidence.ps1')
 
 $ExpectedGNFRevision = '19a17074f6366038cd5b17c01e0a904f0d585470'
 $ExpectedPackageRevision = '149896faeb3b5165a3af4739342c637ed66d94b6'
@@ -135,13 +136,6 @@ function Get-RelatedProcesses {
     return @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^(Unity|testplay|testplay-vhdx)' } | Select-Object Id, ProcessName, StartTime)
 }
 
-function Get-OptionalMetric {
-    param([object]$Metrics, [string]$Name)
-    $Property = $Metrics.PSObject.Properties[$Name]
-    if ($null -eq $Property) { return $null }
-    return $Property.Value
-}
-
 function Assert-RunResult {
     param([object]$Result, [string]$ExpectedTest, [bool]$ParentCreated, [bool]$ParentReused)
     if ($Result.exit_code -ne 0 -or $Result.total -ne 1 -or $Result.passed -ne 1 -or $Result.failed -ne 0 -or $Result.skipped -ne 0) { throw "Selected test did not pass: $ExpectedTest" }
@@ -152,12 +146,12 @@ function Assert-RunResult {
     if ($Metrics.localPackageOverrideCount -ne 1 -or [string]::IsNullOrWhiteSpace($Metrics.localPackagesDigest)) { throw "Local package override evidence is missing: $ExpectedTest" }
     if ($ParentCreated -and -not $Metrics.parentCreated) { throw 'First run did not create a parent.' }
     if ($ParentReused -and -not $Metrics.parentReused) { throw 'Second run did not reuse the parent.' }
-    $ReadyMeasured = Get-OptionalMetric -Metrics $Metrics -Name 'childReadyAllocatedMeasured'
-    $PeakMeasured = Get-OptionalMetric -Metrics $Metrics -Name 'childPeakAllocatedMeasured'
-    $ReleasedMeasured = Get-OptionalMetric -Metrics $Metrics -Name 'childReleasedAllocatedMeasured'
-    $ReadyBytes = Get-OptionalMetric -Metrics $Metrics -Name 'childReadyAllocatedBytes'
-    $PeakBytes = Get-OptionalMetric -Metrics $Metrics -Name 'childPeakAllocatedBytes'
-    $ReleasedBytes = Get-OptionalMetric -Metrics $Metrics -Name 'childReleasedAllocatedBytes'
+    $ReadyMeasured = Get-VHDXDiffOptionalMetric -Metrics $Metrics -Name 'childReadyAllocatedMeasured'
+    $PeakMeasured = Get-VHDXDiffOptionalMetric -Metrics $Metrics -Name 'childPeakAllocatedMeasured'
+    $ReleasedMeasured = Get-VHDXDiffOptionalMetric -Metrics $Metrics -Name 'childReleasedAllocatedMeasured'
+    $ReadyBytes = Get-VHDXDiffOptionalMetric -Metrics $Metrics -Name 'childReadyAllocatedBytes'
+    $PeakBytes = Get-VHDXDiffOptionalMetric -Metrics $Metrics -Name 'childPeakAllocatedBytes'
+    $ReleasedBytes = Get-VHDXDiffOptionalMetric -Metrics $Metrics -Name 'childReleasedAllocatedBytes'
     if ($ReadyMeasured -ne $true -or $PeakMeasured -ne $true -or $ReleasedMeasured -ne $true) { throw "Child allocation evidence is not fully measured: $ExpectedTest" }
     if ($null -eq $ReadyBytes) { $ReadyBytes = 0 }
     if ($null -eq $PeakBytes) { $PeakBytes = 0 }
@@ -321,7 +315,7 @@ try {
     $Status = Invoke-NativeCapture -LiteralPath $ExecutablePath -ArgumentList @('storage', 'status', '--json') -OutputPath (Join-Path $ArtifactRoot 'storage-status.json') -WorkingDirectory $ArtifactRoot
     if ($Status.ExitCode -ne 0) { throw "storage status failed: exit=$($Status.ExitCode)" }
     $StatusJSON = Read-NativeJson -LiteralPath (Join-Path $ArtifactRoot 'storage-status.json')
-    if (@($StatusJSON.parents).Count -ne 1 -or @($StatusJSON.active).Count -ne 0 -or @($StatusJSON.retained).Count -ne 0 -or @($StatusJSON.quarantine).Count -ne 0) { throw 'Store residual before uninstall is not exactly one reusable parent.' }
+    Assert-VHDXDiffStorageStatus -Status $StatusJSON
 
     $SourceAfterRuns = Get-SourceEvidence -Root $GNFProjectPath
     Assert-SourceEqual -Before $SourceBefore -After $SourceAfterRuns
