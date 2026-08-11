@@ -292,7 +292,7 @@ $Summary = [ordered]@{
     preDriveLetters = @($PreLetters); postDriveLetters = @($PostLetters); newDriveLetters = @($NewLetters)
     preProcesses = @($PreProcesses); postProcesses = @($PostProcesses); newProcesses = @($NewProcesses)
     failure = $Failure
-    notMeasured = @('GNF four/eight workers', 'forced termination recovery', 'broker restart recovery', 'Windows reboot recovery', 'quota/LRU native behavior', 'performance superiority', 'production readiness', 'release readiness')
+    notMeasured = @(Get-VHDXDiffGNFParallelNotMeasured -WorkerCount $WorkerCount)
 }
 Write-JsonFile -LiteralPath $SummaryPath -Value $Summary
 Compress-Archive -Path (Join-Path $ArtifactRoot '*') -DestinationPath $ZipPath -Force
@@ -302,4 +302,3 @@ Write-Output "VHDX_DIFF_GNF_PARALLEL_VERDICT=$($Summary.verdict)"
 Write-Output "VHDX_DIFF_GNF_PARALLEL_ARTIFACT_ZIP=$ZipPath"
 Write-Output "VHDX_DIFF_GNF_PARALLEL_ARTIFACT_SHA256=$ZipHash"
 if (-not $Passed) { exit 1 }
-

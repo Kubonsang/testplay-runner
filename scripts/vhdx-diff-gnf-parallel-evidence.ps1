@@ -1,5 +1,25 @@
 Set-StrictMode -Version Latest
 
+function Get-VHDXDiffGNFParallelNotMeasured {
+    param([ValidateSet(2, 4)] [int]$WorkerCount)
+
+    $Scale = if ($WorkerCount -eq 2) {
+        @('GNF four workers', 'GNF eight workers')
+    }
+    else {
+        @('GNF eight workers')
+    }
+    return @(@($Scale) + @(
+        'forced termination recovery',
+        'broker restart recovery',
+        'Windows reboot recovery',
+        'quota/LRU native behavior',
+        'performance superiority',
+        'production readiness',
+        'release readiness'
+    ))
+}
+
 function Assert-VHDXDiffGNFParallelScenario {
     param(
         [object]$Result,
@@ -91,4 +111,3 @@ function Assert-VHDXDiffGNFParallelScenario {
         volumeGUIDs = @($VolumeGUIDs)
     }
 }
-

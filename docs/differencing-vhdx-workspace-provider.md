@@ -278,8 +278,38 @@ The fresh GNF two-worker rerun at commit `070b234` passed as
   pending, or quarantined child, and uninstall left zero new disks, drive
   letters, processes, service, receipt, store, or workspace root.
 
-GNF four-worker, forced-termination, broker-restart, reboot-recovery, quota/LRU,
-and production/release readiness gates remain **NOT MEASURED**.
+The GNF four-worker gate at commit `e2a3d7d` then passed as
+`GNF_VHDX_DIFF_FOUR_WORKERS_COMPATIBLE`:
+
+- artifact SHA-256:
+  `E60F2D9CD9FE5124BDFDA461864D07DC1F5B2E7122844AB1BBC4A246C7873A57`;
+- all four EditMode workers passed with a 41,162 ms common process interval,
+  and all four PlayMode workers passed with a 58,722 ms common interval;
+- all eight worker results matched the pinned NTFS reference semantic digest,
+  shared one immutable parent key, used distinct child mount/disk/volume
+  identities within each phase, reported no fallback, and released cleanly;
+- each child measured 37,748,736 bytes at ready. Observed child peaks were
+  205,520,896–641,728,512 bytes and every released allocation was measured;
+- the read-only parent was 4,875,878,400 bytes. Parent plus simultaneous child
+  peaks were approximately 6.43 GiB for EditMode and 6.84 GiB for PlayMode,
+  below the 10 GiB promotion storage ceiling;
+- provider create+attach+mount time was at most 364 ms per child. Warm full
+  workspace preparation, including the physical project shell, measured
+  14.794–15.122 seconds per worker, so this evidence does not claim the
+  separate 10-second full-worker-ready objective;
+- source evidence and committed parent integrity were unchanged. Storage
+  status had no active, retained, pending, or quarantined child, and uninstall
+  left zero service, receipt, store, workspace, disk, drive-letter, or process
+  residual.
+
+The raw four-worker artifact inherited a harness reporting bug that listed
+“GNF four/eight workers” under `notMeasured` even though its four-worker
+instances and verdict passed. The follow-up makes that field count-aware;
+the raw worker, parity, overlap, storage, and residual evidence is unaffected.
+
+GNF eight-worker, forced-termination, broker-restart, reboot-recovery,
+quota/LRU, and production/release readiness gates remain **NOT MEASURED**.
+`auto` promotion therefore remains blocked.
 
 ## Win32 references
 

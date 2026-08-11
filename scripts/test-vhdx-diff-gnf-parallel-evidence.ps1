@@ -27,6 +27,15 @@ $Result = [pscustomobject]@{ exit_code = 0; instances = @(
 $Evidence = Assert-VHDXDiffGNFParallelScenario -Result $Result -WorkerCount 2 -ExpectedTest 'GNF.Test' -ExpectedParentCreatedCount 1
 if ($Evidence.commonIntervalMs -ne 8000 -or $Evidence.parentCreatedCount -ne 1) { throw 'GNF parallel evidence is incorrect.' }
 
+$TwoNotMeasured = @(Get-VHDXDiffGNFParallelNotMeasured -WorkerCount 2)
+if ($TwoNotMeasured -notcontains 'GNF four workers' -or $TwoNotMeasured -notcontains 'GNF eight workers') {
+    throw 'Two-worker NOT MEASURED scale evidence is incorrect.'
+}
+$FourNotMeasured = @(Get-VHDXDiffGNFParallelNotMeasured -WorkerCount 4)
+if ($FourNotMeasured -contains 'GNF four workers' -or $FourNotMeasured -notcontains 'GNF eight workers') {
+    throw 'Four-worker NOT MEASURED scale evidence is incorrect.'
+}
+
 $NoOverlap = [pscustomobject]@{ exit_code = 0; instances = @(
     (New-GNFWorker 1 $true '2026-08-11T00:00:00Z' '2026-08-11T00:00:01Z'),
     (New-GNFWorker 2 $false '2026-08-11T00:00:02Z' '2026-08-11T00:00:03Z')
@@ -38,4 +47,3 @@ try {
 catch { if ($_.Exception.Message -eq 'Non-overlapping GNF workers were accepted.') { throw } }
 
 Write-Output 'VHDX_DIFF_GNF_PARALLEL_EVIDENCE_TEST=PASS'
-
