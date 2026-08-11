@@ -136,6 +136,7 @@ $CleanupState = 'preserved'
 $PreState = $null
 $PostRecoveryStatus = $null
 $FinalJournal = $null
+$RecoveryShape = $null
 
 Start-Transcript -Path (Join-Path $ArtifactRoot 'terminal-transcript.txt') -Force | Out-Null
 try {
@@ -148,7 +149,7 @@ try {
     if (-not (Test-SamePath $BrokerProcess.ExecutablePath $Receipt.executable)) { throw 'Running broker executable does not match the receipt.' }
     if (@(Get-RelatedWorkloadProcesses).Count -ne 0) { throw 'A related Unity or harness workload process is still running.' }
     if (@(Get-FileBackedDisks).Count -ne 0) { throw 'A file-backed disk is attached before recovery.' }
-    foreach ($Path in @($LeasePath, $ChildPath, $WorkspacePath, $MountPath, $MarkerPath)) {
+    foreach ($Path in @($LeasePath, $WorkspacePath, $MountPath, $MarkerPath)) {
         if (-not (Test-Path -LiteralPath $Path)) { throw "Expected retained path is missing: $Path" }
     }
     $Journal = [IO.File]::ReadAllText($LeasePath) | ConvertFrom-Json
@@ -161,9 +162,19 @@ try {
     }
     if ($Journal.state -ne 'quarantined' -or $Journal.retained) { throw "Unexpected retained journal state: $($Journal.state)" }
     $MountItem = Get-Item -LiteralPath $MountPath -Force
-    $Images = @(Get-DiskImage -ImagePath $ChildPath -ErrorAction Stop)
-    if ($Images.Count -ne 1 -or $Images[0].Attached -or ($MountItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) { throw 'Retained stale mount is not detached or is not a reparse point.' }
-    if (@($MountItem.Target).Count -ne 1 -or ([string]$MountItem.Target[0]).IndexOf(([string]$Journal.volumeGuid).TrimStart('\?').TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase) -lt 0) { throw 'Retained stale mount target does not match the journal volume GUID.' }
+    $Images = @()
+    if (Test-Path -LiteralPath $ChildPath -PathType Leaf) {
+        $RecoveryShape = 'DETACHED_CHILD_WITH_STALE_MOUNT'
+        $Images = @(Get-DiskImage -ImagePath $ChildPath -ErrorAction Stop)
+        if ($Images.Count -ne 1 -or $Images[0].Attached -or ($MountItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0) { throw 'Retained stale mount is not detached or is not a reparse point.' }
+        if (@($MountItem.Target).Count -ne 1 -or ([string]$MountItem.Target[0]).IndexOf(([string]$Journal.volumeGuid).TrimStart('\?').TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase) -lt 0) { throw 'Retained stale mount target does not match the journal volume GUID.' }
+    }
+    else {
+        $RecoveryShape = 'PARTIAL_RELEASE_CHILD_ABSENT_EMPTY_MOUNT'
+        if (($MountItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or -not $MountItem.PSIsContainer) { throw 'Partial-release mount is not a real directory.' }
+        if (@(Get-ChildItem -LiteralPath $MountPath -Force).Count -ne 0) { throw 'Partial-release mount directory is not empty.' }
+        if ([string]$Journal.recoveryError -notlike '*Library mount path already exists*') { throw 'Child absence is not explained by the recorded partial-release recovery error.' }
+    }
     Assert-NoUnexpectedWorkspaceEntry -WorkspacePath $WorkspacePath -MountPath $MountPath
 
     Copy-Item -LiteralPath $LeasePath -Destination (Join-Path $ArtifactRoot 'retained-lease-before-upgrade.json')
@@ -177,10 +188,11 @@ try {
         marker = $Marker
         journalSha256 = (Get-FileHash $LeasePath -Algorithm SHA256).Hash
         markerSha256 = (Get-FileHash $MarkerPath -Algorithm SHA256).Hash
-        childSha256 = (Get-FileHash $ChildPath -Algorithm SHA256).Hash
+        recoveryShape = $RecoveryShape
+        childSha256 = if (Test-Path -LiteralPath $ChildPath -PathType Leaf) { (Get-FileHash $ChildPath -Algorithm SHA256).Hash } else { $null }
         mountAttributes = [string]$MountItem.Attributes
         mountTarget = @($MountItem.Target)
-        childAttached = [bool]$Images[0].Attached
+        childAttached = if ($Images.Count -eq 1) { [bool]$Images[0].Attached } else { $false }
         fileBackedDisks = @(Get-FileBackedDisks)
         relatedWorkloadProcesses = @(Get-RelatedWorkloadProcesses)
     }
@@ -247,6 +259,7 @@ $Summary = [ordered]@{
     storeRoot = $StoreRoot
     workspaceRoot = $WorkspaceRoot
     leaseId = [string]$CrashJournal.leaseId
+    recoveryShape = $RecoveryShape
     preState = $PreState
     upgradeSucceeded = $UpgradeSucceeded
     recoveryVerified = $RecoveryVerified
