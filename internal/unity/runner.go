@@ -2,6 +2,7 @@ package unity
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -68,6 +69,13 @@ func (r *ProcessRunner) Run(ctx context.Context, args []string, stdout, stderr i
 		// The Runner contract requires surfacing ctx.Err() instead.
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return -1, ctxErr
+		}
+		// exec.ErrWaitDelay means the direct process exited successfully, but a
+		// descendant kept an inherited stdout/stderr pipe open until Go's bounded
+		// WaitDelay closed it. Unity's result XML is written by the direct process;
+		// the executor still parses and validates that file before declaring PASS.
+		if errors.Is(err, exec.ErrWaitDelay) {
+			return 0, nil
 		}
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return exitErr.ExitCode(), nil
