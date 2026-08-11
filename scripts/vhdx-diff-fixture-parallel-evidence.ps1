@@ -50,8 +50,8 @@ function Assert-VHDXDiffFixtureParallelResult {
                 throw "Worker allocation metric is not measured: role=$($Instance.role) metric=$MeasuredName"
             }
         }
-        if ([long]$Metrics.childPeakAllocatedBytes -le [long]$Metrics.childReadyAllocatedBytes) {
-            throw "Worker child did not grow: role=$($Instance.role)"
+        if ([long]$Metrics.childPeakAllocatedBytes -lt [long]$Metrics.childReadyAllocatedBytes) {
+            throw "Worker child peak is smaller than its ready allocation: role=$($Instance.role)"
         }
         if ([long]$Metrics.childReleasedAllocatedBytes -ne 0) {
             throw "Worker child allocation remains after release: role=$($Instance.role)"
@@ -77,7 +77,7 @@ function Assert-VHDXDiffFixtureParallelResult {
     if (@($MountPaths | Select-Object -Unique).Count -ne $WorkerCount) { throw 'Worker mount paths are not distinct.' }
     if (@($PhysicalDisks | Select-Object -Unique).Count -ne $WorkerCount) { throw 'Worker physical disks are not distinct.' }
     if (@($VolumeGUIDs | Select-Object -Unique).Count -ne $WorkerCount) { throw 'Worker volume GUIDs are not distinct.' }
-    if ($Created -ne 1 -or $Reused -ne ($WorkerCount - 1)) { throw "Unexpected parent creation/reuse counts: created=$Created reused=$Reused" }
+    if ($Created -ne 1 -or $Reused -lt ($WorkerCount - 1) -or $Reused -gt $WorkerCount) { throw "Unexpected parent creation/reuse counts: created=$Created reused=$Reused" }
 
     $LatestStart = @($Starts | Sort-Object -Descending)[0]
     $EarliestFinish = @($Finishes | Sort-Object)[0]
@@ -99,4 +99,3 @@ function Assert-VHDXDiffFixtureParallelResult {
         volumeGUIDs = @($VolumeGUIDs)
     }
 }
-

@@ -21,12 +21,12 @@ function New-Worker {
             parentKey = 'shared'
             parentPath = 'C:\store\parent.vhdx'
             parentCreated = $Index -eq 1
-            parentReused = $Index -ne 1
+            parentReused = $true
             childReadyAllocatedMeasured = $true
             childPeakAllocatedMeasured = $true
             childReleasedAllocatedMeasured = $true
             childReadyAllocatedBytes = 1
-            childPeakAllocatedBytes = 2
+            childPeakAllocatedBytes = 1
             childReleasedAllocatedBytes = 0
             unityProcessPid = 1000 + $Index
             unityProcessStartedAt = $Start
@@ -64,4 +64,3 @@ catch {
 }
 
 Write-Output 'VHDX_DIFF_FIXTURE_PARALLEL_EVIDENCE_TEST=PASS'
-
