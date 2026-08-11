@@ -321,7 +321,12 @@ try {
     })
 
     if (-not $StartedClient.WaitForExit(90000)) { throw 'Crash client did not exit after broker loss and restart.' }
-    $CrashClientExitCode = $StartedClient.ExitCode
+    # WaitForExit(timeout) only waits for the process handle. Complete the
+    # redirected-stream drain and refresh the Process snapshot before reading
+    # ExitCode, otherwise Windows PowerShell can serialize this field as null.
+    $StartedClient.WaitForExit()
+    $StartedClient.Refresh()
+    $CrashClientExitCode = [int]$StartedClient.ExitCode
     if (-not (Wait-ProcessAbsent ([int]$CrashJournal.unityPid) 30)) { throw 'Harness-owned Unity process remained after client cancellation.' }
 
     $RecoveryDeadline = (Get-Date).AddMinutes(3)

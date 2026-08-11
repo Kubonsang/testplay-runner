@@ -324,10 +324,62 @@ The fixture client/Unity forced-termination gate at commit `4786fd9` passed as
 - normal uninstall then removed the service, receipt, store, workspace root,
   file-backed disk, drive-letter, and process residuals to measured zero.
 
-This is fixture evidence for simultaneous CLI/Unity termination. GNF
-forced-termination, broker-process termination/restart, Windows reboot
-recovery, GNF eight-worker, quota/LRU, and production/release readiness gates
-remain **NOT MEASURED**. `auto` promotion therefore remains blocked.
+This is fixture evidence for simultaneous CLI/Unity termination.
+
+The first fixture broker-process termination/restart run failed safely at
+commit `ebbf739` and preserved the exact owned residual:
+
+- artifact SHA-256:
+  `92C8238263ADFD94A2696FA1DF232EE25C3F2AF9E84EEA8AEDC953EBFD2F0FCE`;
+- terminating the broker closed its VirtDisk handle and detached the exact
+  child, but the workspace `Library` directory-volume mount reparse point
+  remained. The restarted broker could not attach over that stale mount;
+- no unknown disk was attached and cleanup was correctly classified as
+  `preserved` rather than deleting an identity it had not revalidated.
+
+Recovery development preserved two further exact failures. Artifact
+`24C60A0694AEB281103A5FB5F1F24850315C4D299383477A4520FDF986C681E9`
+showed that Go's directory classification was insufficient for a Windows
+volume-mount reparse point. Artifact
+`788E0417EFE31BC86E76338970298BA8BC536DFA72DE657EE1A1A1894702E154`
+then proved stale-mount removal and child release worked, but left the now
+empty ordinary `Library` directory and therefore stopped before deleting the
+workspace journal or owner marker.
+
+The follow-up recovery is deliberately exact and ownership-gated: it verifies
+the journal's child, mount target, volume GUID, workspace marker, and detached
+disk state; removes only the verified stale mount/empty mount directory; then
+reattaches and releases the same child. The retained residual was recovered as
+`VHDX_DIFF_BROKER_RESTART_RESIDUAL_RECOVERED`:
+
+- artifact SHA-256:
+  `E2C64B69372A2641B83207F8912EC39E0A9785EED4458AA3ADEBDFBEAFEF9003`;
+- child, journal, owner marker, workspace, service, receipt, store, attached
+  disk, drive letter, and harness-owned process residuals were measured zero.
+
+A fresh end-to-end run at commit `a082aa9` then passed as
+`VHDX_DIFF_FIXTURE_BROKER_RESTART_RECOVERY_PASS`:
+
+- artifact SHA-256:
+  `0FBE83BCD4EA2C4B546714D1D75595DFE9753125206563456091661280A70B02`;
+- broker PID 29092 was terminated and the service restarted as PID 14824;
+- the child was detached while the exact stale mount still targeted
+  `Volume{f3be417f-5382-4348-a20e-b1f860f39f48}`;
+- the restarted broker reconciled the exact lease and normal uninstall left
+  active, retained, pending, quarantined, disk, drive-letter, service, store,
+  workspace, and process residuals at measured zero.
+
+The raw PASS summary serialized `crashClientExitCode` as null because Windows
+PowerShell read the asynchronous `Process` snapshot before redirected streams
+were fully drained. `crash-client-stdout.txt` independently records the
+expected testplay exit code 2 and exact ownership-mismatch warning. The harness
+now performs the parameterless process wait and refreshes the snapshot before
+capturing that field; this reporting correction does not change the native
+recovery result.
+
+GNF forced-termination, Windows reboot recovery, GNF eight-worker, quota/LRU,
+and production/release readiness gates remain **NOT MEASURED**. `auto`
+promotion therefore remains blocked.
 
 ## Win32 references
 
