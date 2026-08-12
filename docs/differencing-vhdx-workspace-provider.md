@@ -430,9 +430,8 @@ The two phases completed around a real Windows reboot at commit `f9b4e33` as
   letter, Unity/testplay process, pending, retained, and quarantine residuals
   were independently measured zero.
 
-GNF forced-termination, GNF eight-worker, quota/LRU, and production/release
-readiness gates remain **NOT MEASURED**. `auto` promotion therefore remains
-blocked.
+GNF forced-termination, GNF eight-worker, and production/release readiness
+gates remain **NOT MEASURED**. `auto` promotion therefore remains blocked.
 
 The quota/LRU implementation is fail-closed before its native gate. GC now
 builds the protected parent set from broker memory plus every valid lease,
@@ -460,8 +459,42 @@ stopped for an exact config update, requires GC/admission refusal without
 fallback, reattaches and validates retained data, removes that exact retained
 workspace, builds a newer second parent, verifies dry-run reclaimable bytes and
 oldest-first deletion, then removes the final parent and uninstalls with outer
-residual zero. This is a procedure contract, not PASS evidence, until the
-elevated native run completes.
+residual zero.
+
+The first elevated attempt at commit `4dc197b` preserved its exact retained
+child and parent before exercising quota pressure:
+
+- artifact SHA-256:
+  `B74115DFE4DE6135523D6EF7E7F6290BC02C080855AD946C569AF6127ABA158A`;
+- Windows PowerShell 5.1 rejected the harness's null backup pathname in
+  `File.Replace`, so the broker config remained unchanged and no GC ran;
+- exact retained removal subsequently succeeded, and the existing
+  interrupted-uninstall recovery removed the broker-only residual with
+  artifact SHA-256
+  `C5FB1CE65ED8ECA5CEDE9618872587119ACA0CA703303582AC226F1309F3857C`.
+
+After replacing the config through a unique durable backup pathname, a fresh
+run at commit `4d6c19e` passed as `VHDX_DIFF_QUOTA_LRU_RETAINED_PASS`:
+
+- artifact ZIP:
+  `C:\Users\user\AppData\Local\Temp\testplay-vhdx-diff-quota-lru-retained-20260812-191247-534.zip`;
+- artifact SHA-256:
+  `F0483D48CFDC69C3C1E702872DA88FEEC8E93E7B14B17C13F4B4AE058AD18D10`;
+- the detached retained child occupied 38,797,312 bytes and protected its
+  104,857,600-byte parent: quota-one dry-run reported zero reclaimable bytes,
+  real GC was refused, and a new workspace admission failed explicitly with
+  `storage-capacity-unavailable` without fallback;
+- reattach recovered the exact retained marker and exact workspace removal
+  left no active, retained, pending, or quarantine object;
+- two expired parents occupied 209,715,200 bytes and were both reported
+  reclaimable. With quota 209,715,199 bytes, GC removed only the older parent;
+  with quota one byte, it removed the final parent;
+- final broker status measured zero allocated bytes and zero parent, active,
+  retained, pending, and quarantine counts with
+  `manualRecoveryRequired: false`;
+- normal uninstall completed with `cleanupState: released`; new file-backed
+  disk, drive-letter, and related-process arrays were empty and outer residual
+  was measured zero.
 
 ## Win32 references
 
