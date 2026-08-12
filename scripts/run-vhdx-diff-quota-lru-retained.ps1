@@ -29,6 +29,7 @@ function Write-JsonReplaceDurable {
     param([string]$LiteralPath, [object]$Value)
     $Directory = Split-Path -Parent $LiteralPath
     $TempPath = Join-Path $Directory ('.quota-config-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+    $BackupPath = Join-Path $Directory ('.quota-config-backup-' + [Guid]::NewGuid().ToString('N') + '.tmp')
     $Json = ($Value | ConvertTo-Json -Depth 24) + [Environment]::NewLine
     $Bytes = [Text.UTF8Encoding]::new($false).GetBytes($Json)
     $Stream = [IO.FileStream]::new($TempPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
@@ -38,15 +39,20 @@ function Write-JsonReplaceDurable {
     }
     finally { $Stream.Dispose() }
     try {
-        [IO.File]::Replace($TempPath, $LiteralPath, $null, $true)
+        # Windows PowerShell 5.1's .NET Framework rejects a null backup path
+        # for this overload even though newer runtimes accept it. Keep the
+        # previous config in an exclusive, harness-owned path until the
+        # replacement has been read back successfully.
+        [IO.File]::Replace($TempPath, $LiteralPath, $BackupPath, $true)
     }
     finally {
         if (Test-Path -LiteralPath $TempPath) { Remove-Item -LiteralPath $TempPath -Force }
     }
     $ReadBack = [IO.File]::ReadAllBytes($LiteralPath)
     if ([Convert]::ToBase64String($Bytes) -ne [Convert]::ToBase64String($ReadBack)) {
-        throw "Config read-back mismatch: $LiteralPath"
+        throw "Config read-back mismatch: $LiteralPath (previous config preserved at $BackupPath)"
     }
+    Remove-Item -LiteralPath $BackupPath -Force
 }
 
 function Invoke-NativeCapture {
