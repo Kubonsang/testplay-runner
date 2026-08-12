@@ -347,8 +347,30 @@ terminates those two PIDs. PASS additionally requires orphan reconciliation,
 zero protected-child status, an unchanged full parent hash, unchanged GNF and
 portable-package trees, normal uninstall, and zero outer residual. If exact
 identity or recovery cannot be proven, the harness preserves the pool and does
-not generalize recovery to unrelated processes or files. This remains a
-procedure contract until its elevated native run completes.
+not generalize recovery to unrelated processes or files.
+
+The elevated run at commit `81a10c3` passed as
+`GNF_VHDX_DIFF_FORCED_TERMINATION_RECOVERY_PASS`:
+
+- artifact ZIP:
+  `C:\Users\user\AppData\Local\Temp\testplay-vhdx-diff-gnf-forced-termination-20260812-193848-053.zip`;
+- artifact SHA-256:
+  `462FE9C0AF747A81BD9E86F5921E36F7ED461A2CA79AB7FF8F5F56E009FE0FEB`;
+- the frozen GNF EditMode warm-up passed and committed one immutable
+  4,869,586,944-byte parent;
+- after verifying the exact ready lease, workspace owner, child, parent,
+  executable paths, ownership token, and process identities, the harness
+  terminated only client PID 31716 and its Unity PID 43664;
+- the broker removed the exact orphan lease, child, mount, and workspace.
+  Recovered status retained the one parent while active, retained, pending,
+  and quarantine counts were zero with `manualRecoveryRequired: false`;
+- the parent's full SHA-256
+  `0ea6db988d03028664c1ee9636288d14855cadd055f3887e2acccf939a3a6c1e`,
+  length, and write time were unchanged. The pinned GNF source and portable
+  connector revisions and content digests were also unchanged;
+- normal uninstall completed with `cleanupState: released`; service, receipt,
+  store, workspace root, file-backed disk, drive-letter, and related-process
+  residuals were independently measured zero.
 
 This is fixture evidence for simultaneous CLI/Unity termination.
 
@@ -456,8 +478,12 @@ The two phases completed around a real Windows reboot at commit `f9b4e33` as
   letter, Unity/testplay process, pending, retained, and quarantine residuals
   were independently measured zero.
 
-GNF forced-termination, GNF eight-worker, and production/release readiness
-gates remain **NOT MEASURED**. `auto` promotion therefore remains blocked.
+GNF eight-worker, long-running child growth, performance superiority, and
+production/release readiness remain **NOT MEASURED**. `auto` promotion also
+remains blocked because the GNF four-worker evidence measured 14.794–15.122
+seconds of full workspace preparation per worker, above the separate
+10-second per-worker ready objective, even though provider-only
+create+attach+mount stayed below 364 ms.
 
 The quota/LRU implementation is fail-closed before its native gate. GC now
 builds the protected parent set from broker memory plus every valid lease,
