@@ -343,10 +343,17 @@ jobs:
           if (-not $helperProcess.Start()) {
             throw 'Windows helper process did not start.'
           }
-          $helperProcess.StandardInput.WriteLine(
-            '{"schemaVersion":1,"operation":"hello","requestId":"release-smoke"}'
+          # Windows PowerShell 5.1 may add a UTF-8 BOM through its native
+          # pipeline or StreamWriter. Write the exact UTF-8 request bytes to
+          # the redirected pipe so the strict JSON protocol sees no preamble.
+          $helperRequestBytes = [Text.Encoding]::UTF8.GetBytes(
+            '{"schemaVersion":1,"operation":"hello","requestId":"release-smoke"}' +
+              [Environment]::NewLine
           )
-          $helperProcess.StandardInput.Close()
+          $helperInput = $helperProcess.StandardInput.BaseStream
+          $helperInput.Write($helperRequestBytes, 0, $helperRequestBytes.Length)
+          $helperInput.Flush()
+          $helperInput.Close()
           $helloText = $helperProcess.StandardOutput.ReadToEnd().Trim()
           $helperError = $helperProcess.StandardError.ReadToEnd().Trim()
           $helperProcess.WaitForExit()
