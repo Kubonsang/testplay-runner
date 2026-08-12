@@ -330,6 +330,10 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             throw 'Windows candidate accepted an invalid workspace backend.'
           }
+          # The nonzero exit above is the expected assertion result. Clear the
+          # native-command status so Windows PowerShell 5.1 does not report the
+          # otherwise successful workflow step as failed at script shutdown.
+          $global:LASTEXITCODE = 0
 
           # Windows PowerShell 5.1 may add a UTF-8 BOM through its native
           # pipeline or StreamWriter. Redirect a BOM-free ASCII file at the OS
