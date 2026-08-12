@@ -26,7 +26,7 @@ var (
 
 var storageCmd = &cobra.Command{Use: "storage", Short: "Manage the privileged VHDX workspace broker"}
 
-var storageInstallCmd = &cobra.Command{Use: "install", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+var storageInstallCmd = &cobra.Command{Use: "install", Short: "Install the Windows VHDX broker for the current user", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 	result, err := platformInstallStorage(storageRoot)
 	if err != nil {
 		return err
@@ -35,7 +35,7 @@ var storageInstallCmd = &cobra.Command{Use: "install", Args: cobra.NoArgs, RunE:
 	return nil
 }}
 
-var storageStatusCmd = &cobra.Command{Use: "status", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+var storageStatusCmd = &cobra.Command{Use: "status", Short: "Report broker capacity and protected workspace state", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 	response, err := callStorageBroker(cmd.Context(), vhdxworkspace.OperationStatus, false, "", "")
 	if err != nil {
 		return err
@@ -44,7 +44,7 @@ var storageStatusCmd = &cobra.Command{Use: "status", Args: cobra.NoArgs, RunE: f
 	return nil
 }}
 
-var storageGCCmd = &cobra.Command{Use: "gc", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+var storageGCCmd = &cobra.Command{Use: "gc", Short: "Collect expired unprotected parent VHDXs", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 	response, err := callStorageBroker(cmd.Context(), vhdxworkspace.OperationGC, storageDryRun, "", "")
 	if err != nil {
 		return err
@@ -53,7 +53,7 @@ var storageGCCmd = &cobra.Command{Use: "gc", Args: cobra.NoArgs, RunE: func(cmd 
 	return nil
 }}
 
-var storageUpgradeCmd = &cobra.Command{Use: "upgrade", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+var storageUpgradeCmd = &cobra.Command{Use: "upgrade", Short: "Upgrade the installed broker executable", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 	result, err := platformUpgradeStorage()
 	if err != nil {
 		return err
@@ -62,7 +62,7 @@ var storageUpgradeCmd = &cobra.Command{Use: "upgrade", Args: cobra.NoArgs, RunE:
 	return nil
 }}
 
-var storageUninstallCmd = &cobra.Command{Use: "uninstall", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+var storageUninstallCmd = &cobra.Command{Use: "uninstall", Short: "Uninstall the broker with ownership-safe data handling", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 	result, err := platformUninstallStorage(storagePreserveData)
 	if err != nil {
 		return err
@@ -113,7 +113,7 @@ var brokerProbeCmd = &cobra.Command{Use: "broker-probe", Hidden: true, Args: cob
 
 var workspaceCmd = &cobra.Command{Use: "workspace", Short: "Manage retained VHDX workspaces"}
 
-var workspaceAttachCmd = &cobra.Command{Use: "attach <run-id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+var workspaceAttachCmd = &cobra.Command{Use: "attach <run-id>", Short: "Attach an exact retained VHDX workspace", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 	response, err := callStorageBroker(cmd.Context(), vhdxworkspace.OperationAttachRetained, false, args[0], args[0])
 	if err != nil {
 		return err
@@ -122,7 +122,7 @@ var workspaceAttachCmd = &cobra.Command{Use: "attach <run-id>", Args: cobra.Exac
 	return nil
 }}
 
-var workspaceRemoveCmd = &cobra.Command{Use: "remove <run-id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+var workspaceRemoveCmd = &cobra.Command{Use: "remove <run-id>", Short: "Remove an exact retained VHDX workspace", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 	response, err := callStorageBroker(cmd.Context(), vhdxworkspace.OperationRemoveRetained, false, args[0], "")
 	if err != nil {
 		return err

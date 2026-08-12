@@ -495,7 +495,7 @@ Each run gets its own isolated shadow directory, making parallel `testplay run` 
 - `--clear-cache` — remove `.testplay/cache/` before shadow workspace creation, forcing Unity to reimport from scratch
 - `--workspace-backend=legacy|image|vhdx-diff|auto` — select the existing backends or the opt-in Windows differencing-VHDX provider
 - `--workspace-store-root=<absolute-path>` — select the installed broker store (it must exactly match the registered root for `vhdx-diff`)
-- `--keep-workspace` — keep the per-run Shadow directory for debugging
+- `--keep-workspace` — retain the prepared workspace for explicit later attach/remove
 
 The Image backend is experimental and never selected by default. An explicit
 `image` failure is reported; it does not silently fall back to Legacy. See the
@@ -503,7 +503,7 @@ The Image backend is experimental and never selected by default. An explicit
 [benchmark](docs/benchmarks/library-image-baseline.md). Current benchmark
 verdict: `PROMISING`.
 
-### Differencing VHDX workspace provider (experimental)
+### Differencing VHDX workspace provider (native-tested opt-in)
 
 On Windows 11, `vhdx-diff` keeps one immutable NTFS parent VHDX per
 compatibility key and gives each run a private writable differencing child
@@ -524,11 +524,18 @@ afterward. `--keep-workspace` detaches but retains the exact child; use
 to manage it. The default allocated-byte quota is 32 GiB, the host-free floor
 is 20 GiB, and each newly admitted child reserves 2 GiB.
 
-This provider remains explicit opt-in. Fixture and GNF 1/2/4-worker gates,
-fixture CLI/Unity forced-termination recovery, and fixture broker-restart
-recovery, plus fixture Windows-reboot recovery, have passed; GNF
-forced-termination and quota/LRU native gates remain. The Managed ReFS pool and
-its evidence remain available as a separate
+This provider is feature-complete at checkpoint `beabf36` as an explicit
+experimental opt-in. Fixture and GNF 1/2/4-worker gates, fixture and GNF
+CLI/Unity forced-termination recovery, fixture broker-restart and Windows
+reboot recovery, and quota/LRU plus retained-workspace lifecycle gates passed
+on native Windows. The existing direct-batch/legacy-shadow selection remains
+unchanged; neither `vhdx-diff` nor `auto` is selected unless the user asks for
+it. The measured
+GNF four-worker full workspace preparation was 14.794–15.122 seconds per
+worker, so the separate 10-second objective, GNF eight workers, generalized
+performance superiority, and production/release readiness remain unclaimed.
+
+The Managed ReFS pool and its evidence remain available as a separate
 experimental/legacy backend; no ReFS, Dev Drive, partition, Defender, or
 registry setting is changed here. See
 [the provider contract](docs/differencing-vhdx-workspace-provider.md).

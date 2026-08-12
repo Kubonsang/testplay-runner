@@ -573,6 +573,6 @@ func init() {
 	runCmd.Flags().BoolVar(&noBridge, "no-bridge", false, "Never select the warm-editor bridge; force the cold shadow/process path")
 	runCmd.Flags().StringVar(&workspaceBackend, "workspace-backend", "", "Workspace backend: legacy, image, vhdx-diff, or auto")
 	runCmd.Flags().StringVar(&workspaceStoreRoot, "workspace-store-root", "", "Absolute root for persistent workspace cache/image data (experimental)")
-	runCmd.Flags().BoolVar(&keepWorkspace, "keep-workspace", false, "Keep the prepared shadow workspace for debugging")
+	runCmd.Flags().BoolVar(&keepWorkspace, "keep-workspace", false, "Retain the prepared workspace for explicit later attach/remove")
 	runCmd.Flags().StringVar(&scenarioPath, "scenario", "", "Path to scenario JSON file for multi-instance execution")
 }

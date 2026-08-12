@@ -1,8 +1,34 @@
 # Differencing VHDX workspace provider
 
-Status: **experimental, explicit opt-in**. Static and fake-broker validation do
-not make this the default backend. Native promotion requires the gates listed
-below.
+Status: **native-tested, feature-complete experimental opt-in** at checkpoint
+`beabf36a299572607232806807ad9b9c2d4cb222`. The provider logic is frozen at
+that checkpoint. It is not the production default and does not claim
+production or release readiness.
+
+## Frozen acceptance decision
+
+The implemented product slice is complete without further performance tuning:
+
+| Contract | Frozen result |
+|---|---|
+| Explicit `vhdx-diff` | Available; never falls back |
+| Explicit `auto` | Pre-start broker/admission fallback only |
+| Default selection | Existing direct-batch/legacy-shadow behavior unchanged |
+| Fixture workers 1/2/4 | Native PASS |
+| GNF workers 1/2/4 | Native PASS |
+| CLI/Unity forced termination | Fixture and GNF native PASS |
+| Broker restart and Windows reboot recovery | Native PASS |
+| Quota/LRU and retained workspace | Native PASS |
+| GNF four-worker full preparation | 14.794–15.122 seconds per worker |
+| 10-second ready objective | Not met; not required for explicit opt-in |
+| GNF eight workers and long-duration growth | NOT MEASURED |
+| Performance superiority | NOT CLAIMED |
+| Production/release readiness | NOT CLAIMED |
+
+This decision preserves physical `Assets`, `Packages`, and `ProjectSettings`
+isolation, one immutable parent per compatibility key, one private child per
+run, strict identity-gated cleanup, and the tested recovery behavior. It does
+not relax a correctness or cleanup gate to manufacture a performance verdict.
 
 ## User and agent workflow
 
@@ -99,7 +125,7 @@ expired ephemeral leases are reconciled. Live or retained leases are preserved.
 Identity/attach uncertainty and stale partial parent VHDX files are quarantined
 with manual recovery required; unknown paths are not deleted.
 
-## Native promotion gates
+## Native acceptance and default-promotion boundary
 
 The first destructive/native boundary has a guarded administrator harness. It
 requires an explicit install acknowledgement, refuses an existing broker or
@@ -121,12 +147,15 @@ mismatch, unknown attachment, or cleanup uncertainty:
 4. CLI/Unity termination, broker termination, and reboot recovery;
 5. quota/LRU and retained attach/remove.
 
-Promotion additionally requires GNF 4-worker semantic parity and isolation,
+Native correctness acceptance additionally requires GNF 4-worker semantic parity and isolation,
 one parent plus one child per worker, child batch ready within 30 seconds,
-per-worker ready within 10 seconds, peak allocated storage at most 10 GiB, and
-zero disk/mount/process/ephemeral-child residual. Eight workers, long-running
-child growth, performance superiority, production readiness, and release
-readiness remain **NOT MEASURED**.
+peak allocated storage at most 10 GiB, and zero
+disk/mount/process/ephemeral-child residual. Those correctness, isolation,
+storage, and cleanup gates passed. The separate per-worker ready-within-10-
+seconds objective did not pass, so automatic default promotion is explicitly
+out of scope for this frozen opt-in. Eight workers, long-running child growth,
+performance superiority, production readiness, and release readiness remain
+**NOT MEASURED**.
 
 ### Native evidence history
 
@@ -372,7 +401,7 @@ The elevated run at commit `81a10c3` passed as
   store, workspace root, file-backed disk, drive-letter, and related-process
   residuals were independently measured zero.
 
-This is fixture evidence for simultaneous CLI/Unity termination.
+This is GNF evidence for simultaneous CLI/Unity termination.
 
 The first fixture broker-process termination/restart run failed safely at
 commit `ebbf739` and preserved the exact owned residual:
