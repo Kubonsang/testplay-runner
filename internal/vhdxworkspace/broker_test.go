@@ -702,6 +702,109 @@ func TestLRUDeletesOnlyExpiredInactiveParent(t *testing.T) {
 	}
 }
 
+func TestLRUPreservesExpiredParentReferencedByRetainedChild(t *testing.T) {
+	native := &fakeNative{}
+	broker, key, workspaces := testBroker(t, native)
+	commitTestParent(t, broker, key, workspaces)
+	workspace := filepath.Join(workspaces, "retained-lru")
+	if err := os.Mkdir(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	acquire := request(OperationAcquire, "acquire-retained-lru")
+	acquire.ParentKey = &key
+	acquire.RunID = "retained-lru"
+	acquire.WorkspaceID = "retained-lru"
+	ready := broker.Handle(context.Background(), "S-1-5-21-test", acquire)
+	if !ready.OK {
+		t.Fatalf("acquire=%+v", ready)
+	}
+	release := request(OperationRelease, "release-retained-lru")
+	release.LeaseID = ready.Lease.LeaseID
+	release.RetainChild = true
+	if response := broker.Handle(context.Background(), "S-1-5-21-test", release); !response.OK {
+		t.Fatalf("retain=%+v", response)
+	}
+	resolved, err := broker.store.ResolveParent(key)
+	if err != nil || resolved.Metadata == nil {
+		t.Fatalf("resolve=%+v err=%v", resolved, err)
+	}
+	broker.now = func() time.Time { return resolved.Metadata.LastUsedAt.Add(31 * 24 * time.Hour) }
+	broker.config.QuotaBytes = 1
+	broker.config.ChildReserveBytes = 1
+	blocked := broker.Handle(context.Background(), "S-1-5-21-test", request(OperationAdmit, "admit-retained-lru"))
+	if blocked.OK || blocked.Error == nil || blocked.Error.Code != "storage-capacity-unavailable" {
+		t.Fatalf("retained parent was admitted/deleted: %+v", blocked)
+	}
+	resolved, err = broker.store.ResolveParent(key)
+	if err != nil || resolved.Status != ParentStatusValid {
+		t.Fatalf("retained parent lost: %+v %v", resolved, err)
+	}
+	remove := request(OperationRemoveRetained, "remove-retained-lru")
+	remove.RunID = "retained-lru"
+	if response := broker.Handle(context.Background(), "S-1-5-21-test", remove); !response.OK {
+		t.Fatalf("remove retained=%+v", response)
+	}
+	if response := broker.Handle(context.Background(), "S-1-5-21-test", request(OperationAdmit, "admit-after-retained-remove")); !response.OK {
+		t.Fatalf("expired unreferenced parent GC failed: %+v", response)
+	}
+	resolved, err = broker.store.ResolveParent(key)
+	if err != nil || resolved.Status != ParentStatusMissing {
+		t.Fatalf("expired parent status=%+v err=%v", resolved, err)
+	}
+}
+
+func TestLRURefusesAmbiguousManagedNamespaces(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		add  func(*testing.T, *Broker)
+	}{
+		{
+			name: "corrupt-lease",
+			add: func(t *testing.T, broker *Broker) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(broker.store.paths.Leases, "corrupt.json"), []byte("not-json"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "unknown-quarantine",
+			add: func(t *testing.T, broker *Broker) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(broker.store.paths.Quarantine, "unknown.bin"), []byte("unknown"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			native := &fakeNative{}
+			broker, key, workspaces := testBroker(t, native)
+			commitTestParent(t, broker, key, workspaces)
+			resolved, err := broker.store.ResolveParent(key)
+			if err != nil || resolved.Metadata == nil {
+				t.Fatalf("resolve=%+v err=%v", resolved, err)
+			}
+			broker.now = func() time.Time { return resolved.Metadata.LastUsedAt.Add(31 * 24 * time.Hour) }
+			broker.config.QuotaBytes = 1
+			broker.config.ChildReserveBytes = 1
+			test.add(t, broker)
+			response := broker.Handle(context.Background(), "S-1-5-21-test", request(OperationAdmit, "admit-ambiguous"))
+			if response.OK || response.Error == nil || response.Error.Code != "storage-capacity-unavailable" {
+				t.Fatalf("ambiguous namespace was admitted: %+v", response)
+			}
+			resolved, err = broker.store.ResolveParent(key)
+			if err != nil || resolved.Status != ParentStatusValid {
+				t.Fatalf("parent removed despite ambiguity: %+v %v", resolved, err)
+			}
+			status := broker.Handle(context.Background(), "S-1-5-21-test", request(OperationStatus, "status-ambiguous"))
+			if !status.OK || status.Status == nil || !status.Status.GCBlocked || !status.Status.ManualRecoveryRequired || status.Status.Capacity.ReclaimableBytes != 0 {
+				t.Fatalf("ambiguous status=%+v", status)
+			}
+		})
+	}
+}
+
 func TestChangedImmutableParentIsRejectedBeforeChildCreation(t *testing.T) {
 	native := &fakeNative{}
 	broker, key, workspaces := testBroker(t, native)

@@ -326,6 +326,70 @@ func (s *Store) ListLeases() ([]LeaseJournal, error) {
 	return result, nil
 }
 
+// ProtectedParentKeys returns every parent referenced by broker-owned state
+// that GC must not remove. Namespace ambiguity is an error: skipping a corrupt
+// journal or unknown quarantine entry could otherwise turn incomplete recovery
+// evidence into an apparently unused parent.
+func (s *Store) ProtectedParentKeys() (map[string]bool, error) {
+	protected := map[string]bool{}
+
+	leaseEntries, err := os.ReadDir(s.paths.Leases)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	for _, entry := range leaseEntries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".json") {
+			return nil, fmt.Errorf("%w: unknown lease artifact %s", ErrOwnershipMismatch, entry.Name())
+		}
+		leaseID := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+		journal, readErr := s.ReadLease(leaseID)
+		if readErr != nil || !digestPattern.MatchString(journal.ParentKey) {
+			return nil, errors.Join(readErr, fmt.Errorf("%w: invalid lease parent reference %s", ErrOwnershipMismatch, entry.Name()))
+		}
+		protected[journal.ParentKey] = true
+	}
+
+	pendingEntries, err := os.ReadDir(s.paths.Pending)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	for _, entry := range pendingEntries {
+		if !entry.IsDir() || !digestPattern.MatchString(entry.Name()) {
+			return nil, fmt.Errorf("%w: unknown pending artifact %s", ErrOwnershipMismatch, entry.Name())
+		}
+		pending, readErr := s.ReadPending(entry.Name())
+		if readErr != nil {
+			return nil, errors.Join(readErr, fmt.Errorf("%w: invalid pending parent reference %s", ErrOwnershipMismatch, entry.Name()))
+		}
+		protected[pending.Key.Digest] = true
+	}
+
+	retainedEntries, err := os.ReadDir(s.paths.Retained)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	for _, entry := range retainedEntries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".json") {
+			return nil, fmt.Errorf("%w: unknown retained artifact %s", ErrOwnershipMismatch, entry.Name())
+		}
+		runID := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+		record, readErr := s.ReadRetained(runID)
+		if readErr != nil || !digestPattern.MatchString(record.ParentKey) {
+			return nil, errors.Join(readErr, fmt.Errorf("%w: invalid retained parent reference %s", ErrOwnershipMismatch, entry.Name()))
+		}
+		protected[record.ParentKey] = true
+	}
+
+	quarantineEntries, err := os.ReadDir(s.paths.Quarantine)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	if len(quarantineEntries) != 0 {
+		return nil, fmt.Errorf("%w: quarantine is non-empty", ErrOwnershipMismatch)
+	}
+	return protected, nil
+}
+
 func (s *Store) RemoveLease(journal LeaseJournal) error {
 	actual, err := s.ReadLease(journal.LeaseID)
 	if err != nil {

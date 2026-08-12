@@ -107,6 +107,7 @@ type Client interface {
 type Status struct {
 	Provider                    string   `json:"provider"`
 	BootSessionID               string   `json:"bootSessionId,omitempty"`
+	ParentTTLSeconds            int64    `json:"parentTTLSeconds"`
 	UserSID                     string   `json:"userSid"`
 	ParentCount                 int      `json:"parentCount"`
 	ActiveChildCount            int      `json:"activeChildCount"`
@@ -122,5 +123,7 @@ type Status struct {
 	QuarantineAllocatedBytes    int64    `json:"quarantineAllocatedBytes"`
 	QuarantineLogicalBytes      int64    `json:"quarantineLogicalBytes"`
 	ManualRecoveryRequired      bool     `json:"manualRecoveryRequired"`
+	GCBlocked                   bool     `json:"gcBlocked"`
+	GCBlockReason               string   `json:"gcBlockReason,omitempty"`
 	Capacity                    Capacity `json:"capacity"`
 }

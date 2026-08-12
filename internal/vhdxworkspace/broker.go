@@ -640,12 +640,23 @@ func (b *Broker) status(request Request, fail failureBuilder) Response {
 		return fail("status-failed", "measure-store", b.config.StoreRoot, err)
 	}
 	status.BootSessionID = b.native.BootSessionID()
+	status.ParentTTLSeconds = int64(b.config.ParentTTL / time.Second)
 	active := map[string]bool{}
 	b.mu.Lock()
 	for _, child := range b.children {
 		active[child.Info().ParentKey] = true
 	}
 	b.mu.Unlock()
+	protected, protectErr := b.store.ProtectedParentKeys()
+	if protectErr != nil {
+		status.GCBlocked = true
+		status.GCBlockReason = protectErr.Error()
+		status.ManualRecoveryRequired = true
+		return Response{SchemaVersion: ProtocolSchemaVersion, RequestID: request.RequestID, OK: true, Provider: Provider, Status: &status}
+	}
+	for key := range protected {
+		active[key] = true
+	}
 	if parents, listErr := b.store.ListParents(); listErr == nil {
 		for _, parent := range parents {
 			if !active[parent.CompatibilityKey.Digest] && !parent.LastUsedAt.After(b.now().Add(-b.config.ParentTTL)) {
@@ -696,6 +707,13 @@ func (b *Broker) ensureCapacityWithLimits(workers int, dryRun bool, requestedQuo
 		active[child.Info().ParentKey] = true
 	}
 	b.mu.Unlock()
+	protected, err := b.store.ProtectedParentKeys()
+	if err != nil {
+		return capacity, err
+	}
+	for key := range protected {
+		active[key] = true
+	}
 	parents, err := b.store.ListParents()
 	if err != nil {
 		return capacity, err

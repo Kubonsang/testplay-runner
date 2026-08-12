@@ -434,6 +434,35 @@ GNF forced-termination, GNF eight-worker, quota/LRU, and production/release
 readiness gates remain **NOT MEASURED**. `auto` promotion therefore remains
 blocked.
 
+The quota/LRU implementation is fail-closed before its native gate. GC now
+builds the protected parent set from broker memory plus every valid lease,
+retained record, and pending transaction. A corrupt/unknown lease, retained,
+pending, or quarantine entry blocks GC, sets `gcBlocked` and
+`manualRecoveryRequired` in status, and reports no reclaimable parent. In
+particular, a detached retained child protects its immutable parent just as an
+attached child does.
+
+Service config schema 1 accepts an optional `parentTTLSeconds`; omission keeps
+the 30-day product default. This exists so a uniquely owned native test store
+can exercise expiry without changing the production default or waiting 30
+days. The bounded native harness is:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\run-vhdx-diff-quota-lru-retained.ps1 `
+  -UnityEditorPath 'C:\Program Files\Unity\Hub\Editor\6000.3.8f1\Editor\Unity.exe' `
+  -InstallApproved `
+  -QuotaMutationApproved
+```
+
+It retains a real fixture child, applies quota pressure while the service is
+stopped for an exact config update, requires GC/admission refusal without
+fallback, reattaches and validates retained data, removes that exact retained
+workspace, builds a newer second parent, verifies dry-run reclaimable bytes and
+oldest-first deletion, then removes the final parent and uninstalls with outer
+residual zero. This is a procedure contract, not PASS evidence, until the
+elevated native run completes.
+
 ## Win32 references
 
 - [Named Pipe Security and Access Rights](https://learn.microsoft.com/windows/win32/ipc/named-pipe-security-and-access-rights)

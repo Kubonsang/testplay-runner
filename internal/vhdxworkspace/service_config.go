@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 const ServiceConfigSchemaVersion = 1
@@ -18,6 +19,7 @@ type ServiceConfig struct {
 	QuotaBytes        int64  `json:"quotaBytes"`
 	HostFloorBytes    int64  `json:"hostFloorBytes"`
 	ChildReserveBytes int64  `json:"childReserveBytes"`
+	ParentTTLSeconds  int64  `json:"parentTTLSeconds,omitempty"`
 	PipeName          string `json:"pipeName"`
 }
 
@@ -25,7 +27,7 @@ func (config ServiceConfig) Validate() error {
 	if config.SchemaVersion != ServiceConfigSchemaVersion || !filepath.IsAbs(config.StoreRoot) || !filepath.IsAbs(config.WorkspaceRoot) || config.UserSID == "" {
 		return ErrInvalidInput
 	}
-	if config.QuotaBytes <= 0 || config.HostFloorBytes < 0 || config.ChildReserveBytes <= 0 {
+	if config.QuotaBytes <= 0 || config.HostFloorBytes < 0 || config.ChildReserveBytes <= 0 || config.ParentTTLSeconds < 0 {
 		return ErrInvalidInput
 	}
 	return nil
@@ -56,5 +58,5 @@ func SaveServiceConfig(path string, config ServiceConfig) error {
 }
 
 func (config ServiceConfig) BrokerConfig() BrokerConfig {
-	return BrokerConfig{StoreRoot: config.StoreRoot, WorkspaceRoot: config.WorkspaceRoot, UserSID: config.UserSID, QuotaBytes: config.QuotaBytes, HostFloorBytes: config.HostFloorBytes, ChildReserveBytes: config.ChildReserveBytes}
+	return BrokerConfig{StoreRoot: config.StoreRoot, WorkspaceRoot: config.WorkspaceRoot, UserSID: config.UserSID, QuotaBytes: config.QuotaBytes, HostFloorBytes: config.HostFloorBytes, ChildReserveBytes: config.ChildReserveBytes, ParentTTL: time.Duration(config.ParentTTLSeconds) * time.Second}
 }
