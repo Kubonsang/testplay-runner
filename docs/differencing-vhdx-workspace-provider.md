@@ -324,6 +324,32 @@ The fixture client/Unity forced-termination gate at commit `4786fd9` passed as
 - normal uninstall then removed the service, receipt, store, workspace root,
   file-backed disk, drive-letter, and process residuals to measured zero.
 
+The GNF forced-termination gate uses the same broker recovery contract against
+the pinned large project and portable connector:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\run-vhdx-diff-gnf-forced-termination.ps1 `
+  -UnityEditorPath 'C:\Program Files\Unity\Hub\Editor\6000.3.8f1\Editor\Unity.exe' `
+  -GNFProjectPath 'C:\tmp\GNF_-main-19a17074f636' `
+  -LocalPackagePath 'C:\tmp\gnf-unity-cli-upstream\unity-connector' `
+  -ReferenceArtifactZip '<pinned NTFS reference ZIP>' `
+  -ReferenceArtifactSHA256 '<pinned SHA-256>' `
+  -InstallApproved `
+  -TerminationApproved
+```
+
+It first completes the frozen GNF EditMode test and commits one verified
+immutable parent. The crash run must then expose exactly one broker-authored
+ready lease whose client executable, Unity executable, child, parent, mount,
+workspace marker, ownership token, and PIDs all match before the harness
+terminates those two PIDs. PASS additionally requires orphan reconciliation,
+zero protected-child status, an unchanged full parent hash, unchanged GNF and
+portable-package trees, normal uninstall, and zero outer residual. If exact
+identity or recovery cannot be proven, the harness preserves the pool and does
+not generalize recovery to unrelated processes or files. This remains a
+procedure contract until its elevated native run completes.
+
 This is fixture evidence for simultaneous CLI/Unity termination.
 
 The first fixture broker-process termination/restart run failed safely at
