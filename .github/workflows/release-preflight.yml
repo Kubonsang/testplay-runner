@@ -331,32 +331,23 @@ jobs:
             throw 'Windows candidate accepted an invalid workspace backend.'
           }
 
-          $helperStart = [Diagnostics.ProcessStartInfo]::new()
-          $helperStart.FileName = $helper
-          $helperStart.UseShellExecute = $false
-          $helperStart.CreateNoWindow = $true
-          $helperStart.RedirectStandardInput = $true
-          $helperStart.RedirectStandardOutput = $true
-          $helperStart.RedirectStandardError = $true
-          $helperProcess = [Diagnostics.Process]::new()
-          $helperProcess.StartInfo = $helperStart
-          if (-not $helperProcess.Start()) {
-            throw 'Windows helper process did not start.'
-          }
           # Windows PowerShell 5.1 may add a UTF-8 BOM through its native
-          # pipeline or StreamWriter. Write the exact UTF-8 request bytes to
-          # the redirected pipe so the strict JSON protocol sees no preamble.
-          $helperRequestBytes = [Text.Encoding]::UTF8.GetBytes(
+          # pipeline or StreamWriter. Redirect a BOM-free ASCII file at the OS
+          # process boundary so the strict JSON protocol sees exact bytes.
+          $helperRequestPath = Join-Path $env:RUNNER_TEMP 'helper-request.jsonl'
+          $helperOutputPath = Join-Path $env:RUNNER_TEMP 'helper-output.jsonl'
+          $helperErrorPath = Join-Path $env:RUNNER_TEMP 'helper-error.txt'
+          $helperRequestBytes = [Text.Encoding]::ASCII.GetBytes(
             '{"schemaVersion":1,"operation":"hello","requestId":"release-smoke"}' +
               [Environment]::NewLine
           )
-          $helperInput = $helperProcess.StandardInput.BaseStream
-          $helperInput.Write($helperRequestBytes, 0, $helperRequestBytes.Length)
-          $helperInput.Flush()
-          $helperInput.Close()
-          $helloText = $helperProcess.StandardOutput.ReadToEnd().Trim()
-          $helperError = $helperProcess.StandardError.ReadToEnd().Trim()
-          $helperProcess.WaitForExit()
+          [IO.File]::WriteAllBytes($helperRequestPath, $helperRequestBytes)
+          $helperProcess = Start-Process -FilePath $helper -NoNewWindow -Wait -PassThru `
+            -RedirectStandardInput $helperRequestPath `
+            -RedirectStandardOutput $helperOutputPath `
+            -RedirectStandardError $helperErrorPath
+          $helloText = [IO.File]::ReadAllText($helperOutputPath).Trim()
+          $helperError = [IO.File]::ReadAllText($helperErrorPath).Trim()
           $helperExitCode = $helperProcess.ExitCode
           if ($helperExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($helloText) -or
               -not [string]::IsNullOrWhiteSpace($helperError)) {
