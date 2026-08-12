@@ -405,13 +405,34 @@ not allow a coincidentally reused PID or a recent journal timestamp to preserve
 the prior-boot orphan. If Windows cannot measure this identity, the field stays
 empty and recovery conservatively retains the legacy PID/grace behavior.
 
-The reboot harness and identity logic are implemented and statically tested;
-this paragraph is a procedure contract, not native PASS evidence. The gate
-remains **NOT MEASURED** until both phases complete around a real reboot.
+The two phases completed around a real Windows reboot at commit `f9b4e33` as
+`VHDX_DIFF_FIXTURE_REBOOT_RECOVERY_PASS`:
 
-GNF forced-termination, Windows reboot recovery, GNF eight-worker, quota/LRU,
-and production/release readiness gates remain **NOT MEASURED**. `auto`
-promotion therefore remains blocked.
+- artifact ZIP:
+  `C:\Users\user\AppData\Local\Temp\testplay-vhdx-diff-reboot-recovery-20260812-002747-769.zip`;
+- artifact SHA-256:
+  `B4BD55C3557D6730441647F01B63A7D9F74655FB7D1B6AB20C02C1AFAAB28B7F`;
+- Windows boot time changed from `2026-08-10T12:43:17.5Z` to
+  `2026-08-12T00:28:35.5Z`, while the computer identity remained unchanged;
+- broker boot identity changed from
+  `system-process-01dd28c5d5c45358` to
+  `system-process-01dd29f187cfa41f`;
+- the pre-reboot lease was
+  `lease-db98ab3334f88c9ecd92b6aff9e96fa9`. Its durable journal SHA-256 was
+  `E1E3DC0F0ACE5E8068B6C042E0D43F78F24B8549DE6694C09BE95081118B8A71`
+  and the matching workspace-owner SHA-256 was
+  `CB4305E5B7C3409127B0961378E52D873FCB6EBD76B48CFE886858F1548C8FC9`;
+- the automatically started broker reconciled the prior-boot ephemeral lease
+  and reported active, retained, pending, and quarantine counts of zero with
+  `manualRecoveryRequired: false` and the immutable parent still valid;
+- normal uninstall succeeded with `cleanupState: released`. The exact pointer,
+  receipt, service, store, workspace, child, mount, attached disk, new drive
+  letter, Unity/testplay process, pending, retained, and quarantine residuals
+  were independently measured zero.
+
+GNF forced-termination, GNF eight-worker, quota/LRU, and production/release
+readiness gates remain **NOT MEASURED**. `auto` promotion therefore remains
+blocked.
 
 ## Win32 references
 

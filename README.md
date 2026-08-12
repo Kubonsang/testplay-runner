@@ -526,8 +526,9 @@ is 20 GiB, and each newly admitted child reserves 2 GiB.
 
 This provider remains explicit opt-in. Fixture and GNF 1/2/4-worker gates,
 fixture CLI/Unity forced-termination recovery, and fixture broker-restart
-recovery have passed; GNF forced-termination, Windows reboot, and quota/LRU
-native gates remain. The Managed ReFS pool and its evidence remain available as a separate
+recovery, plus fixture Windows-reboot recovery, have passed; GNF
+forced-termination and quota/LRU native gates remain. The Managed ReFS pool and
+its evidence remain available as a separate
 experimental/legacy backend; no ReFS, Dev Drive, partition, Defender, or
 registry setting is changed here. See
 [the provider contract](docs/differencing-vhdx-workspace-provider.md).
