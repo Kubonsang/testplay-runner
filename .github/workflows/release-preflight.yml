@@ -331,13 +331,30 @@ jobs:
             throw 'Windows candidate accepted an invalid workspace backend.'
           }
 
-          $helloLine = '{"schemaVersion":1,"operation":"hello","requestId":"release-smoke"}' |
-            & $helper
-          if ($LASTEXITCODE -ne 0) { throw 'Windows helper hello failed.' }
-          $hello = $helloLine | ConvertFrom-Json
+          $previousPreference = $ErrorActionPreference
+          try {
+            $ErrorActionPreference = 'Continue'
+            $helloLines = @(
+              '{"schemaVersion":1,"operation":"hello","requestId":"release-smoke"}' |
+                & $helper 2>&1
+            )
+            $helperExitCode = $LASTEXITCODE
+          }
+          finally {
+            $ErrorActionPreference = $previousPreference
+          }
+          $helloText = [string]::Join(
+            [Environment]::NewLine,
+            [string[]]@($helloLines | ForEach-Object { $_.ToString() })
+          )
+          if ($helperExitCode -ne 0 -or $helloLines.Count -ne 1) {
+            throw "Windows helper hello failed: exit=$helperExitCode lines=$($helloLines.Count) output=$helloText"
+          }
+          $hello = $helloText | ConvertFrom-Json
+          Write-Output "Windows helper hello: $($hello | ConvertTo-Json -Compress)"
           if ($hello.schemaVersion -ne 1 -or $hello.requestId -ne 'release-smoke' -or
               -not $hello.ok -or $hello.helperVersion -ne 'v2' -or
               $hello.provider -ne 'vhdx-differencing' -or
               -not $hello.requiresElevation) {
-            throw 'Windows helper hello contract is invalid.'
+            throw "Windows helper hello contract is invalid: $helloText"
           }
