@@ -232,6 +232,23 @@ jobs:
             }
           }
 
+          function Invoke-CliCapture {
+            param([string[]]$ArgumentList)
+            $previousPreference = $ErrorActionPreference
+            try {
+              $ErrorActionPreference = 'Continue'
+              $lines = @(& $cli @ArgumentList 2>&1)
+              $exitCode = $LASTEXITCODE
+            }
+            finally {
+              $ErrorActionPreference = $previousPreference
+            }
+            if ($exitCode -ne 0) {
+              throw "CLI command failed: args=$($ArgumentList -join ' ') exit=$exitCode"
+            }
+            return ($lines | Out-String)
+          }
+
           $cliArchive = @(
             Get-ChildItem -LiteralPath dist -Filter 'testplay_*_windows_amd64.zip' |
               Where-Object { $_.Name -notlike 'testplay-storage-helper_*' }
@@ -262,10 +279,10 @@ jobs:
             throw 'Snapshot commit/date evidence is missing.'
           }
 
-          $rootHelp = (& $cli --help 2>&1 | Out-String)
-          $runHelp = (& $cli run --help 2>&1 | Out-String)
-          $storageHelp = (& $cli storage --help 2>&1 | Out-String)
-          $workspaceHelp = (& $cli workspace --help 2>&1 | Out-String)
+          $rootHelp = Invoke-CliCapture -ArgumentList @('--help')
+          $runHelp = Invoke-CliCapture -ArgumentList @('run', '--help')
+          $storageHelp = Invoke-CliCapture -ArgumentList @('storage', '--help')
+          $workspaceHelp = Invoke-CliCapture -ArgumentList @('workspace', '--help')
           foreach ($command in @('storage', 'workspace')) { Assert-Contains $rootHelp $command }
           foreach ($flag in @('--workspace-backend', '--workspace-store-root', '--keep-workspace')) {
             Assert-Contains $runHelp $flag
