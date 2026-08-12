@@ -331,24 +331,29 @@ jobs:
             throw 'Windows candidate accepted an invalid workspace backend.'
           }
 
-          $previousPreference = $ErrorActionPreference
-          try {
-            $ErrorActionPreference = 'Continue'
-            $helloLines = @(
-              '{"schemaVersion":1,"operation":"hello","requestId":"release-smoke"}' |
-                & $helper 2>&1
-            )
-            $helperExitCode = $LASTEXITCODE
+          $helperStart = [Diagnostics.ProcessStartInfo]::new()
+          $helperStart.FileName = $helper
+          $helperStart.UseShellExecute = $false
+          $helperStart.CreateNoWindow = $true
+          $helperStart.RedirectStandardInput = $true
+          $helperStart.RedirectStandardOutput = $true
+          $helperStart.RedirectStandardError = $true
+          $helperProcess = [Diagnostics.Process]::new()
+          $helperProcess.StartInfo = $helperStart
+          if (-not $helperProcess.Start()) {
+            throw 'Windows helper process did not start.'
           }
-          finally {
-            $ErrorActionPreference = $previousPreference
-          }
-          $helloText = [string]::Join(
-            [Environment]::NewLine,
-            [string[]]@($helloLines | ForEach-Object { $_.ToString() })
+          $helperProcess.StandardInput.WriteLine(
+            '{"schemaVersion":1,"operation":"hello","requestId":"release-smoke"}'
           )
-          if ($helperExitCode -ne 0 -or $helloLines.Count -ne 1) {
-            throw "Windows helper hello failed: exit=$helperExitCode lines=$($helloLines.Count) output=$helloText"
+          $helperProcess.StandardInput.Close()
+          $helloText = $helperProcess.StandardOutput.ReadToEnd().Trim()
+          $helperError = $helperProcess.StandardError.ReadToEnd().Trim()
+          $helperProcess.WaitForExit()
+          $helperExitCode = $helperProcess.ExitCode
+          if ($helperExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($helloText) -or
+              -not [string]::IsNullOrWhiteSpace($helperError)) {
+            throw "Windows helper hello failed: exit=$helperExitCode stdout=$helloText stderr=$helperError"
           }
           $hello = $helloText | ConvertFrom-Json
           Write-Output "Windows helper hello: $($hello | ConvertTo-Json -Compress)"
