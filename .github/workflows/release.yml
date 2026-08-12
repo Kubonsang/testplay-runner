@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   goreleaser:
@@ -34,9 +36,19 @@ jobs:
           package_version="$(jq -r .version unity/com.testplay.bridge/package.json)"
           test "$source_version" = "$RELEASE_VERSION"
           test "$package_version" = "${RELEASE_VERSION#v}"
+          test -s docs/30_v0.13.0-rc.1_release_notes.md
+          test -s docs/31_v0.13.0-rc.1_release_notes.ko.md
+
+      - name: Verify modules
+        run: go mod verify
+
+      - name: Run vulnerability scan
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: "1.26.4"
 
       - name: Run tests
-        run: go test ./...
+        run: go test ./... -count=1
 
       - name: Run vet
         run: go vet ./...
@@ -46,7 +58,12 @@ jobs:
           version: "v2.17.0"
           args: >-
             release --clean
-            --release-notes docs/28_v0.12.0_release_notes.md
-            --release-footer docs/29_v0.12.0_release_notes.ko.md
+            --release-notes docs/30_v0.13.0-rc.1_release_notes.md
+            --release-footer docs/31_v0.13.0-rc.1_release_notes.ko.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attest release archives
+        uses: actions/attest@v4
+        with:
+          subject-checksums: dist/checksums.txt

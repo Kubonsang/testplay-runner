@@ -3,7 +3,13 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$UnityEditorPath,
 
-    [switch]$InstallApproved
+    [switch]$InstallApproved,
+
+    [string]$CandidateExecutablePath = '',
+
+    [switch]$RequireUpgrade,
+
+    [switch]$RequireUnelevatedProbe
 )
 
 Set-StrictMode -Version Latest
@@ -71,6 +77,10 @@ if (-not (Test-Administrator)) {
 if (-not (Test-Path -LiteralPath $UnityEditorPath -PathType Leaf)) {
     throw "Unity Editor was not found: $UnityEditorPath"
 }
+if ($CandidateExecutablePath -and
+    -not (Test-Path -LiteralPath $CandidateExecutablePath -PathType Leaf)) {
+    throw "Candidate executable was not found: $CandidateExecutablePath"
+}
 
 $RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $FixturePath = Join-Path $RepositoryRoot 'testdata\unity-vhdx-fixture'
@@ -82,6 +92,9 @@ $ExecutablePath = Join-Path $ArtifactRoot 'testplay-vhdx-diff-phase1.exe'
 $TranscriptPath = Join-Path $ArtifactRoot 'terminal-transcript.txt'
 $SummaryPath = Join-Path $ArtifactRoot 'summary.json'
 $ZipPath = "$ArtifactRoot.zip"
+$LimitedProbeTask = "TestPlay-VHDXDiff-Phase1-Limited-$Stamp"
+$LimitedProbePath = Join-Path $ArtifactRoot 'invoke-limited-probe.ps1'
+$LimitedProbeOutputPath = Join-Path $ArtifactRoot 'limited-probe.json'
 
 if (Get-Service -Name TestPlayStorageBroker -ErrorAction SilentlyContinue) {
     throw 'TestPlayStorageBroker already exists; this harness will not replace it.'
@@ -102,19 +115,28 @@ $Installed = $false
 $Uninstalled = $false
 $Failure = $null
 $Started = Get-Date
+$UpgradeAttempted = $false
+$UpgradeSucceeded = $false
+$LimitedProbeCreated = $false
+$LimitedProbe = $null
 $MarkerWasSet = Test-Path Env:TESTPLAY_UNITY_FIXTURE_MARKER
 $PreviousMarker = $env:TESTPLAY_UNITY_FIXTURE_MARKER
 $env:TESTPLAY_UNITY_FIXTURE_MARKER = "vhdx-diff-native-phase1-$Stamp"
 
 Start-Transcript -Path $TranscriptPath -Force | Out-Null
 try {
-    Push-Location $RepositoryRoot
-    try {
-        & go build -o $ExecutablePath .\cmd\testplay
-        if ($LASTEXITCODE -ne 0) { throw "go build failed: exit=$LASTEXITCODE" }
+    if ($CandidateExecutablePath) {
+        Copy-Item -LiteralPath $CandidateExecutablePath -Destination $ExecutablePath
     }
-    finally {
-        Pop-Location
+    else {
+        Push-Location $RepositoryRoot
+        try {
+            & go build -o $ExecutablePath .\cmd\testplay
+            if ($LASTEXITCODE -ne 0) { throw "go build failed: exit=$LASTEXITCODE" }
+        }
+        finally {
+            Pop-Location
+        }
     }
 
     $Install = Invoke-NativeCapture -LiteralPath $ExecutablePath `
@@ -122,6 +144,76 @@ try {
         -OutputPath (Join-Path $ArtifactRoot 'storage-install.txt')
     if ($Install.ExitCode -ne 0) { throw "storage install failed: exit=$($Install.ExitCode)" }
     $Installed = $true
+
+    if ($RequireUpgrade) {
+        $UpgradeAttempted = $true
+        $Upgrade = Invoke-NativeCapture -LiteralPath $ExecutablePath `
+            -ArgumentList @('storage', 'upgrade') `
+            -OutputPath (Join-Path $ArtifactRoot 'storage-upgrade.txt')
+        if ($Upgrade.ExitCode -ne 0) { throw "storage upgrade failed: exit=$($Upgrade.ExitCode)" }
+        $UpgradeSucceeded = $true
+    }
+
+    if ($RequireUnelevatedProbe) {
+        $probeSource = @'
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $true)][string]$ExecutablePath,
+    [Parameter(Mandatory = $true)][string]$OutputPath
+)
+$ErrorActionPreference = 'Continue'
+$principal = [Security.Principal.WindowsPrincipal]([Security.Principal.WindowsIdentity]::GetCurrent())
+$elevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+$helloLines = @(& $ExecutablePath storage broker-probe --operation hello 2>&1)
+$helloExit = $LASTEXITCODE
+$statusLines = @(& $ExecutablePath storage status --json 2>&1)
+$statusExit = $LASTEXITCODE
+$result = [ordered]@{
+    schemaVersion = 1
+    elevated = $elevated
+    helloExitCode = $helloExit
+    hello = @($helloLines | ForEach-Object { $_.ToString() })
+    statusExitCode = $statusExit
+    status = @($statusLines | ForEach-Object { $_.ToString() })
+}
+[IO.File]::WriteAllText(
+    $OutputPath,
+    (($result | ConvertTo-Json -Depth 12) + [Environment]::NewLine),
+    [Text.UTF8Encoding]::new($false)
+)
+'@
+        [IO.File]::WriteAllText(
+            $LimitedProbePath,
+            $probeSource,
+            [Text.UTF8Encoding]::new($false)
+        )
+        if (Get-ScheduledTask -TaskName $LimitedProbeTask -ErrorAction SilentlyContinue) {
+            throw "Unique limited-user probe task already exists: $LimitedProbeTask"
+        }
+        $identityName = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+        $probeArguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -ExecutablePath "{1}" -OutputPath "{2}"' -f `
+            $LimitedProbePath, $ExecutablePath, $LimitedProbeOutputPath
+        $probeAction = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $probeArguments
+        $probePrincipal = New-ScheduledTaskPrincipal -UserId $identityName `
+            -LogonType Interactive -RunLevel Limited
+        Register-ScheduledTask -TaskName $LimitedProbeTask -Action $probeAction `
+            -Principal $probePrincipal | Out-Null
+        $LimitedProbeCreated = $true
+        Start-ScheduledTask -TaskName $LimitedProbeTask
+        $probeDeadline = (Get-Date).AddSeconds(30)
+        while (-not (Test-Path -LiteralPath $LimitedProbeOutputPath -PathType Leaf)) {
+            if ((Get-Date) -ge $probeDeadline) {
+                $probeInfo = Get-ScheduledTaskInfo -TaskName $LimitedProbeTask -ErrorAction SilentlyContinue
+                throw "Timed out waiting for limited-user probe; result=$($probeInfo.LastTaskResult)"
+            }
+            Start-Sleep -Milliseconds 200
+        }
+        $LimitedProbe = Get-Content -LiteralPath $LimitedProbeOutputPath -Raw | ConvertFrom-Json
+        if ($LimitedProbe.elevated -or $LimitedProbe.helloExitCode -ne 0 -or
+            $LimitedProbe.statusExitCode -ne 0) {
+            throw "Limited-user broker probe failed: elevated=$($LimitedProbe.elevated) hello=$($LimitedProbe.helloExitCode) status=$($LimitedProbe.statusExitCode)"
+        }
+    }
 
     foreach ($Platform in @('edit_mode', 'play_mode')) {
         $ConfigPath = Join-Path $ArtifactRoot "testplay-$Platform.json"
@@ -157,6 +249,16 @@ catch {
     $Failure = $_.Exception.ToString()
 }
 finally {
+    if ($LimitedProbeCreated) {
+        try {
+            Stop-ScheduledTask -TaskName $LimitedProbeTask -ErrorAction SilentlyContinue
+            Unregister-ScheduledTask -TaskName $LimitedProbeTask -Confirm:$false -ErrorAction Stop
+            $LimitedProbeCreated = $false
+        }
+        catch {
+            if ($null -eq $Failure) { $Failure = $_.Exception.ToString() }
+        }
+    }
     if ($Installed) {
         try {
             $Uninstall = Invoke-NativeCapture -LiteralPath $ExecutablePath `
@@ -186,10 +288,17 @@ $NewDisks = @($PostDisks | Where-Object { $PreIDs -notcontains $_.Number })
 $ResidualZero = (
     $NewDisks.Count -eq 0 -and
     -not (Get-Service -Name TestPlayStorageBroker -ErrorAction SilentlyContinue) -and
+    -not (Get-ScheduledTask -TaskName $LimitedProbeTask -ErrorAction SilentlyContinue) -and
     -not (Test-Path -LiteralPath $ReceiptPath) -and
     -not (Test-Path -LiteralPath $StoreRoot)
 )
-$Passed = $null -eq $Failure -and $Uninstalled -and $ResidualZero
+$ReleaseGatesPassed = (
+    (-not $RequireUpgrade -or $UpgradeSucceeded) -and
+    (-not $RequireUnelevatedProbe -or
+        ($null -ne $LimitedProbe -and -not $LimitedProbe.elevated -and
+         $LimitedProbe.helloExitCode -eq 0 -and $LimitedProbe.statusExitCode -eq 0))
+)
+$Passed = $null -eq $Failure -and $Uninstalled -and $ResidualZero -and $ReleaseGatesPassed
 $Summary = [ordered]@{
     schemaVersion = 1
     status = if ($Passed) { 'PASS' } else { 'FAILED' }
@@ -201,6 +310,12 @@ $Summary = [ordered]@{
     fixture = $FixturePath
     storeRoot = $StoreRoot
     installed = $Installed
+    candidateExecutable = $CandidateExecutablePath
+    upgradeAttempted = $UpgradeAttempted
+    upgradeSucceeded = $UpgradeSucceeded
+    limitedUserProbeRequired = [bool]$RequireUnelevatedProbe
+    limitedUserProbe = $LimitedProbe
+    releaseGatesPassed = $ReleaseGatesPassed
     uninstalled = $Uninstalled
     residualZero = $ResidualZero
     preFileBackedDisks = @($PreDisks)

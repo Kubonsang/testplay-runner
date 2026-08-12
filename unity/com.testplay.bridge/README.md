@@ -20,7 +20,7 @@ protocol 2 returns exit 9 and does not replay the run through a cold backend.
 - Unity 6 (6000.3+) with the Test Framework package
   (`com.unity.test-framework`). Protocol 2 depends on per-run GUID activity and
   cancellation APIs that are not available in Unity 2022.3.
-- TestPlay Runner v0.12.0 with the matching protocol-2 bridge package.
+- TestPlay Runner v0.13.0-rc.1 with the matching protocol-2 bridge package.
 
 ## Install (in-repo UPM)
 

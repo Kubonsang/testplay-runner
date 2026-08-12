@@ -6,11 +6,11 @@ on:
       version:
         description: Candidate tag, including the leading v
         required: true
-        default: v0.12.0
+        default: v0.13.0-rc.1
       previous_tag:
         description: Previous release tag used for changelog calculation
         required: true
-        default: v0.11.0
+        default: v0.12.0
 
 permissions:
   contents: read
@@ -40,10 +40,20 @@ jobs:
           package_version="$(jq -r .version unity/com.testplay.bridge/package.json)"
           test "$source_version" = "$RELEASE_VERSION"
           test "$package_version" = "${RELEASE_VERSION#v}"
+          test -s docs/30_v0.13.0-rc.1_release_notes.md
+          test -s docs/31_v0.13.0-rc.1_release_notes.ko.md
+
+      - name: Verify modules
+        run: go mod verify
+
+      - name: Run vulnerability scan
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: "1.26.4"
 
       - name: Run tests and vet
         run: |
-          go test ./...
+          go test ./... -count=1
           go vet ./...
 
       - uses: goreleaser/goreleaser-action@v6
@@ -84,7 +94,7 @@ jobs:
           (cd dist && sha256sum --check checksums.txt)
 
           for target in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64; do
-            archive="$(find dist -maxdepth 1 -name "testplay_*_${target}.tar.gz" -print -quit)"
+            archive="$(find dist -maxdepth 1 -name "testplay_*_${target}.tar.gz" ! -name 'testplay-storage-helper_*' -print -quit)"
             test -n "$archive"
             listing="$(tar -tzf "$archive")"
             grep -qx 'testplay' <<<"$listing"
@@ -94,7 +104,7 @@ jobs:
             fi
           done
 
-          cli_windows_archive="$(find dist -maxdepth 1 -name 'testplay_*_windows_amd64.zip' -print -quit)"
+          cli_windows_archive="$(find dist -maxdepth 1 -name 'testplay_*_windows_amd64.zip' ! -name 'testplay-storage-helper_*' -print -quit)"
           test -n "$cli_windows_archive"
           cli_windows_listing="$(unzip -Z1 "$cli_windows_archive")"
           grep -qx 'testplay.exe' <<<"$cli_windows_listing"
@@ -117,7 +127,7 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          archive="$(find dist -maxdepth 1 -name 'testplay_*_linux_amd64.tar.gz' -print -quit)"
+          archive="$(find dist -maxdepth 1 -name 'testplay_*_linux_amd64.tar.gz' ! -name 'testplay-storage-helper_*' -print -quit)"
           helper_archive="$(find dist -maxdepth 1 -name 'testplay-storage-helper_*_linux_amd64.tar.gz' -print -quit)"
           mkdir extracted-linux
           tar -xzf "$archive" -C extracted-linux
@@ -165,7 +175,7 @@ jobs:
         run: |
           set -euo pipefail
           for arch in amd64 arm64; do
-            archive="$(find dist -maxdepth 1 -name "testplay_*_darwin_${arch}.tar.gz" -print -quit)"
+            archive="$(find dist -maxdepth 1 -name "testplay_*_darwin_${arch}.tar.gz" ! -name 'testplay-storage-helper_*' -print -quit)"
             helper_archive="$(find dist -maxdepth 1 -name "testplay-storage-helper_*_darwin_${arch}.tar.gz" -print -quit)"
             out="$RUNNER_TEMP/darwin-$arch"
             mkdir -p "$out"
@@ -196,3 +206,121 @@ jobs:
               and .provider == "apfs-clonefile"
               and .requiresElevation == false
             '
+
+  verify-windows:
+    name: Execute Windows candidate
+    needs: build
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-preflight-dist
+          path: dist
+
+      - name: Verify CLI and helper contracts
+        shell: powershell
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          function Assert-Contains {
+            param([string]$Text, [string]$Value)
+            if (-not $Text.Contains($Value)) {
+              throw "Expected output to contain '$Value'."
+            }
+          }
+
+          $cliArchive = @(
+            Get-ChildItem -LiteralPath dist -Filter 'testplay_*_windows_amd64.zip' |
+              Where-Object { $_.Name -notlike 'testplay-storage-helper_*' }
+          )
+          $helperArchive = @(
+            Get-ChildItem -LiteralPath dist -Filter 'testplay-storage-helper_*_windows_amd64.zip'
+          )
+          if ($cliArchive.Count -ne 1 -or $helperArchive.Count -ne 1) {
+            throw "Expected one CLI and one helper Windows archive."
+          }
+
+          $cliRoot = Join-Path $env:RUNNER_TEMP 'testplay-cli'
+          $helperRoot = Join-Path $env:RUNNER_TEMP 'testplay-helper'
+          Expand-Archive -LiteralPath $cliArchive[0].FullName -DestinationPath $cliRoot
+          Expand-Archive -LiteralPath $helperArchive[0].FullName -DestinationPath $helperRoot
+
+          $cli = Join-Path $cliRoot 'testplay.exe'
+          $helper = Join-Path $helperRoot 'testplay-storage-helper.exe'
+          $version = (& $cli version | ConvertFrom-Json)
+          if ($LASTEXITCODE -ne 0 -or $version.schema_version -ne '1') {
+            throw 'Windows CLI version contract failed.'
+          }
+          if (-not $version.version.StartsWith("$env:RELEASE_VERSION-SNAPSHOT-")) {
+            throw "Unexpected snapshot version: $($version.version)"
+          }
+          if ([string]::IsNullOrWhiteSpace($version.commit) -or
+              [string]::IsNullOrWhiteSpace($version.date)) {
+            throw 'Snapshot commit/date evidence is missing.'
+          }
+
+          $rootHelp = (& $cli --help | Out-String)
+          $runHelp = (& $cli run --help | Out-String)
+          $storageHelp = (& $cli storage --help | Out-String)
+          $workspaceHelp = (& $cli workspace --help | Out-String)
+          foreach ($command in @('storage', 'workspace')) { Assert-Contains $rootHelp $command }
+          foreach ($flag in @('--workspace-backend', '--workspace-store-root', '--keep-workspace')) {
+            Assert-Contains $runHelp $flag
+          }
+          foreach ($command in @('install', 'status', 'gc', 'upgrade', 'uninstall')) {
+            Assert-Contains $storageHelp $command
+          }
+          foreach ($command in @('attach', 'remove')) { Assert-Contains $workspaceHelp $command }
+
+          $configRoot = Join-Path $env:RUNNER_TEMP 'testplay-config-contract'
+          $projectRoot = Join-Path $configRoot 'project'
+          $storeRoot = Join-Path $configRoot 'store'
+          $unityPath = Join-Path $configRoot 'Unity.exe'
+          New-Item -ItemType Directory -Path $projectRoot, $storeRoot -Force | Out-Null
+          New-Item -ItemType File -Path $unityPath -Force | Out-Null
+          $validConfigPath = Join-Path $configRoot 'valid.json'
+          $invalidConfigPath = Join-Path $configRoot 'invalid.json'
+          $validConfig = [ordered]@{
+            schema_version = '1'
+            unity_path = $unityPath
+            project_path = $projectRoot
+            workspace = [ordered]@{
+              backend = 'vhdx-diff'
+              store_root = $storeRoot
+              store_max_allocated_bytes = 34359738368
+              minimum_host_free_bytes = 21474836480
+            }
+          }
+          [IO.File]::WriteAllText(
+            $validConfigPath,
+            ($validConfig | ConvertTo-Json -Depth 6),
+            [Text.UTF8Encoding]::new($false)
+          )
+          $validCheck = (& $cli --config $validConfigPath check | ConvertFrom-Json)
+          if ($LASTEXITCODE -ne 0 -or -not $validCheck.ready) {
+            throw 'Windows candidate rejected the valid vhdx-diff config contract.'
+          }
+          $validConfig.workspace.backend = 'invalid-backend'
+          [IO.File]::WriteAllText(
+            $invalidConfigPath,
+            ($validConfig | ConvertTo-Json -Depth 6),
+            [Text.UTF8Encoding]::new($false)
+          )
+          $invalidOutput = @(& $cli --config $invalidConfigPath check)
+          if ($LASTEXITCODE -eq 0) {
+            throw 'Windows candidate accepted an invalid workspace backend.'
+          }
+
+          $helloLine = '{"schemaVersion":1,"operation":"hello","requestId":"release-smoke"}' |
+            & $helper
+          if ($LASTEXITCODE -ne 0) { throw 'Windows helper hello failed.' }
+          $hello = $helloLine | ConvertFrom-Json
+          if ($hello.schemaVersion -ne 1 -or $hello.requestId -ne 'release-smoke' -or
+              -not $hello.ok -or $hello.helperVersion -ne 'v2' -or
+              $hello.provider -ne 'vhdx-differencing' -or
+              -not $hello.requiresElevation) {
+            throw 'Windows helper hello contract is invalid.'
+          }

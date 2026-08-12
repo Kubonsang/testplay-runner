@@ -111,7 +111,7 @@ testplay version
 ```json
 {
   "schema_version": "1",
-  "version": "v0.12.0"
+  "version": "v0.13.0-rc.1"
 }
 ```
 
@@ -520,10 +520,18 @@ testplay run --workspace-backend vhdx-diff
 `auto`의 legacy fallback은 broker hello/capacity admission 이전에만 허용되며
 parent/child 작업이 시작된 뒤에는 fallback하지 않습니다. 기본 quota는 실제
 allocated bytes 32 GiB, host-free floor는 20 GiB, 신규 child reserve는 2 GiB입니다.
-1/2/4 worker·강제종료·broker restart·Windows reboot native gate 전까지는
-명시적 opt-in입니다. Managed ReFS 구현과 기존 evidence는 별도 experimental/
-legacy backend로 그대로 보존됩니다. 자세한 계약은
+fixture와 GNF_ 1/2/4 worker, 강제 종료, broker restart, Windows reboot,
+quota/LRU 및 retained workspace native gate가 통과했습니다. 그래도 기본
+backend로 승격하지 않고 명시적 experimental opt-in으로만 제공합니다.
+Managed ReFS 구현과 기존 evidence는 별도 experimental/legacy backend로
+보존됩니다. 자세한 계약은
 [provider 문서](docs/differencing-vhdx-workspace-provider.md)를 참고하십시오.
+
+설치, AI agent 사용, retained workspace, rollback, 검증 절차는
+[Differencing VHDX quickstart](docs/vhdx-diff-quickstart.md)를 따르십시오. RC Windows
+바이너리는 Authenticode 서명이 없어 SmartScreen 경고가 나타날 수 있으므로
+관리자 설치를 승인하기 전 공개된 SHA-256과 GitHub build-provenance
+attestation을 모두 검증하십시오.
 
 v0.12.0 릴리스 아티팩트에는 공개 `testplay run` 백엔드가 아닌 별도
 `testplay-storage-helper` 아카이브가 실험적 통합 primitive로 포함됩니다. schema 1 NDJSON
