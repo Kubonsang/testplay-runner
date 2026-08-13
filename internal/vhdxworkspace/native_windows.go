@@ -149,7 +149,7 @@ func (native windowsNative) BeginParent(ctx context.Context, pending *PendingPar
 	if err != nil {
 		return fail(err)
 	}
-	if err := attachment.Attach(false); err != nil {
+	if err := attachment.AttachForUser(false, pending.UserSID); err != nil {
 		return fail(err)
 	}
 	if _, err := attachment.ResolvePhysicalPath(); err != nil {
@@ -303,7 +303,7 @@ func (native windowsNative) AcquireChild(ctx context.Context, parent ParentMetad
 	}
 	lease, raw, err := native.backend.Acquire(ctx, vhdxstorage.AcquireRequest{
 		ParentPath: parent.VHDXPath, ChildPath: journal.ChildPath, MountPath: journal.MountPath,
-		StoreRoot: filepath.Dir(filepath.Dir(journal.ChildPath)), LeaseID: journal.LeaseID,
+		StoreRoot: filepath.Dir(filepath.Dir(journal.ChildPath)), LeaseID: journal.LeaseID, UserSID: journal.UserSID,
 	}, progress)
 	metrics := Metrics{ParentStatus: ParentStatusValid, ParentReused: true, ParentVirtualBytes: parent.VirtualBytes, ParentAllocatedBytes: parent.AllocatedBytes}
 	if raw.ChildCreateMs != nil {
@@ -349,7 +349,7 @@ func (native windowsNative) AttachChild(ctx context.Context, parent ParentMetada
 	if _, err := vhdxstorage.PrepareDetachedStaleMount(ctx, journal.ChildPath, journal.MountPath, journal.VolumeGUID); err != nil {
 		return nil, Metrics{}, err
 	}
-	lease, raw, err := vhdxstorage.AttachExisting(ctx, vhdxstorage.AcquireRequest{ParentPath: parent.VHDXPath, ChildPath: journal.ChildPath, MountPath: journal.MountPath, StoreRoot: filepath.Dir(filepath.Dir(journal.ChildPath)), LeaseID: journal.LeaseID}, nil)
+	lease, raw, err := vhdxstorage.AttachExisting(ctx, vhdxstorage.AcquireRequest{ParentPath: parent.VHDXPath, ChildPath: journal.ChildPath, MountPath: journal.MountPath, StoreRoot: filepath.Dir(filepath.Dir(journal.ChildPath)), LeaseID: journal.LeaseID, UserSID: journal.UserSID}, nil)
 	metrics := Metrics{ParentStatus: ParentStatusValid, ParentReused: true, ParentVirtualBytes: parent.VirtualBytes, ParentAllocatedBytes: parent.AllocatedBytes}
 	if raw.AttachCallMs != nil {
 		metrics.ChildAttachMs = *raw.AttachCallMs

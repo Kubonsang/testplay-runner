@@ -448,17 +448,54 @@ func OpenAndAttach(path string, readOnly bool) (*Attachment, error) {
 }
 
 func (a *Attachment) Attach(readOnly bool) error {
-	flags := uintptr(attachVirtualDiskNoDriveLetter)
-	if readOnly {
-		flags |= attachVirtualDiskReadOnly
+	return a.attach(readOnly, nil)
+}
+
+// AttachForUser attaches the disk with a user filter that grants access only
+// to SYSTEM, Administrators, and the broker's configured consumer SID. Passing
+// the SID explicitly avoids inheriting the service-owned VHDX file DACL.
+func (a *Attachment) AttachForUser(readOnly bool, userSID string) error {
+	securityDescriptor, err := virtualDiskSecurityDescriptor(userSID)
+	if err != nil {
+		return newError(CodeAttachFailed, "build-user-filter", a.path, err)
 	}
+	return a.attach(readOnly, securityDescriptor)
+}
+
+func virtualDiskSecurityDescriptor(userSID string) (*windows.SECURITY_DESCRIPTOR, error) {
+	userSID = strings.TrimSpace(userSID)
+	if userSID == "" {
+		return nil, nil
+	}
+	sid, err := windows.StringToSid(userSID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid user SID: %w", err)
+	}
+	canonical := sid.String()
+	if canonical == "" {
+		return nil, fmt.Errorf("invalid user SID")
+	}
+	return windows.SecurityDescriptorFromString(fmt.Sprintf("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;%s)", canonical))
+}
+
+func (a *Attachment) attach(readOnly bool, securityDescriptor *windows.SECURITY_DESCRIPTOR) error {
+	flags := virtualDiskAttachFlags(readOnly)
 	parameters := attachVirtualDiskParametersV1{Version: attachVirtualDiskVersion1}
-	status, _, _ := procAttachVirtualDisk.Call(uintptr(a.handle), 0, flags, 0, uintptr(unsafe.Pointer(&parameters)), 0)
+	status, _, _ := procAttachVirtualDisk.Call(uintptr(a.handle), uintptr(unsafe.Pointer(securityDescriptor)), flags, 0, uintptr(unsafe.Pointer(&parameters)), 0)
+	runtime.KeepAlive(securityDescriptor)
 	if status != 0 {
 		return win32Error(CodeAttachFailed, "AttachVirtualDisk", a.path, status)
 	}
 	a.attached = true
 	return nil
+}
+
+func virtualDiskAttachFlags(readOnly bool) uintptr {
+	flags := uintptr(attachVirtualDiskNoDriveLetter)
+	if readOnly {
+		flags |= attachVirtualDiskReadOnly
+	}
+	return flags
 }
 
 func (a *Attachment) ResolvePhysicalPath() (string, error) {
@@ -959,7 +996,7 @@ func (windowsBackend) Acquire(ctx context.Context, request AcquireRequest, progr
 		return fail(err)
 	}
 	phase = time.Now()
-	if err := attachment.Attach(false); err != nil {
+	if err := attachment.AttachForUser(false, request.UserSID); err != nil {
 		return fail(err)
 	}
 	metrics.AttachCallMs = milliseconds(time.Since(phase).Milliseconds())
@@ -1040,7 +1077,7 @@ func AttachExisting(ctx context.Context, request AcquireRequest, progress Progre
 		return fail(err)
 	}
 	phase := time.Now()
-	if err := attachment.Attach(false); err != nil {
+	if err := attachment.AttachForUser(false, request.UserSID); err != nil {
 		return fail(err)
 	}
 	metrics.AttachCallMs = milliseconds(time.Since(phase).Milliseconds())

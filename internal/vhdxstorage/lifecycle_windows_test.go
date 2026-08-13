@@ -72,6 +72,35 @@ func TestCloseZeroHandle(t *testing.T) {
 	}
 }
 
+func TestVirtualDiskSecurityDescriptorScopesConsumer(t *testing.T) {
+	const consumer = "S-1-5-21-111-222-333-1001"
+	descriptor, err := virtualDiskSecurityDescriptor(consumer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;" + consumer + ")"
+	if sddl := descriptor.String(); sddl != want {
+		t.Fatalf("user filter=%q, want %q", sddl, want)
+	}
+	if _, err := virtualDiskSecurityDescriptor("not-a-sid"); err == nil {
+		t.Fatal("invalid SID accepted")
+	}
+	legacy, err := virtualDiskSecurityDescriptor("")
+	if err != nil || legacy != nil {
+		t.Fatalf("empty SID must retain legacy descriptor behavior: descriptor=%v err=%v", legacy, err)
+	}
+}
+
+func TestVirtualDiskAttachFlagsPreserveReadOnlySemantics(t *testing.T) {
+	if got := virtualDiskAttachFlags(false); got != attachVirtualDiskNoDriveLetter {
+		t.Fatalf("writable flags=%#x", got)
+	}
+	want := uintptr(attachVirtualDiskNoDriveLetter | attachVirtualDiskReadOnly)
+	if got := virtualDiskAttachFlags(true); got != want {
+		t.Fatalf("read-only flags=%#x, want %#x", got, want)
+	}
+}
+
 func TestSameVolumeGUIDNormalizesCaseAndTrailingSlash(t *testing.T) {
 	if !sameVolumeGUID(`\\?\Volume{ABCDEF}\`, `\\?\volume{abcdef}`) {
 		t.Fatal("equivalent volume GUID paths did not match")
