@@ -3,6 +3,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$UnityEditorPath,
 
+    [string]$CandidateExecutablePath = '',
+
     [switch]$InstallApproved,
 
     [switch]$QuotaMutationApproved
@@ -154,6 +156,11 @@ if (-not $InstallApproved) { throw 'Pass -InstallApproved after reviewing the un
 if (-not $QuotaMutationApproved) { throw 'Pass -QuotaMutationApproved to update only this harness-owned broker config while its service is stopped.' }
 if (-not (Test-Administrator)) { throw 'Administrator PowerShell is required.' }
 if (-not (Test-Path -LiteralPath $UnityEditorPath -PathType Leaf)) { throw "Unity Editor was not found: $UnityEditorPath" }
+if (-not [string]::IsNullOrWhiteSpace($CandidateExecutablePath)) {
+    if (-not [IO.Path]::IsPathRooted($CandidateExecutablePath)) { throw 'Candidate executable path must be absolute.' }
+    if (-not (Test-Path -LiteralPath $CandidateExecutablePath -PathType Leaf)) { throw "Candidate executable was not found: $CandidateExecutablePath" }
+    $CandidateExecutablePath = (Resolve-Path -LiteralPath $CandidateExecutablePath).Path
+}
 
 $RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $FixtureTemplate = Join-Path $RepositoryRoot 'testdata\unity-vhdx-fixture'
@@ -201,12 +208,17 @@ New-Config $ConfigB $FixtureB (Join-Path $ArtifactRoot 'results-b') $UnityEditor
 
 Start-Transcript -Path (Join-Path $ArtifactRoot 'terminal-transcript.txt') -Force | Out-Null
 try {
-    Push-Location $RepositoryRoot
-    try {
-        & go build -buildvcs=false -o $ExecutablePath .\cmd\testplay
-        if ($LASTEXITCODE -ne 0) { throw "go build failed: exit=$LASTEXITCODE" }
+    if ([string]::IsNullOrWhiteSpace($CandidateExecutablePath)) {
+        Push-Location $RepositoryRoot
+        try {
+            & go build -buildvcs=false -o $ExecutablePath .\cmd\testplay
+            if ($LASTEXITCODE -ne 0) { throw "go build failed: exit=$LASTEXITCODE" }
+        }
+        finally { Pop-Location }
     }
-    finally { Pop-Location }
+    else {
+        Copy-Item -LiteralPath $CandidateExecutablePath -Destination $ExecutablePath
+    }
 
     $Install = Invoke-NativeCapture $ExecutablePath @('storage', 'install', '--root', $StoreRoot) (Join-Path $ArtifactRoot 'storage-install.txt') $ArtifactRoot
     if ($Install.ExitCode -ne 0) { throw "storage install failed: exit=$($Install.ExitCode)" }
@@ -344,6 +356,7 @@ $Summary = [ordered]@{
     startedAt = $Started.ToUniversalTime().ToString('o')
     finishedAt = (Get-Date).ToUniversalTime().ToString('o')
     repository = $RepositoryRoot
+    candidateExecutable = if ([string]::IsNullOrWhiteSpace($CandidateExecutablePath)) { $null } else { $CandidateExecutablePath }
     storeRoot = $StoreRoot
     retainedRunId = $RunAID
     parentKeyA = $ParentKeyA
