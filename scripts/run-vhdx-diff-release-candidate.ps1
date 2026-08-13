@@ -55,7 +55,11 @@ function Invoke-NativeCapture {
         [string[]]@($lines | ForEach-Object { $_.ToString() }),
         [Text.UTF8Encoding]::new($false)
     )
-    return [pscustomobject]@{ ExitCode = $exitCode; Lines = @($lines) }
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Lines = @($lines)
+        Text = (@($lines | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine)
+    }
 }
 
 if (-not $InstallApproved) {
@@ -160,10 +164,10 @@ try {
     $Version = Invoke-NativeCapture -LiteralPath $CandidateExecutable `
         -ArgumentList @('version') `
         -OutputPath (Join-Path $ArtifactRoot 'candidate-version.json')
-    if ($Version.ExitCode -ne 0 -or $Version.Lines.Count -ne 1) {
+    if ($Version.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($Version.Text)) {
         throw "Candidate version command failed: exit=$($Version.ExitCode) lines=$($Version.Lines.Count)"
     }
-    $VersionJSON = $Version.Lines[0].ToString() | ConvertFrom-Json
+    $VersionJSON = $Version.Text | ConvertFrom-Json
     if ($VersionJSON.schema_version -ne '1' -or $VersionJSON.version -ne $ExpectedVersion -or
         [string]::IsNullOrWhiteSpace($VersionJSON.commit) -or
         [string]::IsNullOrWhiteSpace($VersionJSON.date)) {
