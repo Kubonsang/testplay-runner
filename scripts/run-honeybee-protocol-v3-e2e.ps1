@@ -425,6 +425,40 @@ function Restore-OldBroker {
     if (-not (Test-Path -LiteralPath $PreservedReceiptPath -PathType Leaf)) {
         throw "Preserved old receipt is missing: $PreservedReceiptPath"
     }
+    $WorkspaceRoot = [string]$script:OldReceipt.workspaceRoot
+    $WorkspaceParent = Split-Path -Parent $WorkspaceRoot
+    if (-not (Test-Path -LiteralPath $WorkspaceParent -PathType Container)) {
+        throw "Refusing old broker restore because the workspace parent is missing: $WorkspaceParent"
+    }
+    $WorkspaceParentItem = Get-Item -LiteralPath $WorkspaceParent -Force
+    if (($WorkspaceParentItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "Refusing old broker restore because the workspace parent is a reparse point: $WorkspaceParent"
+    }
+    if (Test-Path -LiteralPath $WorkspaceRoot) {
+        $WorkspaceItem = Get-Item -LiteralPath $WorkspaceRoot -Force
+        if (-not $WorkspaceItem.PSIsContainer -or
+            ($WorkspaceItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            @(Get-ChildItem -LiteralPath $WorkspaceRoot -Force).Count -ne 0) {
+            throw "Refusing old broker restore because the workspace root is not an empty real directory: $WorkspaceRoot"
+        }
+    }
+    else {
+        New-Item -ItemType Directory -Path $WorkspaceRoot | Out-Null
+    }
+    $ACLResult = Invoke-NativeCapture -LiteralPath 'icacls.exe' `
+        -ArgumentList @(
+            $WorkspaceRoot,
+            '/inheritance:r',
+            '/grant:r',
+            '*S-1-5-18:(OI)(CI)F',
+            '*S-1-5-32-544:(OI)(CI)F',
+            "*$([string]$script:OldReceipt.userSid)`:(OI)(CI)M"
+        ) `
+        -OutputPath (Join-Path $ArtifactRoot 'old-workspace-restore-acl.txt') `
+        -WorkingDirectory $ArtifactRoot
+    if ($ACLResult.ExitCode -ne 0) {
+        throw "Old broker workspace ACL restore failed: exit=$($ACLResult.ExitCode)"
+    }
     Move-Item -LiteralPath $PreservedReceiptPath -Destination $ReceiptPath
     $Restore = Invoke-NativeCapture -LiteralPath $script:OldReceipt.executable `
         -ArgumentList @('storage', 'install', '--root', [string]$script:OldReceipt.storeRoot) `
