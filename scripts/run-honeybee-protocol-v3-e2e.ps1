@@ -83,6 +83,34 @@ function Get-NormalizedSHA256 {
     return (Get-FileHash -LiteralPath $LiteralPath -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function New-ArtifactArchive {
+    param(
+        [string]$ArtifactDirectory,
+        [string]$DestinationPath,
+        [int]$Attempts = 60,
+        [int]$DelayMilliseconds = 500
+    )
+    $LastError = $null
+    for ($Attempt = 1; $Attempt -le $Attempts; $Attempt++) {
+        try {
+            if (Test-Path -LiteralPath $DestinationPath) {
+                Remove-Item -LiteralPath $DestinationPath -Force
+            }
+            Compress-Archive `
+                -Path (Join-Path $ArtifactDirectory '*') `
+                -DestinationPath $DestinationPath `
+                -Force `
+                -ErrorAction Stop
+            return [pscustomobject]@{ Success = $true; Attempts = $Attempt; Error = $null }
+        }
+        catch {
+            $LastError = $_.Exception.ToString()
+            if ($Attempt -lt $Attempts) { Start-Sleep -Milliseconds $DelayMilliseconds }
+        }
+    }
+    return [pscustomobject]@{ Success = $false; Attempts = $Attempts; Error = $LastError }
+}
+
 function Assert-FileSHA256 {
     param([string]$LiteralPath, [string]$Expected, [string]$Label)
     if (-not (Test-Path -LiteralPath $LiteralPath -PathType Leaf)) {
@@ -913,24 +941,40 @@ $Summary = [ordered]@{
 }
 Write-JsonFile -LiteralPath $SummaryPath -Value $Summary
 
-Compress-Archive -Path (Join-Path $ArtifactRoot '*') -DestinationPath $ZipPath -Force
-$ZipSHA256 = Get-NormalizedSHA256 -LiteralPath $ZipPath
+$Archive = New-ArtifactArchive -ArtifactDirectory $ArtifactRoot -DestinationPath $ZipPath
+if (-not $Archive.Success) {
+    $ArchiveFailure = "Artifact archive remained locked after $($Archive.Attempts) attempts: $($Archive.Error)"
+    if ($null -eq $Failure) { $Failure = $ArchiveFailure }
+    else { $Failure = $Failure + [Environment]::NewLine + 'Archive: ' + $ArchiveFailure }
+    $Passed = $false
+    $CleanupState = 'preserved'
+    $Summary.status = 'FAILED'
+    $Summary.verdict = 'FAILED'
+    $Summary.cleanupState = 'preserved'
+    $Summary.failure = $Failure
+    Write-JsonFile -LiteralPath $SummaryPath -Value $Summary
+}
+$ZipSHA256 = if ($Archive.Success) { Get-NormalizedSHA256 -LiteralPath $ZipPath } else { $null }
 $Completion = [ordered]@{
     status = $Summary.status
     verdict = $Summary.verdict
     cleanupState = $CleanupState
     artifact = $ArtifactRoot
-    zip = $ZipPath
+    zip = if ($Archive.Success) { $ZipPath } else { $null }
     zipSHA256 = $ZipSHA256
     summary = $SummaryPath
+    archive = [ordered]@{ succeeded = $Archive.Success; attempts = $Archive.Attempts; error = $Archive.Error }
 }
 Write-JsonFile -LiteralPath $CompletionPath -Value $Completion
 
 Write-Output "HONEYBEE_PROTOCOL3_E2E_STATUS=$($Summary.status)"
 Write-Output "HONEYBEE_PROTOCOL3_E2E_VERDICT=$($Summary.verdict)"
 Write-Output "HONEYBEE_PROTOCOL3_E2E_CLEANUP=$CleanupState"
-Write-Output "HONEYBEE_PROTOCOL3_E2E_ARTIFACT_ZIP=$ZipPath"
-Write-Output "HONEYBEE_PROTOCOL3_E2E_ARTIFACT_SHA256=$ZipSHA256"
+Write-Output "HONEYBEE_PROTOCOL3_E2E_ARTIFACT_ROOT=$ArtifactRoot"
+if ($Archive.Success) {
+    Write-Output "HONEYBEE_PROTOCOL3_E2E_ARTIFACT_ZIP=$ZipPath"
+    Write-Output "HONEYBEE_PROTOCOL3_E2E_ARTIFACT_SHA256=$ZipSHA256"
+}
 Write-Output "HONEYBEE_PROTOCOL3_E2E_COMPLETION=$CompletionPath"
 if (-not $Passed) {
     Write-Error $Failure
