@@ -16,6 +16,9 @@ param(
     [string]$ExpectedHoneyBeeCommit,
 
     [Parameter(Mandatory = $true)]
+    [string]$ExpectedHoneyBeeRuntimeSHA256,
+
+    [Parameter(Mandatory = $true)]
     [string]$WorkspaceStorageExecutable,
 
     [Parameter(Mandatory = $true)]
@@ -167,6 +170,38 @@ function Get-TreeDigest {
     return [ordered]@{ digest = $Digest; fileCount = $Files.Count; logicalBytes = $LogicalBytes }
 }
 
+function Get-HoneyBeeRuntimeEvidence {
+    param([string]$Repository)
+    $Roots = @((Join-Path $Repository 'apps\cli\dist'))
+    $Roots += @(Get-ChildItem -LiteralPath (Join-Path $Repository 'packages') -Directory -Force |
+        ForEach-Object { Join-Path $_.FullName 'dist' } |
+        Where-Object { Test-Path -LiteralPath $_ -PathType Container })
+    foreach ($Root in $Roots) {
+        if (-not (Test-Path -LiteralPath $Root -PathType Container)) {
+            throw "HoneyBee runtime root is missing: $Root"
+        }
+    }
+    $Files = @($Roots | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -File -Force } |
+        Sort-Object FullName)
+    if ($Files.Count -eq 0) { throw 'HoneyBee built runtime is empty.' }
+    $Builder = [Text.StringBuilder]::new()
+    [long]$LogicalBytes = 0
+    foreach ($File in $Files) {
+        $Relative = $File.FullName.Substring($Repository.TrimEnd('\').Length).TrimStart('\').Replace('\', '/')
+        $Hash = Get-NormalizedSHA256 -LiteralPath $File.FullName
+        [void]$Builder.Append($Relative).Append([char]0).Append($Hash).Append([char]0)
+        $LogicalBytes += $File.Length
+    }
+    $SHA = [Security.Cryptography.SHA256]::Create()
+    try {
+        $Digest = ([BitConverter]::ToString(
+            $SHA.ComputeHash([Text.Encoding]::UTF8.GetBytes($Builder.ToString()))
+        )).Replace('-', '').ToLowerInvariant()
+    }
+    finally { $SHA.Dispose() }
+    return [ordered]@{ digest = $Digest; fileCount = $Files.Count; logicalBytes = $LogicalBytes }
+}
+
 function Get-SourceEvidence {
     param([string]$Root)
     return [ordered]@{
@@ -243,7 +278,7 @@ function Get-RelatedProcesses {
     return @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
         Where-Object {
             $_.ProcessId -ne $PID -and $_.ProcessId -ne $ServicePID -and
-            ($_.Name -match '^(Unity|testplay|opencode)(\.exe)?$' -or
+            ($_.Name -match '^(Unity|UnityPackageManager|UnityCrashHandler64|UnityShaderCompiler|AssetImportWorker|testplay|opencode)(\.exe)?$' -or
              ($_.Name -match '^(node|powershell)(\.exe)?$' -and
               ([string]$_.CommandLine -match 'honeybee-protocol3|honeybee.*unity')))
         } |
@@ -509,6 +544,10 @@ if ($HoneyBeeCommit -ne $ExpectedHoneyBeeCommit -or $HoneyBeeStatus -ne '') {
 $HoneyBeeCLI = Join-Path $HoneyBeeRepository 'apps\cli\dist\cli.js'
 if (-not (Test-Path -LiteralPath $HoneyBeeCLI -PathType Leaf)) { throw "Built HoneyBee CLI is missing: $HoneyBeeCLI" }
 $HoneyBeeCLISHA256 = Get-NormalizedSHA256 -LiteralPath $HoneyBeeCLI
+$HoneyBeeRuntime = Get-HoneyBeeRuntimeEvidence -Repository $HoneyBeeRepository
+if ($HoneyBeeRuntime.digest -ne $ExpectedHoneyBeeRuntimeSHA256.ToLowerInvariant()) {
+    throw "HoneyBee runtime tree SHA-256 mismatch: expected=$ExpectedHoneyBeeRuntimeSHA256 actual=$($HoneyBeeRuntime.digest)"
+}
 $BridgePackageSHA = (Get-TreeDigest -Root $BridgePackagePath).digest
 $ProjectVersion = Get-Content -Raw -LiteralPath (Join-Path $FixtureSource 'ProjectSettings\ProjectVersion.txt')
 if ($ProjectVersion -notmatch [regex]::Escape("m_EditorVersion: $ExpectedUnityVersion")) {
@@ -556,7 +595,7 @@ Write-JsonFile -LiteralPath (Join-Path $ArtifactRoot 'old-parent-before.json') -
 Write-JsonFile -LiteralPath (Join-Path $ArtifactRoot 'pins.json') -Value ([ordered]@{
     testplay = [ordered]@{ path = $TestPlayExecutable; commit = $ExpectedTestPlayCommit; sha256 = $TestPlaySHA256 }
     bridgePackage = [ordered]@{ path = $BridgePackagePath; treeSHA256 = $BridgePackageSHA }
-    honeyBee = [ordered]@{ path = $HoneyBeeRepository; commit = $HoneyBeeCommit; cliSHA256 = $HoneyBeeCLISHA256 }
+    honeyBee = [ordered]@{ path = $HoneyBeeRepository; commit = $HoneyBeeCommit; cliSHA256 = $HoneyBeeCLISHA256; runtime = $HoneyBeeRuntime }
     workspaceStorage = [ordered]@{ path = $WorkspaceStorageExecutable; contractCommit = $WorkspaceStorageContractCommit; sha256 = $WorkspaceStorageSHA256 }
 })
 
@@ -849,7 +888,7 @@ $Summary = [ordered]@{
     startedAt = $Started.ToUniversalTime().ToString('o')
     finishedAt = (Get-Date).ToUniversalTime().ToString('o')
     testplay = [ordered]@{ commit = $ExpectedTestPlayCommit; sha256 = $TestPlaySHA256; version = 'v0.14.0-dev' }
-    honeyBee = [ordered]@{ commit = $HoneyBeeCommit; cliSHA256 = $HoneyBeeCLISHA256 }
+    honeyBee = [ordered]@{ commit = $HoneyBeeCommit; cliSHA256 = $HoneyBeeCLISHA256; runtime = $HoneyBeeRuntime }
     workspaceStorage = [ordered]@{ contractCommit = $WorkspaceStorageContractCommit; sha256 = $WorkspaceStorageSHA256 }
     bridgePackageTreeSHA256 = $BridgePackageSHA
     oldBroker = [ordered]@{
