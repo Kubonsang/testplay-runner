@@ -181,17 +181,19 @@ function Get-HoneyBeeRuntimeEvidence {
             throw "HoneyBee runtime root is missing: $Root"
         }
     }
-    $Files = @($Roots | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -File -Force } |
-        Sort-Object FullName)
+    $Files = @($Roots | ForEach-Object { Get-ChildItem -LiteralPath $_ -Recurse -File -Force })
     if ($Files.Count -eq 0) { throw 'HoneyBee built runtime is empty.' }
     $Builder = [Text.StringBuilder]::new()
+    $Records = [Collections.Generic.List[string]]::new()
     [long]$LogicalBytes = 0
     foreach ($File in $Files) {
         $Relative = $File.FullName.Substring($Repository.TrimEnd('\').Length).TrimStart('\').Replace('\', '/')
         $Hash = Get-NormalizedSHA256 -LiteralPath $File.FullName
-        [void]$Builder.Append($Relative).Append([char]0).Append($Hash).Append([char]0)
+        $Records.Add($Relative + [char]0 + $Hash + [char]0)
         $LogicalBytes += $File.Length
     }
+    $Records.Sort([StringComparer]::Ordinal)
+    foreach ($Record in $Records) { [void]$Builder.Append($Record) }
     $SHA = [Security.Cryptography.SHA256]::Create()
     try {
         $Digest = ([BitConverter]::ToString(
@@ -199,7 +201,7 @@ function Get-HoneyBeeRuntimeEvidence {
         )).Replace('-', '').ToLowerInvariant()
     }
     finally { $SHA.Dispose() }
-    return [ordered]@{ digest = $Digest; fileCount = $Files.Count; logicalBytes = $LogicalBytes }
+    return [ordered]@{ digest = $Digest; fileCount = $Records.Count; logicalBytes = $LogicalBytes }
 }
 
 function Get-SourceEvidence {
