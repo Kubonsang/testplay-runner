@@ -10,7 +10,7 @@ import (
 // Override at build time with:
 //
 //	go build -ldflags="-X main.version=v0.1.0-beta+abc1234"
-var version = "v0.13.0-rc.1"
+var version = "v0.14.0-dev"
 
 // commit and date are injected by the release build pipeline.
 // Left empty in development builds.

@@ -1,0 +1,16 @@
+{
+  "schema_version": "1",
+  "bridge_protocol_version": 3,
+  "run_id": "20260818-120000-golden00",
+  "bridge_session_id": "session-golden",
+  "workspace_id": "workspace-golden",
+  "editor_pid": 4242,
+  "capability_kind": "warm-test",
+  "test_platform": "edit_mode",
+  "filter": "Smoke.Golden",
+  "category": "",
+  "results_xml": "C:/artifacts/results.xml",
+  "status_ndjson": "C:/artifacts/status.ndjson",
+  "compile_errors_json": "C:/artifacts/compile-errors.json",
+  "idle_deadline_ms": 30000
+}

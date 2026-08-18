@@ -33,7 +33,8 @@ namespace TestPlay.Bridge
 
             // EditMode-only this version — PlayMode-warm is deferred (C1-class
             // state-leakage hazard). Refuse so play_mode runs go cold.
-            if (req.test_platform == "play_mode")
+			if (req.test_platform == "play_mode" &&
+				req.capability_kind != BridgeProtocol.CapabilityCompile)
             {
                 r.Decision = GateDecision.Refuse;
                 r.RefuseReason = "PlayMode tests are not supported by the warm bridge in this version";

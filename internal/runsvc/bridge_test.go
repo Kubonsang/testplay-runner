@@ -39,6 +39,7 @@ func writeBridgeHandshake(t *testing.T, projectPath string, now time.Time) {
 		ProjectPathReal:       projectPath,
 		UnityVersion:          "2022.3.10f1",
 		EditorPID:             1234,
+		WorkspaceID:           "runsvc-test-workspace",
 		BridgeSessionID:       "20260326-120000-feedface",
 		UpdatedAt:             now.UTC().Format(time.RFC3339),
 		EditorState:           bridge.EditorStateIdle,
@@ -70,6 +71,9 @@ func simulateBridge(t *testing.T, projectPath string, resultsXML []byte) {
 				var req struct {
 					RunID           string `json:"run_id"`
 					BridgeSessionID string `json:"bridge_session_id"`
+					WorkspaceID     string `json:"workspace_id"`
+					EditorPID       int    `json:"editor_pid"`
+					CapabilityKind  string `json:"capability_kind"`
 					ResultsXML      string `json:"results_xml"`
 				}
 				if json.Unmarshal(data, &req) != nil || req.RunID == "" {
@@ -81,6 +85,9 @@ func simulateBridge(t *testing.T, projectPath string, resultsXML []byte) {
 					"bridge_protocol_version": bridge.ProtocolVersion,
 					"run_id":                  req.RunID,
 					"bridge_session_id":       req.BridgeSessionID,
+					"workspace_id":            req.WorkspaceID,
+					"editor_pid":              req.EditorPID,
+					"capability_kind":         req.CapabilityKind,
 					"outcome":                 "completed",
 					"results_xml_written":     true,
 				}

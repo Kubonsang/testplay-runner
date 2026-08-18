@@ -13,10 +13,21 @@ import (
 	"github.com/Kubonsang/testplay-runner/internal/history"
 )
 
-// ProtocolVersion is the wire-protocol version the Go client speaks. The C#
-// bridge advertises its own version in the handshake; a mismatch makes Probe
-// fall back rather than risk speaking an unknown protocol.
-const ProtocolVersion = 2
+// ProtocolVersion is the current wire protocol. LegacyProtocolVersion remains
+// readable so an upgraded CLI can continue to use an already-open v2 editor.
+const (
+	LegacyProtocolVersion = 2
+	ProtocolVersion       = 3
+)
+
+// CapabilityKind is a protocol-v3 operation. An empty kind is valid only for
+// legacy protocol-v2 requests.
+type CapabilityKind string
+
+const (
+	CapabilityCompile  CapabilityKind = "compile"
+	CapabilityWarmTest CapabilityKind = "warm-test"
+)
 
 // Editor states reported in the handshake's editor_state field.
 const (
@@ -53,6 +64,7 @@ type Handshake struct {
 	ProjectPathReal       string `json:"project_path_real"` // symlink/case-canonicalized, for matching
 	UnityVersion          string `json:"unity_version"`
 	EditorPID             int    `json:"editor_pid"`
+	WorkspaceID           string `json:"workspace_id,omitempty"`
 	BridgeSessionID       string `json:"bridge_session_id"` // runid-format; changes on editor restart
 	UpdatedAt             string `json:"updated_at"`        // RFC3339 UTC
 	EditorState           string `json:"editor_state"`
@@ -65,6 +77,9 @@ type requestFile struct {
 	BridgeProtocolVersion int    `json:"bridge_protocol_version"`
 	RunID                 string `json:"run_id"`
 	BridgeSessionID       string `json:"bridge_session_id"`
+	WorkspaceID           string `json:"workspace_id,omitempty"`
+	EditorPID             int    `json:"editor_pid,omitempty"`
+	CapabilityKind        string `json:"capability_kind,omitempty"`
 	TestPlatform          string `json:"test_platform"`
 	Filter                string `json:"filter,omitempty"`
 	Category              string `json:"category,omitempty"`
@@ -80,6 +95,9 @@ type responseFile struct {
 	BridgeProtocolVersion int      `json:"bridge_protocol_version"`
 	RunID                 string   `json:"run_id"`
 	BridgeSessionID       string   `json:"bridge_session_id"`
+	WorkspaceID           string   `json:"workspace_id,omitempty"`
+	EditorPID             int      `json:"editor_pid,omitempty"`
+	CapabilityKind        string   `json:"capability_kind,omitempty"`
 	Outcome               Outcome  `json:"outcome"`
 	ResultsXMLWritten     bool     `json:"results_xml_written"`
 	CompileFailed         bool     `json:"compile_failed"`
@@ -96,6 +114,9 @@ type tombstoneFile struct {
 	SchemaVersion         string `json:"schema_version"`
 	BridgeProtocolVersion int    `json:"bridge_protocol_version"`
 	RunID                 string `json:"run_id"`
+	BridgeSessionID       string `json:"bridge_session_id,omitempty"`
+	WorkspaceID           string `json:"workspace_id,omitempty"`
+	EditorPID             int    `json:"editor_pid,omitempty"`
 	ExecutionState        string `json:"execution_state"`
 	Reason                string `json:"reason"`
 	CreatedAt             string `json:"created_at"`
@@ -135,6 +156,7 @@ type compileErrorsFile struct {
 // RunRequest is the Go-side input to Client.Run.
 type RunRequest struct {
 	RunID          string
+	CapabilityKind CapabilityKind
 	TestPlatform   string // "edit_mode" | "play_mode"
 	Filter         string
 	Category       string

@@ -54,6 +54,53 @@ func TestProbe_AllGatesPass(t *testing.T) {
 	}
 }
 
+func TestProbe_AcceptsLegacyProtocol2(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	hs := validHandshake(dir, now)
+	hs.BridgeProtocolVersion = LegacyProtocolVersion
+	writeHandshake(t, dir, hs)
+	if _, ok, reason := Probe(dir, hs.UnityVersion, now, 0); !ok {
+		t.Fatalf("protocol 2 regression handshake rejected: %s", reason)
+	}
+}
+
+func TestProbeCapability_RequiresExactProtocol3Identity(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Now()
+	hs := validHandshake(dir, now)
+	hs.WorkspaceID = "workspace-1"
+	writeHandshake(t, dir, hs)
+	req := CapabilityRequirements{WorkspaceID: hs.WorkspaceID, BridgeSessionID: hs.BridgeSessionID, EditorPID: hs.EditorPID}
+	if _, ok, reason := ProbeCapability(dir, hs.UnityVersion, req, now, 0); !ok {
+		t.Fatalf("strict probe rejected exact identity: %s", reason)
+	}
+
+	checks := []struct {
+		name string
+		mut  func(*CapabilityRequirements)
+	}{
+		{"workspace", func(r *CapabilityRequirements) { r.WorkspaceID = "foreign" }},
+		{"session", func(r *CapabilityRequirements) { r.BridgeSessionID = "foreign" }},
+		{"pid", func(r *CapabilityRequirements) { r.EditorPID++ }},
+	}
+	for _, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			bad := req
+			check.mut(&bad)
+			if _, ok, _ := ProbeCapability(dir, hs.UnityVersion, bad, now, 0); ok {
+				t.Fatal("strict probe accepted mismatched identity")
+			}
+		})
+	}
+
+	hs.BridgeProtocolVersion = LegacyProtocolVersion
+	writeHandshake(t, dir, hs)
+	if _, ok, reason := ProbeCapability(dir, hs.UnityVersion, req, now, 0); ok || !strings.Contains(reason, "requires bridge protocol") {
+		t.Fatalf("protocol 2 capability probe ok=%v reason=%q", ok, reason)
+	}
+}
+
 func TestProbe_VersionCheckSkippedWhenExpectedEmpty(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()
