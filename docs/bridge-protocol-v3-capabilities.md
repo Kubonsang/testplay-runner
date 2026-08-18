@@ -14,7 +14,9 @@ window, or the stable v0.13 promotion path.
   `bridge_session_id`, and `editor_pid`. The request, response, cancellation,
   and tombstone documents carry that identity.
 - The Unity package captures `HONEYBEE_WORKSPACE_ID` when its editor domain
-  starts. HoneyBee capability commands reject an empty workspace identity.
+  starts. A non-empty HoneyBee workspace identity activates the otherwise
+  dormant bridge for that owned Editor session. HoneyBee capability commands
+  reject an empty workspace identity.
 
 ## Commands
 

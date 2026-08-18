@@ -34,7 +34,9 @@ namespace TestPlay.Bridge
         {
             try
             {
-                if (Environment.GetEnvironmentVariable("TESTPLAY_BRIDGE_ENABLE") == "1")
+				if (EnvironmentOptedIn(
+						Environment.GetEnvironmentVariable("TESTPLAY_BRIDGE_ENABLE"),
+						Environment.GetEnvironmentVariable("HONEYBEE_WORKSPACE_ID")))
                     return true;
                 return File.Exists(BridgePaths.EnableSentinel);
             }
@@ -43,5 +45,10 @@ namespace TestPlay.Bridge
                 return false;
             }
         }
+
+		internal static bool EnvironmentOptedIn(string testPlayEnable, string honeyBeeWorkspaceId)
+		{
+			return testPlayEnable == "1" || !string.IsNullOrWhiteSpace(honeyBeeWorkspaceId);
+		}
     }
 }
