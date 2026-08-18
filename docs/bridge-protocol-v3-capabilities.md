@@ -54,3 +54,25 @@ passes workspace acquisition, owned editor launch, exact protocol-3 binding,
 compile, warm test with `total >= 1`, immutable-source/parent checks, release,
 and zero broker/disk/mount/process residual. Forced-termination and broker
 recovery remain additional v0.14 gates.
+
+The native gate is implemented by
+`scripts/run-honeybee-protocol-v3-e2e.ps1`. It requires an elevated
+PowerShell and an explicit `-InstallApproved` switch. When another TestPlay
+broker is already installed, the harness will proceed only when that broker
+has no active, retained, pending, or quarantined child. It then:
+
+1. records the exact old receipt, executable, parents, and SHA-256 values;
+2. performs `storage uninstall --preserve-data` and moves only the exact
+   install receipt aside;
+3. installs the pinned development binary into a new unique store;
+4. provisions a new parent containing the protocol-3 Unity package;
+5. runs a real HoneyBee v0.6 transaction and verifies both capability
+   `summary.json` objects through HoneyBee's content-addressed artifact store;
+6. removes the new store through the broker CLI; and
+7. restores the old receipt and broker with the exact old executable.
+
+The harness never manually deletes a VHDX. If the temporary broker has
+protected or uncertain state, it preserves that state and does not replace it
+with the old broker identity. A successful run requires the original parent
+hashes to remain unchanged and the final disk, drive-letter, workspace, and
+non-service process residual to be zero.
