@@ -76,3 +76,43 @@ protected or uncertain state, it preserves that state and does not replace it
 with the old broker identity. A successful run requires the original parent
 hashes to remain unchanged and the final disk, drive-letter, workspace, and
 non-service process residual to be zero.
+
+## Native HoneyBee v0.6 evidence
+
+The real Windows E2E gate passed on 2026-08-19 from TestPlay feature commit
+`8d41609` and HoneyBee commit
+`2ce6087b9a81f33b604efcaaedc836347399ad66`:
+
+- verdict: `HONEYBEE_PROTOCOL3_E2E_PASS`;
+- TestPlay executable commit: `ef92a736a4743c22e9e5d956454db14e9d491bb1`;
+- TestPlay executable SHA-256:
+  `7A25823E75FF458D2353A371091F6982347BD928196CFB2E6D6406F05CE1A2FC`;
+- bridge package tree SHA-256:
+  `4746D75CBC485421C0C3F3EC580376CB5BB6888C6FC0BC4E0CD17ED02B0CF753`;
+- HoneyBee runtime tree SHA-256:
+  `23AC5FF5B6C5F2EDBA2DA91868A9FAEB32CF0F754572E528BFFD9B8344143F7C`;
+- one owned Editor identity was preserved across `compile` and `warm-test`:
+  protocol 3, one exact workspace ID, PID, and bridge session;
+- compile passed with zero compile errors and did not execute tests;
+- warm-test passed `1/1`, used the bridge backend, and did not fall back;
+- the physical source trees and immutable parent VHDX SHA-256 were unchanged;
+- the workspace release completed, the temporary broker uninstalled, and the
+  previous broker identity was restored;
+- active, retained, pending, and quarantined children were zero; file-backed
+  disk and related-process residuals were zero; cleanup was `released`.
+
+Artifact ZIP:
+
+```text
+C:\Users\user\AppData\Local\Temp\testplay-honeybee-protocol3-e2e-20260819-121300-676.zip
+```
+
+Artifact SHA-256:
+
+```text
+7C46F8F0E9EAB73EFF7F143D6F5799B428D82BE62D3F0C122CC566CAC590C2E4
+```
+
+This proves the scoped HoneyBee protocol-3 transaction on the tested Windows
+host. Forced-termination recovery, broader hardware compatibility, and
+production readiness remain separate v0.14 gates.
