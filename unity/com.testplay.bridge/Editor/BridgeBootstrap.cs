@@ -8,8 +8,9 @@ namespace TestPlay.Bridge
     /// <summary>
     /// Activation gate. The bridge is DORMANT by default: installing the package
     /// changes nothing about a normal Editor session. It activates only when
-    /// explicitly opted in, and NEVER in batchmode (batchmode IS the cold path
-    /// the testplay CLI drives directly).
+    /// explicitly opted in. A normal batchmode run remains dormant, while an
+    /// explicitly bound HoneyBee workspace may activate the protocol-3 bridge
+    /// in a harness-owned headless Editor.
     ///
     /// Opt-in (either):
     ///   • TESTPLAY_BRIDGE_ENABLE=1 environment variable (developer dogfood), or
@@ -21,9 +22,6 @@ namespace TestPlay.Bridge
     {
         static BridgeBootstrap()
         {
-            if (Application.isBatchMode)
-                return; // the cold batchmode path is what the CLI launches directly
-
             if (!OptedIn())
                 return;
 

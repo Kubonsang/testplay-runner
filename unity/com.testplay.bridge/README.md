@@ -45,10 +45,14 @@ the package version matching your `testplay` version.
 ## Opt-in (dormant by default)
 
 Installing the package alone changes **nothing**. The bridge activates only when
-opted in, and **never** in batchmode:
+explicitly opted in. A normal batchmode run remains dormant; HoneyBee may bind a
+harness-owned headless Editor by supplying a non-empty `HONEYBEE_WORKSPACE_ID`:
 
 - **Environment variable** (developer dogfood): launch the Editor with
   `TESTPLAY_BRIDGE_ENABLE=1`.
+- **HoneyBee workspace binding** (protocol 3): launch the owned Editor with a
+  non-empty `HONEYBEE_WORKSPACE_ID`. This is the only supported batchmode bridge
+  activation path.
 - **Project sentinel** (declarative): create an empty file at
   `<project>/.testplay/bridge/ENABLE` (e.g. `mkdir -p .testplay/bridge && touch .testplay/bridge/ENABLE`).
 
