@@ -39,6 +39,9 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$BridgePackagePath,
 
+    [Parameter(Mandatory = $true)]
+    [string]$ExpectedBridgePackageSHA256,
+
     [switch]$InstallApproved
 )
 
@@ -579,6 +582,9 @@ if ($HoneyBeeRuntime.digest -ne $ExpectedHoneyBeeRuntimeSHA256.ToLowerInvariant(
     throw "HoneyBee runtime tree SHA-256 mismatch: expected=$ExpectedHoneyBeeRuntimeSHA256 actual=$($HoneyBeeRuntime.digest)"
 }
 $BridgePackageSHA = (Get-TreeDigest -Root $BridgePackagePath).digest
+if ($BridgePackageSHA -ne $ExpectedBridgePackageSHA256.ToLowerInvariant()) {
+    throw "Bridge package tree SHA-256 mismatch: expected=$ExpectedBridgePackageSHA256 actual=$BridgePackageSHA"
+}
 $ProjectVersion = Get-Content -Raw -LiteralPath (Join-Path $FixtureSource 'ProjectSettings\ProjectVersion.txt')
 if ($ProjectVersion -notmatch [regex]::Escape("m_EditorVersion: $ExpectedUnityVersion")) {
     throw "Fixture Unity version is not $ExpectedUnityVersion."
