@@ -124,6 +124,10 @@ type AcquireRequest struct {
 	ParentPath string
 	ChildPath  string
 	MountPath  string
+	// UserSID identifies the non-elevated consumer that must be able to use the
+	// mounted filesystem. Windows uses it to scope the virtual-disk user filter.
+	// Empty retains the legacy file-security-descriptor behavior.
+	UserSID string
 	// StoreRoot and LeaseID are internal ownership inputs. They are not part of
 	// the public storage-helper request schema.
 	StoreRoot string
