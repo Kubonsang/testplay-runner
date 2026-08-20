@@ -11,6 +11,15 @@ param(
 
     [string]$ExpectedVersion = 'v0.13.0-rc.1',
 
+    [ValidateSet('UnsignedRC', 'UnsignedStable', 'TrustedStable')]
+    [string]$SignaturePolicy = 'UnsignedRC',
+
+    [string]$HelperArchivePath = '',
+
+    [string]$ExpectedSignerSubject = '',
+
+    [string]$ExpectedSignerThumbprint = '',
+
     [switch]$InstallApproved
 )
 
@@ -55,11 +64,15 @@ function Invoke-NativeCapture {
         [string[]]@($lines | ForEach-Object { $_.ToString() }),
         [Text.UTF8Encoding]::new($false)
     )
-    return [pscustomobject]@{ ExitCode = $exitCode; Lines = @($lines) }
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Lines = @($lines)
+        Text = (@($lines | ForEach-Object { $_.ToString() }) -join [Environment]::NewLine)
+    }
 }
 
 if (-not $InstallApproved) {
-    throw 'Pass -InstallApproved after verifying the unsigned RC archive and exact cleanup contract.'
+    throw 'Pass -InstallApproved after verifying the release archive and exact cleanup contract.'
 }
 if (-not (Test-Administrator)) {
     throw 'Administrator PowerShell is required.'
@@ -73,6 +86,20 @@ if (-not (Test-Path -LiteralPath $ReleaseArchivePath -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath $ChecksumsPath -PathType Leaf)) {
     throw "Checksums file was not found: $ChecksumsPath"
 }
+if ($SignaturePolicy -ne 'UnsignedRC') {
+    if (-not (Test-Path -LiteralPath $HelperArchivePath -PathType Leaf)) {
+        throw "$SignaturePolicy requires the helper archive: $HelperArchivePath"
+    }
+}
+if ($SignaturePolicy -eq 'TrustedStable') {
+    if ([string]::IsNullOrWhiteSpace($ExpectedSignerSubject) -or
+        [string]::IsNullOrWhiteSpace($ExpectedSignerThumbprint)) {
+        throw 'TrustedStable requires ExpectedSignerSubject and ExpectedSignerThumbprint.'
+    }
+    if (-not (Get-Command signtool.exe -ErrorAction SilentlyContinue)) {
+        throw 'TrustedStable requires signtool.exe from the Windows SDK.'
+    }
+}
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
     throw 'GitHub CLI is required to verify the release attestation.'
 }
@@ -80,6 +107,7 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
 $RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $Phase1Script = Join-Path $PSScriptRoot 'run-vhdx-diff-native-phase1.ps1'
 $Archive = Get-Item -LiteralPath $ReleaseArchivePath
+$HelperArchive = if ($HelperArchivePath) { Get-Item -LiteralPath $HelperArchivePath } else { $null }
 $Checksums = Get-Item -LiteralPath $ChecksumsPath
 $Stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
 $ArtifactRoot = Join-Path $env:TEMP "testplay-vhdx-diff-release-candidate-$Stamp"
@@ -101,42 +129,57 @@ $Failure = $null
 $ChecksumVerified = $false
 $AttestationVerified = $false
 $VersionVerified = $false
-$UnsignedVerified = $false
+$SignatureVerified = $false
+$HelperSignatureVerified = if ($SignaturePolicy -eq 'UnsignedRC') { $null } else { $false }
 $Phase1ExitCode = $null
 $Phase1Artifact = $null
 $Phase1ArtifactSHA256 = $null
 
 Start-Transcript -Path $TranscriptPath -Force | Out-Null
 try {
-    $matchingChecksums = @()
-    foreach ($line in Get-Content -LiteralPath $Checksums.FullName) {
-        if ($line -match '^([0-9A-Fa-f]{64})\s+\*?(.+?)\s*$') {
-            if ([IO.Path]::GetFileName($matches[2]) -eq $Archive.Name) {
-                $matchingChecksums += $matches[1].ToUpperInvariant()
+    $archiveIdentities = @()
+    foreach ($candidateArchive in @($Archive, $HelperArchive)) {
+        if ($null -eq $candidateArchive) { continue }
+        $matchingChecksums = @()
+        foreach ($line in Get-Content -LiteralPath $Checksums.FullName) {
+            if ($line -match '^([0-9A-Fa-f]{64})\s+\*?(.+?)\s*$') {
+                if ([IO.Path]::GetFileName($matches[2]) -eq $candidateArchive.Name) {
+                    $matchingChecksums += $matches[1].ToUpperInvariant()
+                }
             }
         }
+        if ($matchingChecksums.Count -ne 1) {
+            throw "Expected one checksum entry for $($candidateArchive.Name), got $($matchingChecksums.Count)."
+        }
+        $measuredHash = (Get-FileHash -LiteralPath $candidateArchive.FullName -Algorithm SHA256).Hash
+        if ($measuredHash -ne $matchingChecksums[0]) {
+            throw "Release archive checksum mismatch: path=$($candidateArchive.FullName) actual=$measuredHash expected=$($matchingChecksums[0])"
+        }
+        $archiveIdentities += [ordered]@{
+            path = $candidateArchive.FullName
+            name = $candidateArchive.Name
+            length = $candidateArchive.Length
+            sha256 = $measuredHash
+        }
     }
-    if ($matchingChecksums.Count -ne 1) {
-        throw "Expected one checksum entry for $($Archive.Name), got $($matchingChecksums.Count)."
-    }
-    $ArchiveSHA256 = (Get-FileHash -LiteralPath $Archive.FullName -Algorithm SHA256).Hash
-    if ($ArchiveSHA256 -ne $matchingChecksums[0]) {
-        throw "Release archive checksum mismatch: actual=$ArchiveSHA256 expected=$($matchingChecksums[0])"
-    }
+    $ArchiveSHA256 = $archiveIdentities[0].sha256
     $ChecksumVerified = $true
     Write-Utf8NoBom -LiteralPath (Join-Path $ArtifactRoot 'archive-identity.json') -Value ([ordered]@{
-        path = $Archive.FullName
-        name = $Archive.Name
-        length = $Archive.Length
-        sha256 = $ArchiveSHA256
         checksumsPath = $Checksums.FullName
+        archives = @($archiveIdentities)
     })
 
-    $Attestation = Invoke-NativeCapture -LiteralPath (Get-Command gh).Source `
-        -ArgumentList @('attestation', 'verify', $Archive.FullName, '-R', 'Kubonsang/testplay-runner') `
-        -OutputPath (Join-Path $ArtifactRoot 'attestation-verification.txt')
-    if ($Attestation.ExitCode -ne 0) {
-        throw "GitHub attestation verification failed: exit=$($Attestation.ExitCode)"
+    foreach ($candidateArchive in @($Archive, $HelperArchive)) {
+        if ($null -eq $candidateArchive) { continue }
+        $attestationPath = Join-Path $ArtifactRoot (
+            'attestation-' + [IO.Path]::GetFileNameWithoutExtension($candidateArchive.Name) + '.txt'
+        )
+        $Attestation = Invoke-NativeCapture -LiteralPath (Get-Command gh).Source `
+            -ArgumentList @('attestation', 'verify', $candidateArchive.FullName, '-R', 'Kubonsang/testplay-runner') `
+            -OutputPath $attestationPath
+        if ($Attestation.ExitCode -ne 0) {
+            throw "GitHub attestation verification failed: archive=$($candidateArchive.Name) exit=$($Attestation.ExitCode)"
+        }
     }
     $AttestationVerified = $true
 
@@ -152,18 +195,78 @@ try {
         statusMessage = $Signature.StatusMessage
         signerCertificate = if ($null -eq $Signature.SignerCertificate) { $null } else { $Signature.SignerCertificate.Subject }
     })
-    if ($Signature.Status.ToString() -ne 'NotSigned') {
-        throw "RC signing disclosure mismatch: Authenticode status=$($Signature.Status)"
+    if ($SignaturePolicy -ne 'TrustedStable') {
+        if ($Signature.Status.ToString() -ne 'NotSigned') {
+            throw "$SignaturePolicy signing disclosure mismatch: Authenticode status=$($Signature.Status)"
+        }
+        $SignatureVerified = $true
+        if ($SignaturePolicy -eq 'UnsignedStable') {
+            $helperRoot = Join-Path $ScratchRoot 'helper'
+            New-Item -ItemType Directory -Path $helperRoot | Out-Null
+            Expand-Archive -LiteralPath $HelperArchive.FullName -DestinationPath $helperRoot
+            $helperCandidates = @(Get-ChildItem $helperRoot -Recurse -File -Filter 'testplay-storage-helper.exe')
+            if ($helperCandidates.Count -ne 1) {
+                throw "Expected exactly one testplay-storage-helper.exe, got $($helperCandidates.Count)."
+            }
+            $helperSignature = Get-AuthenticodeSignature -LiteralPath $helperCandidates[0].FullName
+            if ($helperSignature.Status.ToString() -ne 'NotSigned') {
+                throw "UnsignedStable helper disclosure mismatch: Authenticode status=$($helperSignature.Status)"
+            }
+            $HelperSignatureVerified = $true
+        }
     }
-    $UnsignedVerified = $true
+    else {
+        $expectedThumbprint = $ExpectedSignerThumbprint.Replace(' ', '').ToUpperInvariant()
+        if ($Signature.Status.ToString() -ne 'Valid' -or
+            $null -eq $Signature.SignerCertificate -or
+            $Signature.SignerCertificate.Subject -ne $ExpectedSignerSubject -or
+            $Signature.SignerCertificate.Thumbprint.ToUpperInvariant() -ne $expectedThumbprint -or
+            $null -eq $Signature.TimeStamperCertificate) {
+            throw "Stable CLI Authenticode contract failed: status=$($Signature.Status) subject=$($Signature.SignerCertificate.Subject)"
+        }
+        $codeSigningEKU = @($Signature.SignerCertificate.EnhancedKeyUsageList |
+            Where-Object { $_.ObjectId.Value -eq '1.3.6.1.5.5.7.3.3' })
+        if ($codeSigningEKU.Count -ne 1) { throw 'Stable CLI certificate lacks the Code Signing EKU.' }
+        $signtool = Invoke-NativeCapture -LiteralPath (Get-Command signtool.exe).Source `
+            -ArgumentList @('verify', '/pa', '/all', '/v', $CandidateExecutable) `
+            -OutputPath (Join-Path $ArtifactRoot 'signtool-cli.txt')
+        if ($signtool.ExitCode -ne 0) { throw 'signtool verification failed for testplay.exe.' }
+        $SignatureVerified = $true
+
+        $helperRoot = Join-Path $ScratchRoot 'helper'
+        New-Item -ItemType Directory -Path $helperRoot | Out-Null
+        Expand-Archive -LiteralPath $HelperArchive.FullName -DestinationPath $helperRoot
+        $helperCandidates = @(Get-ChildItem $helperRoot -Recurse -File -Filter 'testplay-storage-helper.exe')
+        if ($helperCandidates.Count -ne 1) {
+            throw "Expected exactly one testplay-storage-helper.exe, got $($helperCandidates.Count)."
+        }
+        $helperSignature = Get-AuthenticodeSignature -LiteralPath $helperCandidates[0].FullName
+        if ($helperSignature.Status.ToString() -ne 'Valid' -or
+            $null -eq $helperSignature.SignerCertificate -or
+            $helperSignature.SignerCertificate.Subject -ne $ExpectedSignerSubject -or
+            $helperSignature.SignerCertificate.Thumbprint.ToUpperInvariant() -ne $expectedThumbprint -or
+            $null -eq $helperSignature.TimeStamperCertificate) {
+            throw "Stable helper Authenticode contract failed: status=$($helperSignature.Status) subject=$($helperSignature.SignerCertificate.Subject)"
+        }
+        $helperEKU = @($helperSignature.SignerCertificate.EnhancedKeyUsageList |
+            Where-Object { $_.ObjectId.Value -eq '1.3.6.1.5.5.7.3.3' })
+        if ($helperEKU.Count -ne 1) { throw 'Stable helper certificate lacks the Code Signing EKU.' }
+        $helperSigntool = Invoke-NativeCapture -LiteralPath (Get-Command signtool.exe).Source `
+            -ArgumentList @('verify', '/pa', '/all', '/v', $helperCandidates[0].FullName) `
+            -OutputPath (Join-Path $ArtifactRoot 'signtool-helper.txt')
+        if ($helperSigntool.ExitCode -ne 0) {
+            throw 'signtool verification failed for testplay-storage-helper.exe.'
+        }
+        $HelperSignatureVerified = $true
+    }
 
     $Version = Invoke-NativeCapture -LiteralPath $CandidateExecutable `
         -ArgumentList @('version') `
         -OutputPath (Join-Path $ArtifactRoot 'candidate-version.json')
-    if ($Version.ExitCode -ne 0 -or $Version.Lines.Count -ne 1) {
+    if ($Version.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($Version.Text)) {
         throw "Candidate version command failed: exit=$($Version.ExitCode) lines=$($Version.Lines.Count)"
     }
-    $VersionJSON = $Version.Lines[0].ToString() | ConvertFrom-Json
+    $VersionJSON = $Version.Text | ConvertFrom-Json
     if ($VersionJSON.schema_version -ne '1' -or $VersionJSON.version -ne $ExpectedVersion -or
         [string]::IsNullOrWhiteSpace($VersionJSON.commit) -or
         [string]::IsNullOrWhiteSpace($VersionJSON.date)) {
@@ -211,41 +314,55 @@ finally {
 
 $Passed = (
     $null -eq $Failure -and $ChecksumVerified -and $AttestationVerified -and
-    $VersionVerified -and $UnsignedVerified -and $Phase1ExitCode -eq 0
+    $VersionVerified -and $SignatureVerified -and
+    ($SignaturePolicy -eq 'UnsignedRC' -or $HelperSignatureVerified) -and
+    $Phase1ExitCode -eq 0
 )
+$NotMeasured = @(
+    'automatic auto-backend promotion',
+    'GNF eight workers',
+    'long-running child growth',
+    'generalized performance superiority',
+    'production readiness'
+)
+if ($SignaturePolicy -eq 'UnsignedRC') {
+    $NotMeasured = @('Authenticode signature', 'release readiness') + $NotMeasured
+}
+elseif ($SignaturePolicy -eq 'UnsignedStable') {
+    $NotMeasured = @('public-trust Authenticode hardening') + $NotMeasured
+}
 $Summary = [ordered]@{
     schemaVersion = 1
     status = if ($Passed) { 'PASS' } else { 'FAILED' }
-    verdict = if ($Passed) { 'VHDX_DIFF_RC_ASSET_SMOKE_PASS' } else { 'FAILED' }
+    verdict = if ($Passed -and $SignaturePolicy -eq 'TrustedStable') {
+        'VHDX_DIFF_STABLE_ASSET_SMOKE_PASS'
+    } elseif ($Passed -and $SignaturePolicy -eq 'UnsignedStable') {
+        'VHDX_DIFF_UNSIGNED_STABLE_ASSET_SMOKE_PASS'
+    } elseif ($Passed) { 'VHDX_DIFF_RC_ASSET_SMOKE_PASS' } else { 'FAILED' }
     startedAt = $Started.ToUniversalTime().ToString('o')
     finishedAt = (Get-Date).ToUniversalTime().ToString('o')
     expectedVersion = $ExpectedVersion
+    signaturePolicy = $SignaturePolicy
     releaseArchive = $Archive.FullName
     releaseArchiveSHA256 = if ($ChecksumVerified) { $ArchiveSHA256 } else { $null }
     checksumVerified = $ChecksumVerified
     attestationVerified = $AttestationVerified
     versionVerified = $VersionVerified
-    authenticodeUnsignedVerified = $UnsignedVerified
+    authenticodeVerified = $SignatureVerified
+    helperAuthenticodeVerified = $HelperSignatureVerified
     nativePhase1ExitCode = $Phase1ExitCode
     nativePhase1Artifact = $Phase1Artifact
     nativePhase1ArtifactSHA256 = $Phase1ArtifactSHA256
     failure = $Failure
-    notMeasured = @(
-        'Authenticode signature',
-        'automatic auto-backend promotion',
-        'GNF eight workers',
-        'long-running child growth',
-        'generalized performance superiority',
-        'production readiness',
-        'release readiness'
-    )
+    notMeasured = @($NotMeasured)
 }
 Write-Utf8NoBom -LiteralPath $SummaryPath -Value $Summary
 Compress-Archive -Path (Join-Path $ArtifactRoot '*') -DestinationPath $ZipPath -Force
 $ZipHash = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash
 
-Write-Output "VHDX_DIFF_RC_STATUS=$($Summary.status)"
-Write-Output "VHDX_DIFF_RC_VERDICT=$($Summary.verdict)"
-Write-Output "VHDX_DIFF_RC_ARTIFACT_ZIP=$ZipPath"
-Write-Output "VHDX_DIFF_RC_ARTIFACT_SHA256=$ZipHash"
+$OutputPrefix = if ($SignaturePolicy -eq 'UnsignedRC') { 'VHDX_DIFF_RC' } else { 'VHDX_DIFF_STABLE' }
+Write-Output "$($OutputPrefix)_STATUS=$($Summary.status)"
+Write-Output "$($OutputPrefix)_VERDICT=$($Summary.verdict)"
+Write-Output "$($OutputPrefix)_ARTIFACT_ZIP=$ZipPath"
+Write-Output "$($OutputPrefix)_ARTIFACT_SHA256=$ZipHash"
 if (-not $Passed) { exit 1 }

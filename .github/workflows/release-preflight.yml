@@ -6,7 +6,7 @@ on:
       version:
         description: Candidate tag, including the leading v
         required: true
-        default: v0.13.0-rc.1
+        default: v0.13.0
       previous_tag:
         description: Previous release tag used for changelog calculation
         required: true
@@ -27,7 +27,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.4"
+          go-version: "1.26.6"
 
       - name: Confirm metadata and toolchain
         shell: bash
@@ -35,13 +35,20 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          test "$(go env GOVERSION)" = "go1.26.4"
+          test "$(go env GOVERSION)" = "go1.26.6"
           source_version="$(sed -n 's/^var version = "\(v[^"]*\)"$/\1/p' cmd/testplay/version.go)"
           package_version="$(jq -r .version unity/com.testplay.bridge/package.json)"
           test "$source_version" = "$RELEASE_VERSION"
           test "$package_version" = "${RELEASE_VERSION#v}"
-          test -s docs/30_v0.13.0-rc.1_release_notes.md
-          test -s docs/31_v0.13.0-rc.1_release_notes.ko.md
+          test -s docs/34_v0.13.0_release_notes.md
+          test -s docs/35_v0.13.0_release_notes.ko.md
+          test -s docs/36_v0.13.0_validation.md
+          git diff --exit-code \
+            beabf36a299572607232806807ad9b9c2d4cb222 HEAD -- \
+            internal/vhdxworkspace \
+            internal/vhdxstorage \
+            internal/storagehelper \
+            internal/runsvc
 
       - name: Verify modules
         run: go mod verify
@@ -49,11 +56,12 @@ jobs:
       - name: Run vulnerability scan
         uses: golang/govulncheck-action@v1
         with:
-          go-version-input: "1.26.4"
+          go-version-input: "1.26.6"
 
       - name: Run tests and vet
         run: |
           go test ./... -count=1
+          go test -race ./... -count=1
           go vet ./...
 
       - uses: goreleaser/goreleaser-action@v6

@@ -119,6 +119,7 @@ $UpgradeAttempted = $false
 $UpgradeSucceeded = $false
 $LimitedProbeCreated = $false
 $LimitedProbe = $null
+$PlatformEvidence = [ordered]@{}
 $MarkerWasSet = Test-Path Env:TESTPLAY_UNITY_FIXTURE_MARKER
 $PreviousMarker = $env:TESTPLAY_UNITY_FIXTURE_MARKER
 $env:TESTPLAY_UNITY_FIXTURE_MARKER = "vhdx-diff-native-phase1-$Stamp"
@@ -215,9 +216,19 @@ $result = [ordered]@{
         }
     }
 
+    $ExpectedTests = [ordered]@{
+        edit_mode = @(
+            'TestPlayFixture.Tests.LibraryMountTests.DeterministicRuntimeStateTest',
+            'TestPlayFixture.Tests.LibraryMountTests.LibraryMountWriteReadTest'
+        )
+        play_mode = @(
+            'TestPlayFixture.Tests.DeterministicPlayModeTests.DeterministicPlayModeSmokeTest'
+        )
+    }
     foreach ($Platform in @('edit_mode', 'play_mode')) {
         $ConfigPath = Join-Path $ArtifactRoot "testplay-$Platform.json"
         $ResultRoot = Join-Path $ArtifactRoot "results-$Platform"
+        $Filter = @($ExpectedTests[$Platform]) -join ';'
         Write-Utf8NoBom -LiteralPath $ConfigPath -Value ([ordered]@{
             schema_version = '1'
             unity_path = $UnityEditorPath
@@ -233,10 +244,40 @@ $result = [ordered]@{
             }
         })
         $Run = Invoke-NativeCapture -LiteralPath $ExecutablePath `
-            -ArgumentList @('--config', $ConfigPath, 'run', '--workspace-backend', 'vhdx-diff', '--workspace-store-root', $StoreRoot, '--no-bridge') `
+            -ArgumentList @('--config', $ConfigPath, 'run', '--filter', $Filter, '--workspace-backend', 'vhdx-diff', '--workspace-store-root', $StoreRoot, '--no-bridge') `
             -OutputPath (Join-Path $ArtifactRoot "run-$Platform.txt")
         if ($Run.ExitCode -ne 0) {
             throw "$Platform fixture run failed: exit=$($Run.ExitCode)"
+        }
+        $ResultFiles = @(Get-ChildItem -LiteralPath $ResultRoot -File -Filter '*.json')
+        if ($ResultFiles.Count -ne 1) {
+            throw "$Platform fixture result inventory is invalid: count=$($ResultFiles.Count)"
+        }
+        $Result = Get-Content -LiteralPath $ResultFiles[0].FullName -Raw | ConvertFrom-Json
+        $ActualTests = @($Result.tests | ForEach-Object { $_.name } | Sort-Object)
+        $ExpectedPlatformTests = @($ExpectedTests[$Platform] | Sort-Object)
+        $Differences = @(Compare-Object -ReferenceObject $ExpectedPlatformTests -DifferenceObject $ActualTests)
+        $FailedTests = @($Result.tests | Where-Object { $_.result -ne 'Passed' })
+        if ($Result.exit_code -ne 0 -or $Result.total -ne $ExpectedPlatformTests.Count -or
+            $Differences.Count -ne 0 -or $FailedTests.Count -ne 0) {
+            throw "$Platform fixture result contract failed: exit=$($Result.exit_code) total=$($Result.total) differences=$($Differences.Count) failed=$($FailedTests.Count)"
+        }
+        if ($Result.workspace_metrics.provider -ne 'vhdx-differencing' -or
+            $Result.workspace_metrics.workspaceBackend -ne 'vhdx-diff' -or
+            $Result.workspace_metrics.fallbackUsed -or
+            $Result.workspace_metrics.cleanupState -ne 'released') {
+            throw "$Platform workspace contract failed: provider=$($Result.workspace_metrics.provider) backend=$($Result.workspace_metrics.workspaceBackend) fallback=$($Result.workspace_metrics.fallbackUsed) cleanup=$($Result.workspace_metrics.cleanupState)"
+        }
+        $PlatformEvidence[$Platform] = [ordered]@{
+            filter = $Filter
+            resultPath = $ResultFiles[0].FullName
+            total = $Result.total
+            passed = @($Result.tests | Where-Object { $_.result -eq 'Passed' }).Count
+            failed = $FailedTests.Count
+            tests = @($ActualTests)
+            provider = $Result.workspace_metrics.provider
+            fallbackUsed = $Result.workspace_metrics.fallbackUsed
+            cleanupState = $Result.workspace_metrics.cleanupState
         }
     }
 
@@ -315,6 +356,7 @@ $Summary = [ordered]@{
     upgradeSucceeded = $UpgradeSucceeded
     limitedUserProbeRequired = [bool]$RequireUnelevatedProbe
     limitedUserProbe = $LimitedProbe
+    platformEvidence = $PlatformEvidence
     releaseGatesPassed = $ReleaseGatesPassed
     uninstalled = $Uninstalled
     residualZero = $ResidualZero

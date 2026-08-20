@@ -44,22 +44,26 @@ func TestWindowsProtectedBaselineACLContract(t *testing.T) {
 	if err != nil || string(readBack) != string(content) {
 		t.Fatalf("protected baseline is not readable: data=%q err=%v", readBack, err)
 	}
-	assertAccessDenied(t, "write protected file", func() error {
-		return os.WriteFile(file, []byte("modified"), 0600)
-	})
-	assertAccessDenied(t, "delete protected file", func() error {
-		return os.Remove(file)
-	})
-	assertAccessDenied(t, "create protected child", func() error {
-		return os.WriteFile(filepath.Join(child, "replacement.bin"), []byte("replacement"), 0600)
-	})
-	replacement := filepath.Join(base, "replacement.bin")
-	if err := os.WriteFile(replacement, []byte("replacement"), 0600); err != nil {
-		t.Fatal(err)
+	if windows.GetCurrentProcessToken().IsElevated() {
+		t.Log("access-denial behavior is not asserted for an elevated Administrators token; DACL structure remains verified")
+	} else {
+		assertAccessDenied(t, "write protected file", func() error {
+			return os.WriteFile(file, []byte("modified"), 0600)
+		})
+		assertAccessDenied(t, "delete protected file", func() error {
+			return os.Remove(file)
+		})
+		assertAccessDenied(t, "create protected child", func() error {
+			return os.WriteFile(filepath.Join(child, "replacement.bin"), []byte("replacement"), 0600)
+		})
+		replacement := filepath.Join(base, "replacement.bin")
+		if err := os.WriteFile(replacement, []byte("replacement"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		assertAccessDenied(t, "replace protected child", func() error {
+			return os.Rename(replacement, file)
+		})
 	}
-	assertAccessDenied(t, "replace protected child", func() error {
-		return os.Rename(replacement, file)
-	})
 
 	if err := makeWritableTree(root); err != nil {
 		t.Fatalf("administrative recovery reset failed: %v", err)

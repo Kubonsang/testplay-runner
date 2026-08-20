@@ -3,67 +3,73 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - "v0.13.0"
 
 permissions:
   contents: write
   id-token: write
   attestations: write
 
-jobs:
-  goreleaser:
-    name: Build & Publish
-    runs-on: ubuntu-latest
+env:
+  STABLE_VERSION: v0.13.0
+  PROVIDER_FREEZE_COMMIT: beabf36a299572607232806807ad9b9c2d4cb222
 
+jobs:
+  release:
+    name: Build unsigned draft and attest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - uses: actions/setup-go@v5
         with:
-          # Go 1.24+ emits Mach-O LC_UUID, required by macOS 26 for the
-          # cross-compiled Darwin artifacts while the module remains Go 1.22 compatible.
-          go-version: "1.26.4"
-
-      - name: Verify release metadata
+          go-version: "1.26.6"
+      - name: Verify release metadata and frozen provider
         shell: bash
-        env:
-          RELEASE_VERSION: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          test "$GITHUB_REF_NAME" = "$STABLE_VERSION"
           source_version="$(sed -n 's/^var version = "\(v[^"]*\)"$/\1/p' cmd/testplay/version.go)"
           package_version="$(jq -r .version unity/com.testplay.bridge/package.json)"
-          test "$source_version" = "$RELEASE_VERSION"
-          test "$package_version" = "${RELEASE_VERSION#v}"
-          test -s docs/30_v0.13.0-rc.1_release_notes.md
-          test -s docs/31_v0.13.0-rc.1_release_notes.ko.md
-
+          test "$source_version" = "$STABLE_VERSION"
+          test "$package_version" = "${STABLE_VERSION#v}"
+          test -s docs/34_v0.13.0_release_notes.md
+          test -s docs/35_v0.13.0_release_notes.ko.md
+          test -s docs/36_v0.13.0_validation.md
+          git diff --exit-code "$PROVIDER_FREEZE_COMMIT" HEAD -- \
+            internal/vhdxworkspace internal/vhdxstorage internal/storagehelper internal/runsvc
       - name: Verify modules
         run: go mod verify
-
       - name: Run vulnerability scan
         uses: golang/govulncheck-action@v1
         with:
-          go-version-input: "1.26.4"
-
-      - name: Run tests
-        run: go test ./... -count=1
-
-      - name: Run vet
-        run: go vet ./...
-
-      - uses: goreleaser/goreleaser-action@v6
+          go-version-input: "1.26.6"
+      - name: Run tests, race tests, and vet
+        run: |
+          go test ./... -count=1
+          go test -race ./... -count=1
+          go vet ./...
+      - name: Build unsigned draft release
+        uses: goreleaser/goreleaser-action@v6
         with:
           version: "v2.17.0"
           args: >-
             release --clean
-            --release-notes docs/30_v0.13.0-rc.1_release_notes.md
-            --release-footer docs/31_v0.13.0-rc.1_release_notes.ko.md
+            --release-notes docs/34_v0.13.0_release_notes.md
+            --release-footer docs/35_v0.13.0_release_notes.ko.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Attest release archives
+      - name: Verify archive inventory and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(awk 'NF { n++ } END { print n+0 }' dist/checksums.txt)" -eq 9
+          diff -u \
+            <(jq -r '.[] | select(.type == "Archive") | .name' dist/artifacts.json | sort) \
+            <(awk '{print $2}' dist/checksums.txt | sort)
+          (cd dist && sha256sum --check checksums.txt)
+      - name: Attest unsigned release archives
         uses: actions/attest@v4
         with:
           subject-checksums: dist/checksums.txt

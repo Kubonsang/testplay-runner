@@ -520,6 +520,11 @@ func validateUnityPhase2Config(requested UnityPhase2Config) (UnityPhase2Config, 
 	requested.UnityEditorPath = filepath.Clean(requested.UnityEditorPath)
 	requested.FixturePath = filepath.Clean(requested.FixturePath)
 	requested.ArtifactRoot = filepath.Clean(requested.ArtifactRoot)
+	artifactRoot, err := resolveConfiguredRoot(requested.ArtifactRoot)
+	if err != nil {
+		return requested, Paths{}, newError(CodeInvalidConfiguration, "canonical-phase2-artifact-root", requested.ArtifactRoot, err)
+	}
+	requested.ArtifactRoot = artifactRoot
 	if requested.TestTimeout <= 0 {
 		return requested, Paths{}, newError(CodeInvalidConfiguration, "validate-phase2-timeout", requested.ArtifactRoot, fmt.Errorf("positive test timeout required"))
 	}
@@ -598,11 +603,10 @@ func captureUnityPhase2Source(ctx context.Context, fixture string) (UnityPhase2S
 	if err != nil {
 		return UnityPhase2SourceSnapshot{}, err
 	}
-	rel, err := filepath.Rel(repo, fixture)
-	if err != nil {
-		return UnityPhase2SourceSnapshot{}, err
-	}
-	fixtureStatus, err := runGit(repo, "status", "--porcelain=v1", "--untracked-files=all", "--", filepath.ToSlash(rel))
+	// Scope the pathspec from the fixture directory itself. This avoids Git
+	// rejecting an equivalent temp path when the OS canonicalizes an ancestor
+	// differently (for example /var -> /private/var or a Windows short name).
+	fixtureStatus, err := runGit(fixture, "status", "--porcelain=v1", "--untracked-files=all", "--", ".")
 	if err != nil {
 		return UnityPhase2SourceSnapshot{}, err
 	}

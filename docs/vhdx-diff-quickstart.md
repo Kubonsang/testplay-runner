@@ -1,4 +1,4 @@
-# Differencing VHDX quickstart (v0.13.0-rc.1)
+# Differencing VHDX quickstart (v0.13.0)
 
 `vhdx-diff` is an experimental, explicit opt-in for Windows 11 x64. It keeps
 one immutable NTFS parent VHDX per Unity compatibility key and mounts one
@@ -13,12 +13,12 @@ registry settings.
 - one elevated install for one Windows user SID;
 - a matching `testplay` CLI and broker from the same release.
 
-The RC Windows archive is not Authenticode-signed, so Windows SmartScreen may
-warn when it is downloaded or launched. Do not bypass that warning until the
-archive has been verified from the release directory:
+The v0.13.0 Windows executables are not Authenticode-signed and may trigger
+SmartScreen. Do not approve the elevated install until the archive has been
+verified from the release directory:
 
 ```powershell
-Get-FileHash .\testplay_0.13.0-rc.1_windows_amd64.zip -Algorithm SHA256
+Get-FileHash .\testplay_0.13.0_windows_amd64.zip -Algorithm SHA256
 ```
 
 Compare the result with `checksums.txt`, then verify the GitHub build
@@ -26,13 +26,13 @@ provenance:
 
 ```powershell
 gh attestation verify `
-  .\testplay_0.13.0-rc.1_windows_amd64.zip `
+  .\testplay_0.13.0_windows_amd64.zip `
   -R Kubonsang/testplay-runner
 ```
 
 An attestation proves which repository, commit, and workflow produced an
-archive. It is not an Authenticode signature and does not by itself prove that
-the program is vulnerability-free.
+archive. It does not by itself prove that the program is vulnerability-free.
+Authenticode support remains optional future hardening.
 
 ## One-time administrator setup
 
@@ -125,7 +125,7 @@ testplay storage uninstall --preserve-data
 ```
 
 Before downgrading to v0.12, run one of those uninstall commands with the
-v0.13 RC binary. v0.12 does not manage the versioned broker lifecycle.
+v0.13 binary. v0.12 does not manage the versioned broker lifecycle.
 
 If a command reports `cleanupState: preserved`, keep the authoritative store
 and inspect status. If it reports `cleanupState: uncertain` or
@@ -133,11 +133,11 @@ and inspect status. If it reports `cleanupState: uncertain` or
 `Dismount-DiskImage` against the residual. Preserve the output and report it
 through the repository's private vulnerability or support channel.
 
-## RC boundaries
+## Stable experimental boundaries
 
 Native Windows gates passed for fixture and GNF_ 1/2/4 workers, forced client
 and Unity termination, broker restart, Windows reboot, quota/LRU, and retained
 workspaces. The provider remains experimental because the separate 10-second
 per-worker preparation objective was not met. GNF_ 8 workers, long-running
-child growth, generalized performance superiority, production readiness, and
-release readiness are not claimed.
+child growth, generalized performance superiority, and production readiness
+are not claimed.

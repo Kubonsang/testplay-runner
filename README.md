@@ -111,7 +111,7 @@ testplay version
 ```json
 {
   "schema_version": "1",
-  "version": "v0.13.0-rc.1"
+  "version": "v0.13.0"
 }
 ```
 
@@ -541,10 +541,11 @@ registry setting is changed here. See
 [the provider contract](docs/differencing-vhdx-workspace-provider.md).
 
 For installation, AI-agent usage, retention, rollback, and verification, see
-the [Differencing VHDX quickstart](docs/vhdx-diff-quickstart.md). The RC
-Windows binary is not Authenticode-signed and may trigger SmartScreen; verify
-both the published SHA-256 checksum and GitHub build-provenance attestation
-before approving the one-time elevated install.
+the [Differencing VHDX quickstart](docs/vhdx-diff-quickstart.md). The v0.13.0
+Windows binaries are not Authenticode-signed and may trigger SmartScreen.
+Verify the published SHA-256 checksum and GitHub build-provenance attestation
+before approving the one-time elevated install. Authenticode remains optional
+future hardening rather than a v0.13.0 release gate.
 
 The v0.12.0 release assets include the separate `testplay-storage-helper` as an
 experimental integration primitive, not a public `testplay run` backend. Its schema-1 NDJSON
