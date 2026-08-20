@@ -111,7 +111,7 @@ testplay version
 ```json
 {
   "schema_version": "1",
-  "version": "v0.13.0-rc.1"
+  "version": "v0.13.0"
 }
 ```
 
@@ -528,10 +528,11 @@ Managed ReFS 구현과 기존 evidence는 별도 experimental/legacy backend로
 [provider 문서](docs/differencing-vhdx-workspace-provider.md)를 참고하십시오.
 
 설치, AI agent 사용, retained workspace, rollback, 검증 절차는
-[Differencing VHDX quickstart](docs/vhdx-diff-quickstart.md)를 따르십시오. RC Windows
-바이너리는 Authenticode 서명이 없어 SmartScreen 경고가 나타날 수 있으므로
-관리자 설치를 승인하기 전 공개된 SHA-256과 GitHub build-provenance
-attestation을 모두 검증하십시오.
+[Differencing VHDX quickstart](docs/vhdx-diff-quickstart.md)를 따르십시오. 정식
+Windows 바이너리는 공개 신뢰 Authenticode 서명과 RFC 3161 timestamp가
+유효해야 합니다. 관리자 설치 전 서명, 공개 SHA-256, GitHub
+build-provenance attestation을 모두 검증하십시오. 유효한 서명이 있어도
+SmartScreen 평판이 즉시 형성된다고 보장하지 않습니다.
 
 v0.12.0 릴리스 아티팩트에는 공개 `testplay run` 백엔드가 아닌 별도
 `testplay-storage-helper` 아카이브가 실험적 통합 primitive로 포함됩니다. schema 1 NDJSON

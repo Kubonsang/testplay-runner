@@ -1,8 +1,8 @@
 # 📈 testplay Release Plan & Version History
 
-**현재 공개 릴리스:** `v0.12.0`
+**현재 공개 prerelease:** `v0.13.0-rc.1` (`v0.12.0`은 latest stable)
 
-**준비 중인 후보:** `v0.13.0-rc.1`
+**준비 중인 후보:** `v0.13.0` — 공개 신뢰 Authenticode proof 전까지 차단
 **목표:** 단순한 로컬 테스트 래퍼를 넘어, AI 에이전트에 최적화된 시나리오 기반 멀티 인스턴스 러너로 단계적으로 확장
 
 > 이 문서는 확정 약속이 아니라, 베타 진행 상황에 따라 조정될 수 있는 릴리즈 계획을 정리한 것입니다.  
@@ -10,7 +10,7 @@
 
 ---
 
-## 🚧 v0.13.0-rc.1 (Differencing VHDX Workspaces) — release candidate
+## 🚧 v0.13.0 (Differencing VHDX Workspaces) — stable candidate
 
 **테마:** Windows 11에서 immutable NTFS parent VHDX와 run별
 differencing child를 이용한 명시적 experimental workspace backend
@@ -23,13 +23,16 @@ differencing child를 이용한 명시적 experimental workspace backend
   broker/admission 시작 전 legacy fallback을 허용한다.
 - fixture/GNF_ 1·2·4 worker, CLI/Unity 강제 종료, broker restart,
   Windows reboot, quota/LRU, retained workspace native gate가 통과했다.
-- Windows 11 x64, NTFS host, 단일 등록 사용자를 RC 지원 범위로
+- Windows 11 x64, NTFS host, 단일 등록 사용자를 experimental 지원 범위로
   한정한다. ReFS, Dev Drive, physical partition, Defender, registry 설정은
   변경하지 않는다.
-- RC Windows 아티팩트는 Authenticode 미서명이며 SHA-256과 GitHub
-  build-provenance attestation을 제공한다.
+- 정식 Windows 실행 파일 두 개는 공개 신뢰 Authenticode 서명과 RFC 3161
+  timestamp를 검증한 뒤에만 archive/checksum/attestation을 생성한다.
+- 공개 RC는 한 host에서 Day 0/3/7 관찰을 완료했다. 정식 태그는 한국 개인
+  개발자 명의 cloud/HSM signing proof와 signed candidate gate 전까지 만들지
+  않는다.
 - 10초 per-worker 준비 목표, GNF_ 8 worker, 장시간 child 성장,
-  일반화된 성능 우위, production/release readiness는 주장하지 않는다.
+  일반화된 성능 우위와 production readiness는 주장하지 않는다.
 
 ---
 

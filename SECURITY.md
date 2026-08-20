@@ -4,7 +4,7 @@
 
 Security fixes are provided for the latest published release candidate and the
 latest stable release. Older prereleases and development branches are not
-supported. `vhdx-diff` in v0.13.0-rc.1 is an experimental Windows 11 x64
+supported. `vhdx-diff` in v0.13.0 is an experimental Windows 11 x64
 opt-in; the legacy backend remains the default.
 
 ## Reporting a vulnerability
@@ -44,7 +44,10 @@ store. Preserve evidence and report the state privately.
 
 ## Release integrity
 
-The v0.13.0-rc.1 Windows archive is not Authenticode-signed. Verify its
-published SHA-256 and GitHub build-provenance attestation before approving the
+The v0.13.0 Windows executables must be signed by the documented public-trust
+publisher and carry an RFC 3161 timestamp. Verify the Authenticode signature,
+published SHA-256, and GitHub build-provenance attestation before approving the
 elevated installation. Provenance binds an archive to a repository workflow
-and commit; it is not a claim that the binary is vulnerability-free.
+and commit; neither provenance nor a signature claims that the binary is
+vulnerability-free. A valid signature also does not guarantee immediate
+SmartScreen reputation.
