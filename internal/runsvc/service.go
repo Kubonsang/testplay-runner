@@ -249,7 +249,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 			}
 			br := unity.ExecuteBridge(
 				ctx,
-				bridge.NewClient(req.Config.ProjectPath, handshake.BridgeSessionID),
+				bridge.NewClientForHandshake(req.Config.ProjectPath, handshake),
 				bridgeOpts,
 				runID,
 				bridgeIdleDeadline(req.Config),

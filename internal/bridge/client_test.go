@@ -89,7 +89,7 @@ func TestClientRun_Completed(t *testing.T) {
 		appendNDJSON(t, rf.StatusNDJSON, progressLine{Phase: "running", Total: 3, CurrentTest: "Ns.MyTest"})
 		_ = writeAtomicJSON(filepath.Join(c.dir, "responses", runID+".resp.json"), responseFile{
 			SchemaVersion:         "1",
-			BridgeProtocolVersion: ProtocolVersion,
+			BridgeProtocolVersion: LegacyProtocolVersion,
 			RunID:                 runID,
 			BridgeSessionID:       testBridgeSessionID,
 			Outcome:               OutcomeCompleted,
@@ -121,6 +121,46 @@ func TestClientRun_Completed(t *testing.T) {
 	}
 }
 
+func TestClientRun_Protocol3BindsWorkspaceEditorSessionAndCapability(t *testing.T) {
+	dir := t.TempDir()
+	h := &Handshake{
+		BridgeProtocolVersion: ProtocolVersion,
+		BridgeSessionID:       testBridgeSessionID,
+		WorkspaceID:           "workspace-v3",
+		EditorPID:             7373,
+	}
+	c := NewClientForHandshake(dir, h)
+	c.pollInterval = 5 * time.Millisecond
+	runID := "20260101-120000-v3binding"
+	reqPath := filepath.Join(c.dir, "requests", runID+".req.json")
+
+	go func() {
+		rf := waitForRequest(t, reqPath)
+		if rf.WorkspaceID != h.WorkspaceID || rf.EditorPID != h.EditorPID || rf.BridgeSessionID != h.BridgeSessionID || rf.CapabilityKind != string(CapabilityCompile) {
+			t.Errorf("protocol 3 request identity = %+v", rf)
+		}
+		responsePath := filepath.Join(c.dir, "responses", runID+".resp.json")
+		foreign := responseFile{
+			SchemaVersion: "1", BridgeProtocolVersion: ProtocolVersion, RunID: runID,
+			BridgeSessionID: h.BridgeSessionID, WorkspaceID: "foreign", EditorPID: h.EditorPID,
+			CapabilityKind: string(CapabilityCompile), Outcome: OutcomeCompleted,
+		}
+		_ = writeAtomicJSON(responsePath, foreign)
+		time.Sleep(30 * time.Millisecond)
+		foreign.WorkspaceID = h.WorkspaceID
+		_ = writeAtomicJSON(responsePath, foreign)
+	}()
+
+	started := time.Now()
+	out, err := c.Run(context.Background(), RunRequest{RunID: runID, CapabilityKind: CapabilityCompile}, nil)
+	if err != nil || out.Outcome != OutcomeCompleted {
+		t.Fatalf("outcome=%+v err=%v", out, err)
+	}
+	if time.Since(started) < 25*time.Millisecond {
+		t.Fatal("foreign workspace response was accepted")
+	}
+}
+
 func TestClientRun_CompileFailedReadsSidecar(t *testing.T) {
 	dir := t.TempDir()
 	c := newFastClient(dir)
@@ -141,7 +181,7 @@ func TestClientRun_CompileFailedReadsSidecar(t *testing.T) {
 		_ = writeAtomicJSON(rf.CompileErrorsJSON, compileErrorsFile{SchemaVersion: "1", Errors: []history.CompileError{want}})
 		_ = writeAtomicJSON(filepath.Join(c.dir, "responses", runID+".resp.json"), responseFile{
 			SchemaVersion:         "1",
-			BridgeProtocolVersion: ProtocolVersion,
+			BridgeProtocolVersion: LegacyProtocolVersion,
 			RunID:                 runID,
 			BridgeSessionID:       testBridgeSessionID,
 			Outcome:               OutcomeCompileFailed,
@@ -172,7 +212,7 @@ func TestClientRun_NonPristineWarnings(t *testing.T) {
 		waitForRequest(t, reqPath)
 		_ = writeAtomicJSON(filepath.Join(c.dir, "responses", runID+".resp.json"), responseFile{
 			SchemaVersion:         "1",
-			BridgeProtocolVersion: ProtocolVersion,
+			BridgeProtocolVersion: LegacyProtocolVersion,
 			RunID:                 runID,
 			BridgeSessionID:       testBridgeSessionID,
 			Outcome:               OutcomeCompleted,
@@ -241,7 +281,7 @@ func TestClientRun_IgnoresResponseFromDifferentBridgeSession(t *testing.T) {
 		responsePath := filepath.Join(c.dir, "responses", runID+".resp.json")
 		_ = writeAtomicJSON(responsePath, responseFile{
 			SchemaVersion:         "1",
-			BridgeProtocolVersion: ProtocolVersion,
+			BridgeProtocolVersion: LegacyProtocolVersion,
 			RunID:                 runID,
 			BridgeSessionID:       "different-editor-session",
 			Outcome:               OutcomeCompleted,
@@ -250,7 +290,7 @@ func TestClientRun_IgnoresResponseFromDifferentBridgeSession(t *testing.T) {
 		time.Sleep(30 * time.Millisecond)
 		_ = writeAtomicJSON(responsePath, responseFile{
 			SchemaVersion:         "1",
-			BridgeProtocolVersion: ProtocolVersion,
+			BridgeProtocolVersion: LegacyProtocolVersion,
 			RunID:                 runID,
 			BridgeSessionID:       testBridgeSessionID,
 			Outcome:               OutcomeCompleted,
@@ -280,7 +320,7 @@ func TestClientRun_TombstoneReturnsTransportFailureImmediately(t *testing.T) {
 		waitForRequest(t, reqPath)
 		_ = writeAtomicJSON(filepath.Join(c.dir, "requests", runID+".tombstone.json"), tombstoneFile{
 			SchemaVersion:         "1",
-			BridgeProtocolVersion: ProtocolVersion,
+			BridgeProtocolVersion: LegacyProtocolVersion,
 			RunID:                 runID,
 			ExecutionState:        ExecutionStateNotStarted,
 			Reason:                "terminal response could not be persisted",
@@ -310,7 +350,7 @@ func TestClientRun_PossiblyStartedTombstoneIsIndeterminate(t *testing.T) {
 		waitForRequest(t, reqPath)
 		_ = writeAtomicJSON(filepath.Join(c.dir, "requests", runID+".tombstone.json"), tombstoneFile{
 			SchemaVersion:         "1",
-			BridgeProtocolVersion: ProtocolVersion,
+			BridgeProtocolVersion: LegacyProtocolVersion,
 			RunID:                 runID,
 			ExecutionState:        ExecutionStatePossiblyStarted,
 			Reason:                "owned run ended but terminal response could not be persisted",

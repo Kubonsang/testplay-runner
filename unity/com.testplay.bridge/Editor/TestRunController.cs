@@ -112,6 +112,9 @@ namespace TestPlay.Bridge
                 {
                     run_id = _req.run_id,
                     bridge_session_id = _sessionId,
+					workspace_id = _req.workspace_id,
+					editor_pid = _req.editor_pid,
+					capability_kind = _req.capability_kind,
                     outcome = BridgeProtocol.OutcomeCompleted,
                     results_xml_written = true,
                     compile_failed = false,

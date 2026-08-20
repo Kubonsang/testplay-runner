@@ -13,6 +13,12 @@ namespace TestPlay.Bridge
     /// </summary>
     internal static class HandshakeWriter
     {
+        private static readonly string s_workspaceId =
+            Environment.GetEnvironmentVariable("HONEYBEE_WORKSPACE_ID") ?? "";
+
+        public static string WorkspaceId => s_workspaceId;
+        public static int EditorPid => SafePid();
+
         public static void Write(string sessionId, string editorState, string activeRunId)
         {
             var dto = new HandshakeDto
@@ -21,6 +27,7 @@ namespace TestPlay.Bridge
                 project_path_real = BridgePaths.ProjectRoot,
                 unity_version = Application.unityVersion,
                 editor_pid = SafePid(),
+                workspace_id = s_workspaceId,
                 bridge_session_id = sessionId,
                 updated_at = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture),
                 editor_state = editorState,

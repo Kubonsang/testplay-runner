@@ -23,7 +23,10 @@ const defaultPollInterval = 100 * time.Millisecond
 // cheap to construct; it holds no open handles between calls.
 type Client struct {
 	dir             string // <project>/.testplay/bridge
+	protocolVersion int
 	bridgeSessionID string // handshake identity this request is bound to
+	workspaceID     string
+	editorPID       int
 	pollInterval    time.Duration
 }
 
@@ -34,7 +37,24 @@ type Client struct {
 func NewClient(projectPath, bridgeSessionID string) *Client {
 	return &Client{
 		dir:             BridgeDir(projectPath),
+		protocolVersion: LegacyProtocolVersion,
 		bridgeSessionID: bridgeSessionID,
+		pollInterval:    defaultPollInterval,
+	}
+}
+
+// NewClientForHandshake preserves v2 compatibility while binding every v3
+// request and terminal document to the exact editor identity just probed.
+func NewClientForHandshake(projectPath string, h *Handshake) *Client {
+	if h == nil {
+		return NewClient(projectPath, "")
+	}
+	return &Client{
+		dir:             BridgeDir(projectPath),
+		protocolVersion: h.BridgeProtocolVersion,
+		bridgeSessionID: h.BridgeSessionID,
+		workspaceID:     h.WorkspaceID,
+		editorPID:       h.EditorPID,
 		pollInterval:    defaultPollInterval,
 	}
 }
@@ -54,6 +74,17 @@ func (c *Client) Run(ctx context.Context, req RunRequest, sw status.WriterInterf
 	if c.bridgeSessionID == "" {
 		return RunOutcome{}, fmt.Errorf("bridge: expected bridge session id is empty")
 	}
+	if !SupportedProtocol(c.protocolVersion) {
+		return RunOutcome{}, fmt.Errorf("bridge: unsupported protocol version %d", c.protocolVersion)
+	}
+	if c.protocolVersion == ProtocolVersion {
+		if req.CapabilityKind != CapabilityCompile && req.CapabilityKind != CapabilityWarmTest {
+			return RunOutcome{}, fmt.Errorf("bridge: protocol %d requires capability kind compile or warm-test", ProtocolVersion)
+		}
+		if c.editorPID <= 0 {
+			return RunOutcome{}, fmt.Errorf("bridge: protocol %d requires an editor PID", ProtocolVersion)
+		}
+	}
 	if sw == nil {
 		sw = noopWriter{}
 	}
@@ -67,9 +98,12 @@ func (c *Client) Run(ctx context.Context, req RunRequest, sw status.WriterInterf
 
 	rf := requestFile{
 		SchemaVersion:         "1",
-		BridgeProtocolVersion: ProtocolVersion,
+		BridgeProtocolVersion: c.protocolVersion,
 		RunID:                 req.RunID,
 		BridgeSessionID:       c.bridgeSessionID,
+		WorkspaceID:           c.workspaceID,
+		EditorPID:             c.editorPID,
+		CapabilityKind:        string(req.CapabilityKind),
 		TestPlatform:          req.TestPlatform,
 		Filter:                req.Filter,
 		Category:              req.Category,
@@ -99,10 +133,10 @@ func (c *Client) Run(ctx context.Context, req RunRequest, sw status.WriterInterf
 		// context still ships the final batch (mirrors ipc.PollingReader).
 		statusOffset = c.drainProgress(statusPath, statusOffset, sw)
 
-		if resp, ok := readResponse(respPath, req.RunID, c.bridgeSessionID); ok {
+		if resp, ok := c.readResponse(respPath, req.RunID, req.CapabilityKind); ok {
 			return finishOutcome(resp, compileErrPath), nil
 		}
-		if tombstone, ok := readTombstone(tombstonePath, req.RunID); ok {
+		if tombstone, ok := c.readTombstone(tombstonePath, req.RunID); ok {
 			if tombstone.ExecutionState != ExecutionStateNotStarted {
 				return RunOutcome{}, &IndeterminateRunError{RunID: req.RunID, Reason: tombstone.Reason}
 			}
@@ -122,7 +156,7 @@ func (c *Client) Run(ctx context.Context, req RunRequest, sw status.WriterInterf
 // readTombstone validates the durable transport marker for runID. As with
 // responses, partial, malformed, or foreign files are ignored and retried on a
 // later poll.
-func readTombstone(path, runID string) (tombstoneFile, bool) {
+func (c *Client) readTombstone(path, runID string) (tombstoneFile, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return tombstoneFile{}, false
@@ -132,6 +166,12 @@ func readTombstone(path, runID string) (tombstoneFile, bool) {
 		return tombstoneFile{}, false
 	}
 	if tombstone.RunID != runID {
+		return tombstoneFile{}, false
+	}
+	if tombstone.BridgeProtocolVersion != c.protocolVersion {
+		return tombstoneFile{}, false
+	}
+	if c.protocolVersion == ProtocolVersion && (tombstone.BridgeSessionID != c.bridgeSessionID || tombstone.WorkspaceID != c.workspaceID || tombstone.EditorPID != c.editorPID) {
 		return tombstoneFile{}, false
 	}
 	return tombstone, true
@@ -210,7 +250,7 @@ func progressToStatus(p progressLine) (status.Status, bool) {
 // readResponse reads and validates the response file. It returns ok=false (so
 // the caller keeps polling) when the file is absent, partially written, or
 // carries a different run_id (a stale/foreign response can never be misread).
-func readResponse(path, runID, bridgeSessionID string) (responseFile, bool) {
+func (c *Client) readResponse(path, runID string, capability CapabilityKind) (responseFile, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return responseFile{}, false
@@ -219,7 +259,10 @@ func readResponse(path, runID, bridgeSessionID string) (responseFile, bool) {
 	if err := json.Unmarshal(data, &r); err != nil {
 		return responseFile{}, false
 	}
-	if r.RunID != runID || r.BridgeProtocolVersion != ProtocolVersion || r.BridgeSessionID != bridgeSessionID {
+	if r.RunID != runID || r.BridgeProtocolVersion != c.protocolVersion || r.BridgeSessionID != c.bridgeSessionID {
+		return responseFile{}, false
+	}
+	if c.protocolVersion == ProtocolVersion && (r.WorkspaceID != c.workspaceID || r.EditorPID != c.editorPID || r.CapabilityKind != string(capability)) {
 		return responseFile{}, false
 	}
 	return r, true
@@ -243,7 +286,21 @@ func readCompileErrors(path string) ([]history.CompileError, error) {
 func (c *Client) writeCancel(runID string) {
 	path := filepath.Join(c.dir, "requests", runID+".cancel")
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
-	_ = os.WriteFile(path, []byte("cancel\n"), 0o644)
+	marker := tombstoneFile{
+		SchemaVersion: "1", BridgeProtocolVersion: c.protocolVersion, RunID: runID,
+		BridgeSessionID: c.bridgeSessionID, WorkspaceID: c.workspaceID, EditorPID: c.editorPID,
+		ExecutionState: ExecutionStatePossiblyStarted, Reason: "request canceled by client",
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	_ = writeAtomicJSON(path, marker)
+}
+
+// readResponse is retained for the atomic transport test and older package
+// callers. Production requests use Client.readResponse so protocol-v3 identity
+// fields are also checked.
+func readResponse(path, runID, bridgeSessionID string) (responseFile, bool) {
+	c := &Client{protocolVersion: ProtocolVersion, bridgeSessionID: bridgeSessionID}
+	return c.readResponse(path, runID, "")
 }
 
 // writeAtomicJSON marshals v and writes it to path via the shared atomic +

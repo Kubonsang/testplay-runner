@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/Kubonsang/testplay-runner/internal/mountedcopy"
 )
 
 // DefaultStaleWindow is the maximum age of a handshake heartbeat for the bridge
@@ -50,8 +52,8 @@ func Probe(projectPath, expectedUnityVersion string, now time.Time, staleWindow 
 		return nil, false, "bridge handshake is malformed"
 	}
 
-	if h.BridgeProtocolVersion != ProtocolVersion {
-		return &h, false, fmt.Sprintf("bridge protocol version mismatch (handshake=%d, want=%d)", h.BridgeProtocolVersion, ProtocolVersion)
+	if !SupportedProtocol(h.BridgeProtocolVersion) {
+		return &h, false, fmt.Sprintf("bridge protocol version mismatch (handshake=%d, supported=%d,%d)", h.BridgeProtocolVersion, LegacyProtocolVersion, ProtocolVersion)
 	}
 	if h.BridgeSessionID == "" {
 		return &h, false, "bridge handshake has no session identity"
@@ -86,6 +88,80 @@ func Probe(projectPath, expectedUnityVersion string, now time.Time, staleWindow 
 	}
 
 	return &h, true, ""
+}
+
+// SupportedProtocol reports whether the Go client can safely speak version.
+func SupportedProtocol(version int) bool {
+	return version == LegacyProtocolVersion || version == ProtocolVersion
+}
+
+// CapabilityRequirements binds a protocol-v3 capability request to one exact
+// editor lease. Empty identity values are never treated as wildcards.
+type CapabilityRequirements struct {
+	WorkspaceID     string
+	BridgeSessionID string
+	EditorPID       int
+}
+
+// ProbeCapability applies the normal liveness gates and then the strict
+// protocol-v3 HoneyBee identity contract. Unlike Probe, callers must not use a
+// failure from this function as permission to launch a cold Unity process.
+func ProbeCapability(projectPath, expectedUnityVersion string, requirements CapabilityRequirements, now time.Time, staleWindow time.Duration) (*Handshake, bool, string) {
+	if err := validateCapabilityBridgePath(projectPath); err != nil {
+		return nil, false, err.Error()
+	}
+	h, ok, reason := Probe(projectPath, expectedUnityVersion, now, staleWindow)
+	if !ok {
+		return h, false, reason
+	}
+	if h.BridgeProtocolVersion != ProtocolVersion {
+		return h, false, fmt.Sprintf("capability requires bridge protocol %d (handshake=%d)", ProtocolVersion, h.BridgeProtocolVersion)
+	}
+	if requirements.WorkspaceID == "" {
+		return h, false, "required workspace identity is empty"
+	}
+	if h.WorkspaceID == "" {
+		return h, false, "bridge handshake has no workspace identity"
+	}
+	if h.WorkspaceID != requirements.WorkspaceID {
+		return h, false, fmt.Sprintf("bridge workspace identity mismatch (handshake=%q, want=%q)", h.WorkspaceID, requirements.WorkspaceID)
+	}
+	if requirements.BridgeSessionID == "" || h.BridgeSessionID != requirements.BridgeSessionID {
+		return h, false, "bridge session identity mismatch"
+	}
+	if requirements.EditorPID <= 0 || h.EditorPID != requirements.EditorPID {
+		return h, false, fmt.Sprintf("bridge editor PID mismatch (handshake=%d, want=%d)", h.EditorPID, requirements.EditorPID)
+	}
+	return h, true, ""
+}
+
+func validateCapabilityBridgePath(projectPath string) error {
+	root, err := filepath.Abs(projectPath)
+	if err != nil {
+		return fmt.Errorf("bridge project path is invalid: %w", err)
+	}
+	target := BridgeDir(root)
+	rel, err := filepath.Rel(root, target)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("bridge runtime path is outside the project root")
+	}
+	current := root
+	for _, component := range strings.Split(rel, string(filepath.Separator)) {
+		current = filepath.Join(current, component)
+		if _, err := os.Lstat(current); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return fmt.Errorf("cannot inspect bridge runtime path %s: %w", current, err)
+		}
+		reparse, err := mountedcopy.IsReparsePoint(current)
+		if err != nil {
+			return fmt.Errorf("cannot inspect bridge runtime path %s: %w", current, err)
+		}
+		if reparse {
+			return fmt.Errorf("bridge runtime path is a symlink or reparse point: %s", current)
+		}
+	}
+	return nil
 }
 
 // samePath reports whether a and b resolve to the same filesystem path. It

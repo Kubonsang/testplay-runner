@@ -65,6 +65,12 @@ namespace TestPlay.Bridge
                 return;
             s_started = true;
 
+            if (!BridgePathPolicy.Validate(out string pathReason))
+            {
+                Debug.LogError($"[TestPlay.Bridge] refusing linked/reparse bridge runtime path: {pathReason}");
+                return;
+            }
+
             if (string.IsNullOrEmpty(SessionState.GetString(KeySession, "")))
                 SessionState.SetString(KeySession, GenerateSessionId());
 
@@ -164,9 +170,18 @@ namespace TestPlay.Bridge
                     continue;
                 }
 
+				var req = ReadRequest(file);
+				if (req == null)
+					continue;
+
                 if (File.Exists(BridgePaths.CancelPath(runId)))
                 {
                     var marker = ReadCancellationMarker(runId);
+					if (!BridgeProtocol.IsCancellationForRequest(marker, req))
+					{
+						WriteTombstone(runId, "cancellation marker identity does not match request", true);
+						continue;
+					}
                     string reason = marker?.reason;
                     // A non-JSON marker came from the Go context. No waiting Go
                     // caller remains, so conservative possibly_started sealing
@@ -182,10 +197,6 @@ namespace TestPlay.Bridge
                     continue;
                 }
 
-                var req = ReadRequest(file);
-                if (req == null)
-                    continue;
-
                 if (req.bridge_protocol_version != BridgeProtocol.Version)
                 {
                     TryWriteTerminal(runId, BridgeProtocol.OutcomeRejected, false, 0,
@@ -194,12 +205,20 @@ namespace TestPlay.Bridge
                     continue;
                 }
 
-                string currentSession = SessionState.GetString(KeySession, "");
-                if (!BridgeProtocol.IsRequestForSession(req, currentSession))
+                if (!BridgeProtocol.IsKnownCapability(req))
                 {
-                    WriteTombstone(runId,
-                        $"request belongs to bridge session '{req.bridge_session_id ?? ""}', current session is '{currentSession}'",
-                        true);
+                    TryWriteTerminal(runId, BridgeProtocol.OutcomeRejected, false, 0,
+                        $"unknown capability kind '{req.capability_kind ?? ""}'",
+                        false);
+                    continue;
+                }
+
+				string currentSession = SessionState.GetString(KeySession, "");
+				if (!BridgeProtocol.IsRequestForEditor(req, currentSession, HandshakeWriter.WorkspaceId, HandshakeWriter.EditorPid))
+                {
+                    TryWriteTerminal(runId, BridgeProtocol.OutcomeRejected, false, 0,
+                        "request workspace or editor identity does not match this bridge",
+                        false);
                     continue;
                 }
 
@@ -227,8 +246,13 @@ namespace TestPlay.Bridge
             // replay, so a cancel marker always enters the cancelling phase.
             if (File.Exists(BridgePaths.CancelPath(runId)) && phase != PhaseCancelling)
             {
+				var request = ReadRequest(BridgePaths.RequestPath(runId));
+				var marker = ReadCancellationMarker(runId);
                 bool ownedJobMayExist = phase == PhaseRunning || phase == PhaseCompleting;
-                BeginCancellation("request was canceled by the Go client", false, true, ownedJobMayExist);
+				string reason = BridgeProtocol.IsCancellationForRequest(marker, request)
+					? "request was canceled by the Go client"
+					: "cancellation marker identity does not match claimed request";
+				BeginCancellation(reason, false, true, ownedJobMayExist);
                 if (SessionState.GetString(KeyActive, "") == runId &&
                     SessionState.GetString(KeyPhase, "") == PhaseCancelling)
                     AdvanceCancelling(runId);
@@ -247,6 +271,16 @@ namespace TestPlay.Bridge
                 if (SessionState.GetString(KeyActive, "") == runId &&
                     SessionState.GetString(KeyPhase, "") == PhaseCancelling)
                     AdvanceCancelling(runId);
+                return;
+            }
+
+            if (!BridgeProtocol.IsRequestForEditor(
+                    req,
+                    SessionState.GetString(KeySession, ""),
+                    HandshakeWriter.WorkspaceId,
+                    HandshakeWriter.EditorPid))
+            {
+                BeginCancellation("claimed request identity changed after dispatch", false, true, false);
                 return;
             }
 
@@ -355,6 +389,14 @@ namespace TestPlay.Bridge
                 return;
             }
 
+            // compile is an import/compile-settle capability only. It must
+            // never enter TestRunnerApi or emit a results.xml document.
+			if (!BridgeProtocol.RequiresTestRun(req))
+            {
+                FinishTerminal(req.run_id, BridgeProtocol.OutcomeCompleted, false, 0, null);
+                return;
+            }
+
             StartRun(req);
         }
 
@@ -408,6 +450,8 @@ namespace TestPlay.Bridge
                 var response = JsonUtility.FromJson<ResponseDto>(pendingJson);
                 if (response == null || response.run_id != runId ||
                     response.bridge_session_id != SessionState.GetString(KeySession, "") ||
+					response.workspace_id != HandshakeWriter.WorkspaceId ||
+					response.editor_pid != HandshakeWriter.EditorPid ||
                     response.outcome != BridgeProtocol.OutcomeCompleted)
                     throw new InvalidDataException("pending response identity or outcome is invalid");
 
@@ -705,6 +749,8 @@ namespace TestPlay.Bridge
             {
                 run_id = runId,
                 bridge_session_id = SessionState.GetString(KeySession, ""),
+				workspace_id = HandshakeWriter.WorkspaceId,
+				editor_pid = HandshakeWriter.EditorPid,
                 outcome = outcome,
                 results_xml_written = false,
                 compile_failed = compileFailed,
@@ -712,6 +758,8 @@ namespace TestPlay.Bridge
                 non_pristine = string.IsNullOrEmpty(disclosure) ? new string[0] : new[] { disclosure },
                 finished_at = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture),
             };
+            var request = ReadRequest(BridgePaths.RequestPath(runId));
+            resp.capability_kind = request?.capability_kind ?? "";
             try
             {
                 AtomicFile.WriteAllText(BridgePaths.ResponsePath(runId), JsonUtility.ToJson(resp, true));
@@ -737,6 +785,9 @@ namespace TestPlay.Bridge
             var tombstone = new TombstoneDto
             {
                 run_id = runId,
+				bridge_session_id = SessionState.GetString(KeySession, ""),
+				workspace_id = HandshakeWriter.WorkspaceId,
+				editor_pid = HandshakeWriter.EditorPid,
                 execution_state = executionMayHaveStarted
                     ? BridgeProtocol.ExecutionPossiblyStarted
                     : BridgeProtocol.ExecutionNotStarted,
@@ -776,6 +827,9 @@ namespace TestPlay.Bridge
             var marker = new CancellationMarkerDto
             {
                 run_id = runId,
+				bridge_session_id = SessionState.GetString(KeySession, ""),
+				workspace_id = HandshakeWriter.WorkspaceId,
+				editor_pid = HandshakeWriter.EditorPid,
                 owned_run_guid = SessionState.GetString(KeyOwnedRunGuid, ""),
                 execution_state = ExecutionMayHaveStarted()
                     ? BridgeProtocol.ExecutionPossiblyStarted

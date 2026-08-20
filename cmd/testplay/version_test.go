@@ -20,8 +20,8 @@ func TestVersionCmd_OutputsJSONWithSchemaVersion(t *testing.T) {
 	if out["schema_version"] != "1" {
 		t.Errorf("schema_version: got %v, want \"1\"", out["schema_version"])
 	}
-	if out["version"] != "v0.13.0" {
-		t.Errorf("version: got %v, want v0.13.0", out["version"])
+	if out["version"] != "v0.14.0-dev" {
+		t.Errorf("version: got %v, want v0.14.0-dev", out["version"])
 	}
 }
 

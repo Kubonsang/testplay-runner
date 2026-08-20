@@ -20,7 +20,11 @@ protocol 2 returns exit 9 and does not replay the run through a cold backend.
 - Unity 6 (6000.3+) with the Test Framework package
   (`com.unity.test-framework`). Protocol 2 depends on per-run GUID activity and
   cancellation APIs that are not available in Unity 2022.3.
-- TestPlay Runner v0.13.0 with the matching protocol-2 bridge package.
+- TestPlay Runner v0.14 development build with the matching protocol-3 bridge
+  package. The Go CLI continues to read protocol-2 handshakes for ordinary
+  `testplay run --bridge` calls; capability calls require protocol 3. The
+  published v0.13.0 stable release remains the protocol-2 line and is not
+  changed by this v0.14 feature.
 
 ## Install (in-repo UPM)
 
@@ -45,10 +49,14 @@ the package version matching your `testplay` version.
 ## Opt-in (dormant by default)
 
 Installing the package alone changes **nothing**. The bridge activates only when
-opted in, and **never** in batchmode:
+explicitly opted in. A normal batchmode run remains dormant; HoneyBee may bind a
+harness-owned headless Editor by supplying a non-empty `HONEYBEE_WORKSPACE_ID`:
 
 - **Environment variable** (developer dogfood): launch the Editor with
   `TESTPLAY_BRIDGE_ENABLE=1`.
+- **HoneyBee workspace binding** (protocol 3): launch the owned Editor with a
+  non-empty `HONEYBEE_WORKSPACE_ID`. This is the only supported batchmode bridge
+  activation path.
 - **Project sentinel** (declarative): create an empty file at
   `<project>/.testplay/bridge/ENABLE` (e.g. `mkdir -p .testplay/bridge && touch .testplay/bridge/ENABLE`).
 

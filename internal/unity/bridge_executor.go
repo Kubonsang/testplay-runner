@@ -50,6 +50,7 @@ func ExecuteBridge(ctx context.Context, client BridgeClient, opts ExecuteOptions
 
 	req := bridge.RunRequest{
 		RunID:          runID,
+		CapabilityKind: bridge.CapabilityWarmTest,
 		TestPlatform:   opts.TestPlatform,
 		Filter:         opts.Filter,
 		Category:       opts.Category,
