@@ -1,6 +1,7 @@
 package shadow_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -535,6 +536,29 @@ func TestPrepare_ShadowDirNameContainsRunID(t *testing.T) {
 
 	if !strings.HasSuffix(ws.ShadowPath, ".testplay-shadow-"+runID) {
 		t.Errorf("ShadowPath %q does not end with '.testplay-shadow-%s'", ws.ShadowPath, runID)
+	}
+}
+
+func TestPrepare_ExternalWorkspaceDoesNotMutateSourceGitIgnore(t *testing.T) {
+	t.Parallel()
+	src := makeProject(t)
+	gitignore := filepath.Join(src, ".gitignore")
+	want := []byte("/Library/\n")
+	must(t, os.WriteFile(gitignore, want, 0644))
+	workspaceRoot := filepath.Join(t.TempDir(), "workspaces")
+	must(t, os.Mkdir(workspaceRoot, 0755))
+
+	ws, err := shadow.Prepare(context.Background(), src, "external-isolation", shadow.PrepareOptions{WorkspaceRoot: workspaceRoot, CopyPackages: true, SkipLibrary: true})
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	defer ws.Cleanup()
+	got, err := os.ReadFile(gitignore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("source .gitignore changed: got=%q want=%q", got, want)
 	}
 }
 

@@ -6,7 +6,7 @@
 
 ---
 
-Unity's raw CLI is broken for automation: exit code 0 even on compile failure, XML-only output, no progress visibility, ambiguous error types. `testplay` fixes all of that with a six-command interface designed for AI agents and CI pipelines.
+Unity's raw CLI is broken for automation: exit code 0 even on compile failure, XML-only output, no progress visibility, ambiguous error types. `testplay` fixes all of that with six core test commands plus opt-in storage/workspace management designed for AI agents and CI pipelines.
 
 ## Who is testplay for?
 
@@ -111,7 +111,7 @@ testplay version
 ```json
 {
   "schema_version": "1",
-  "version": "v0.12.0"
+  "version": "v0.13.0"
 }
 ```
 
@@ -493,15 +493,59 @@ Each run gets its own isolated shadow directory, making parallel `testplay run` 
 - `--shadow` — force shadow workspace even when the editor is not open (useful for testing shadow behaviour)
 - `--reset-shadow` — equivalent to `--shadow` (with per-run isolation every run already starts fresh; kept for API compatibility)
 - `--clear-cache` — remove `.testplay/cache/` before shadow workspace creation, forcing Unity to reimport from scratch
-- `--workspace-backend=legacy|image` — explicitly compare the existing Shadow cache with the experimental immutable Library Image backend
-- `--workspace-store-root=<absolute-path>` — keep persistent Legacy Library cache or Image store outside the Unity project while Unity workspaces remain local (experimental)
-- `--keep-workspace` — keep the per-run Shadow directory for debugging
+- `--workspace-backend=legacy|image|vhdx-diff|auto` — select the existing backends or the opt-in Windows differencing-VHDX provider
+- `--workspace-store-root=<absolute-path>` — select the installed broker store (it must exactly match the registered root for `vhdx-diff`)
+- `--keep-workspace` — retain the prepared workspace for explicit later attach/remove
 
 The Image backend is experimental and never selected by default. An explicit
 `image` failure is reported; it does not silently fall back to Legacy. See the
 [spike report](docs/library-image-spike.md) and
 [benchmark](docs/benchmarks/library-image-baseline.md). Current benchmark
 verdict: `PROMISING`.
+
+### Differencing VHDX workspace provider (native-tested opt-in)
+
+On Windows 11, `vhdx-diff` keeps one immutable NTFS parent VHDX per
+compatibility key and gives each run a private writable differencing child
+mounted at its isolated workspace's `Library`. Install the restricted local
+broker once from an elevated terminal; ordinary users and AI agents then run
+without elevation:
+
+```powershell
+testplay storage install
+testplay storage status --json
+testplay run --workspace-backend vhdx-diff
+```
+
+`auto` uses `vhdx-diff` only when broker hello and capacity admission succeed.
+It may fall back to `legacy` before any parent/child operation starts, and never
+afterward. `--keep-workspace` detaches but retains the exact child; use
+`testplay workspace attach <run-id>` and `testplay workspace remove <run-id>`
+to manage it. The default allocated-byte quota is 32 GiB, the host-free floor
+is 20 GiB, and each newly admitted child reserves 2 GiB.
+
+This provider is feature-complete at checkpoint `beabf36` as an explicit
+experimental opt-in. Fixture and GNF 1/2/4-worker gates, fixture and GNF
+CLI/Unity forced-termination recovery, fixture broker-restart and Windows
+reboot recovery, and quota/LRU plus retained-workspace lifecycle gates passed
+on native Windows. The existing direct-batch/legacy-shadow selection remains
+unchanged; neither `vhdx-diff` nor `auto` is selected unless the user asks for
+it. The measured
+GNF four-worker full workspace preparation was 14.794–15.122 seconds per
+worker, so the separate 10-second objective, GNF eight workers, generalized
+performance superiority, and production/release readiness remain unclaimed.
+
+The Managed ReFS pool and its evidence remain available as a separate
+experimental/legacy backend; no ReFS, Dev Drive, partition, Defender, or
+registry setting is changed here. See
+[the provider contract](docs/differencing-vhdx-workspace-provider.md).
+
+For installation, AI-agent usage, retention, rollback, and verification, see
+the [Differencing VHDX quickstart](docs/vhdx-diff-quickstart.md). The v0.13.0
+Windows binaries are not Authenticode-signed and may trigger SmartScreen.
+Verify the published SHA-256 checksum and GitHub build-provenance attestation
+before approving the one-time elevated install. Authenticode remains optional
+future hardening rather than a v0.13.0 release gate.
 
 The v0.12.0 release assets include the separate `testplay-storage-helper` as an
 experimental integration primitive, not a public `testplay run` backend. Its schema-1 NDJSON
@@ -516,10 +560,10 @@ permission bits; restoration of the original directory object or all metadata
 is not claimed.
 See the [Windows provider](docs/windows-vhdx-storage-helper.md),
 [macOS/Linux providers](docs/unix-cow-storage-helper.md), and
-[v0.12.0 release notes](docs/28_v0.12.0_release_notes.md). The public six-command
-CLI contract and production default backend are unchanged; the helper is not
-connected to `testplay run`, is never selected automatically, has no silent
-physical-copy fallback, and is not production-ready.
+[v0.12.0 release notes](docs/28_v0.12.0_release_notes.md). That schema-1 helper
+remains unchanged and separate. The new versioned broker protocol connects only
+the explicit `vhdx-diff`/`auto` workspace choices; the production default is
+unchanged and no physical-copy fallback is added.
 
 **`.gitignore` is patched automatically** to exclude `.testplay-shadow-*/` on first use.
 

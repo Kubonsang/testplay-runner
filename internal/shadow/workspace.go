@@ -42,6 +42,11 @@ func ShadowWorkspaceDir(sourcePath, runID string) string {
 
 // PrepareOptions configures optional behavior for Prepare.
 type PrepareOptions struct {
+	// WorkspaceRoot, when non-empty, places the per-run workspace directly
+	// below this pre-authorized root. The default remains project-local for
+	// legacy callers.
+	WorkspaceRoot string
+
 	// LibraryCacheDir, if non-empty, is the path to a cached Library directory.
 	// When set, Library/ is seeded by copying from this cache instead of starting empty.
 	LibraryCacheDir string
@@ -54,6 +59,10 @@ type PrepareOptions struct {
 	// source project. The legacy backend leaves this false for compatibility;
 	// isolated backends set it to prevent Unity package writes reaching source.
 	CopyPackages bool
+
+	// SkipLibrary leaves Library absent so a lifecycle-aware storage provider
+	// can mount it. It is never used by legacy or image backends.
+	SkipLibrary bool
 }
 
 // Prepare creates an isolated shadow workspace for a single run.
@@ -70,6 +79,12 @@ func Prepare(ctx context.Context, sourcePath, runID string, opts PrepareOptions)
 		return nil, err
 	}
 	shadowPath := ShadowWorkspaceDir(abs, runID)
+	if opts.WorkspaceRoot != "" {
+		if !filepath.IsAbs(opts.WorkspaceRoot) {
+			return nil, fmt.Errorf("workspace root must be absolute")
+		}
+		shadowPath = filepath.Join(filepath.Clean(opts.WorkspaceRoot), runID)
+	}
 	ws := &Workspace{
 		SourcePath:       abs,
 		ShadowPath:       shadowPath,
@@ -118,31 +133,37 @@ func Prepare(ctx context.Context, sourcePath, runID string, opts PrepareOptions)
 		}
 	}
 
-	// Seed Library/ from cache if available, otherwise create empty.
-	libDst := filepath.Join(shadowPath, "Library")
-	libraryStarted := time.Now()
-	if opts.LibraryCacheDir != "" {
-		if _, err := os.Stat(opts.LibraryCacheDir); err == nil {
-			if err := copyDir(ctx, opts.LibraryCacheDir, libDst); err != nil {
-				return nil, err
+	if !opts.SkipLibrary {
+		// Seed Library/ from cache if available, otherwise create empty.
+		libDst := filepath.Join(shadowPath, "Library")
+		libraryStarted := time.Now()
+		if opts.LibraryCacheDir != "" {
+			if _, err := os.Stat(opts.LibraryCacheDir); err == nil {
+				if err := copyDir(ctx, opts.LibraryCacheDir, libDst); err != nil {
+					return nil, err
+				}
+			} else {
+				if err := os.MkdirAll(libDst, 0755); err != nil {
+					return nil, err
+				}
 			}
 		} else {
 			if err := os.MkdirAll(libDst, 0755); err != nil {
 				return nil, err
 			}
 		}
-	} else {
-		if err := os.MkdirAll(libDst, 0755); err != nil {
-			return nil, err
-		}
+		ws.Metrics.LibraryMaterialize = time.Since(libraryStarted)
 	}
-	ws.Metrics.LibraryMaterialize = time.Since(libraryStarted)
 
 	// Clean Temp/ so Unity starts fresh each run.
 	_ = os.RemoveAll(filepath.Join(shadowPath, "Temp"))
 
-	// Patch .gitignore — non-fatal.
-	_ = EnsureIgnored(abs, ".testplay-shadow-*/")
+	// Project-local shadows need ignore coverage. Broker workspaces live outside
+	// the source tree, so mutating the source .gitignore would violate their
+	// physical source-isolation contract and serves no purpose.
+	if opts.WorkspaceRoot == "" {
+		_ = EnsureIgnored(abs, ".testplay-shadow-*/")
+	}
 
 	succeeded = true
 	return ws, nil

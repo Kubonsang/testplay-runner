@@ -72,6 +72,37 @@ func TestCloseZeroHandle(t *testing.T) {
 	}
 }
 
+func TestSameVolumeGUIDNormalizesCaseAndTrailingSlash(t *testing.T) {
+	if !sameVolumeGUID(`\\?\Volume{ABCDEF}\`, `\\?\volume{abcdef}`) {
+		t.Fatal("equivalent volume GUID paths did not match")
+	}
+	if sameVolumeGUID(`\\?\Volume{abcdef}\`, `\\?\Volume{other}\`) {
+		t.Fatal("different volume GUID paths matched")
+	}
+}
+
+func TestDetachedImageQueryContract(t *testing.T) {
+	for _, contract := range []string{"Get-DiskImage -ImagePath", "$images.Count -ne 1", "attached = [bool]$images[0].Attached", "[IO.Path]::GetFullPath"} {
+		if !strings.Contains(detachedImageQueryScript, contract) {
+			t.Fatalf("detached image query does not enforce %q", contract)
+		}
+	}
+}
+
+func TestStaleMountValidationUsesWin32ReparseAttributesBeforeDirectoryMode(t *testing.T) {
+	source, err := os.ReadFile("lifecycle_windows.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	attributes := strings.Index(text, "windows.GetFileAttributes(mountPtr)")
+	reparse := strings.Index(text, "attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0")
+	directory := strings.Index(text, "non-reparse mount path is not a directory")
+	if attributes < 0 || reparse < 0 || directory < 0 || !(attributes < reparse && reparse < directory) {
+		t.Fatal("Win32 reparse classification must precede the non-reparse directory-mode gate")
+	}
+}
+
 func TestStoragePowerShellParses(t *testing.T) {
 	parser := `
 $tokens = $null
@@ -98,6 +129,33 @@ if ($parseErrors.Count -ne 0) {
 				t.Fatalf("parse failed: %v\n%s", err, output)
 			}
 		})
+	}
+}
+
+func TestUnmountUsesNormalizedExactPartitionAccessPath(t *testing.T) {
+	busCheck := strings.Index(unmountDiskScript, "'File Backed Virtual'")
+	ownershipPoll := strings.Index(unmountDiskScript, "$ownershipDeadline")
+	remove := strings.Index(unmountDiskScript, "Remove-PartitionAccessPath")
+	visibilityPoll := strings.Index(unmountDiskScript, "$remainingAccessPaths")
+	if busCheck < 0 || ownershipPoll < 0 || remove < 0 || visibilityPoll < 0 {
+		t.Fatal("unmount script is missing an ownership or visibility boundary")
+	}
+	if !(busCheck < ownershipPoll && ownershipPoll < remove && remove < visibilityPoll) {
+		t.Fatal("unmount safety gates must precede removal and post-remove visibility polling")
+	}
+	for _, contract := range []string{
+		"[IO.Path]::GetFullPath($path)",
+		"[StringComparison]::OrdinalIgnoreCase",
+		"$ownedAccessPaths.Count -eq 1",
+		"-AccessPath $ownedAccessPath",
+		"$remainingAccessPaths.Count -ne 0",
+	} {
+		if !strings.Contains(unmountDiskScript, contract) {
+			t.Fatalf("unmount script does not enforce %q", contract)
+		}
+	}
+	if strings.Contains(unmountDiskScript, "Remove-PartitionAccessPath -InputObject $partition -AccessPath $mountPath") {
+		t.Fatal("unmount must use the exact access path returned by the owned partition")
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/Kubonsang/testplay-runner/internal/shadow"
 	"github.com/Kubonsang/testplay-runner/internal/status"
 	"github.com/Kubonsang/testplay-runner/internal/unity"
+	"github.com/Kubonsang/testplay-runner/internal/vhdxworkspace"
 )
 
 const heartbeatInterval = 5 * time.Second
@@ -97,6 +98,9 @@ type Service struct {
 	// LibraryMaterializer is injectable for boundary/failure tests. Nil keeps
 	// the public behavior fixed to the physical-copy implementation.
 	LibraryMaterializer librarymaterializer.LibraryMaterializer
+	// WorkspaceBroker is injectable for protocol and lifecycle tests. Nil uses
+	// the installed local broker transport.
+	WorkspaceBroker vhdxworkspace.Client
 }
 
 // Request carries all inputs for a single testplay run.
@@ -268,29 +272,31 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	// else a fresh batchmode process against the real project. Unchanged. ───
 	var ws *shadow.Workspace
 	var workspaceMetrics *history.WorkspaceMetrics
+	var vhdxLease *preparedVHDXWorkspace
+	var workspaceLease WorkspaceLease
 	workspaceCleanupPending := false
 	if !ranBridge {
 		useShadow := req.WorkspaceBackend != "" ||
 			req.ForceShadow || req.ResetShadow || shadow.IsLocked(req.Config.ProjectPath)
 		if useShadow {
-			var wsErr error
-			if req.WorkspaceBackend == WorkspaceBackendImage {
-				ws, workspaceMetrics, wsErr = s.prepareImageWorkspace(
-					ctx, req, runID, stdoutLog, stderrLog,
-				)
-			} else {
-				ws, workspaceMetrics, wsErr = s.prepareLegacyWorkspace(ctx, req, runID)
+			backend := req.WorkspaceBackend
+			if backend == "" {
+				backend = WorkspaceBackendLegacy
 			}
+			var wsErr error
+			workspaceLease, wsErr = s.workspaceProvider(backend).Prepare(ctx, req, runID, stdoutLog, stderrLog)
 			if wsErr != nil {
 				if errors.Is(wsErr, os.ErrPermission) {
 					return Response{ExitCode: 7}, fmt.Errorf("runsvc: prepare shadow workspace: %w", wsErr)
 				}
 				return Response{}, fmt.Errorf("runsvc: prepare shadow workspace: %w", wsErr)
 			}
+			prepared := workspaceLease.(*serviceWorkspaceLease)
+			ws, workspaceMetrics, vhdxLease = prepared.workspace, prepared.metrics, prepared.vhdx
 			workspaceCleanupPending = true
 			defer func() {
 				if workspaceCleanupPending && !req.KeepWorkspace {
-					_ = ws.Cleanup()
+					_ = releaseWorkspaceLeaseBounded(workspaceLease, ReleasePolicy{})
 				}
 			}()
 		}
@@ -318,9 +324,42 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 			ExtraArgs:    extraArgs,
 		}
 		unityStarted := time.Now()
-		result, exitCode = unity.Execute(ctx, s.Runner, execOpts)
+		var unityProcessPID int
+		var unityProcessStartedAt time.Time
+		unityCtx := ctx
+		stopStorageMonitor := func() error { return nil }
+		runRunner := s.Runner
+		if vhdxLease != nil {
+			unityCtx, stopStorageMonitor = vhdxLease.Monitor(ctx)
+			if processRunner, ok := s.Runner.(*unity.ProcessRunner); ok {
+				// Scenario roles share Service.Runner. Mutating its callback here
+				// would race and could attribute one role's Unity PID to another
+				// lease, so each execution receives an isolated shallow copy.
+				isolatedRunner := *processRunner
+				previous := isolatedRunner.OnStart
+				isolatedRunner.OnStart = func(pid int, started time.Time) {
+					unityProcessPID = pid
+					unityProcessStartedAt = started.UTC()
+					if previous != nil {
+						previous(pid, started)
+					}
+					vhdxLease.SetUnityPID(unityCtx, pid)
+				}
+				runRunner = &isolatedRunner
+			}
+		}
+		result, exitCode = unity.Execute(unityCtx, runRunner, execOpts)
+		unityProcessFinishedAt := time.Now().UTC()
+		if monitorErr := stopStorageMonitor(); monitorErr != nil {
+			warnings = append(warnings, fmt.Sprintf("VHDX workspace safety monitor stopped the run: %v", monitorErr))
+		}
 		if workspaceMetrics != nil {
 			workspaceMetrics.UnityExecutionMs = time.Since(unityStarted).Milliseconds()
+			workspaceMetrics.UnityProcessPID = unityProcessPID
+			if !unityProcessStartedAt.IsZero() {
+				workspaceMetrics.UnityProcessStartedAt = unityProcessStartedAt.Format(time.RFC3339Nano)
+				workspaceMetrics.UnityProcessFinishedAt = unityProcessFinishedAt.Format(time.RFC3339Nano)
+			}
 			workspaceMetrics.TestExecutionMs = testExecutionMilliseconds(result)
 			workspaceMetrics.UnityStartupMs = workspaceMetrics.UnityExecutionMs - workspaceMetrics.TestExecutionMs
 			if workspaceMetrics.UnityStartupMs < 0 {
@@ -406,7 +445,13 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	}
 
 	if ws != nil && workspaceMetrics != nil {
-		workspaceUsage, sizeErr := shadow.MeasureDirectoryUsage(ws.ShadowPath)
+		var workspaceUsage shadow.DirectoryUsage
+		var sizeErr error
+		if workspaceMetrics.WorkspaceBackend == WorkspaceBackendVHDXDiff {
+			workspaceUsage, sizeErr = measureVHDXWorkspaceShell(ws.ShadowPath)
+		} else {
+			workspaceUsage, sizeErr = shadow.MeasureDirectoryUsage(ws.ShadowPath)
+		}
 		if sizeErr == nil {
 			workspaceMetrics.WorkspaceLogicalBytes = workspaceUsage.LogicalBytes
 			workspaceMetrics.WorkspacePhysicalBytes = workspaceUsage.AllocatedBytes
@@ -416,6 +461,9 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		var persistentPhysicalBytes int64
 		if workspaceMetrics.WorkspaceBackend == WorkspaceBackendImage {
 			persistentPhysicalBytes = workspaceMetrics.ImageStorePhysicalBytes
+		} else if workspaceMetrics.WorkspaceBackend == WorkspaceBackendVHDXDiff {
+			persistentPhysicalBytes = workspaceMetrics.ParentAllocatedBytes
+			updateObservedPeak(workspaceMetrics, persistentPhysicalBytes+workspaceMetrics.ChildPeakAllocatedBytes+workspaceMetrics.WorkspacePhysicalBytes)
 		} else {
 			cacheUsage, cacheErr := shadow.MeasureDirectoryUsage(
 				legacyCacheRoot(req),
@@ -435,19 +483,34 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		)
 
 		if req.KeepWorkspace {
+			cleanupStarted := time.Now()
+			if cleanupErr := releaseWorkspaceLeaseBounded(workspaceLease, ReleasePolicy{Keep: true}); cleanupErr != nil {
+				warnings = append(warnings, fmt.Sprintf("workspace retain failed: %v", cleanupErr))
+			} else {
+				vhdxLease = nil
+				workspaceCleanupPending = false
+			}
+			workspaceMetrics.CleanupMs = time.Since(cleanupStarted).Milliseconds()
 			workspaceMetrics.WorkspaceKept = true
 			workspaceMetrics.RetainedPhysicalBytes =
 				persistentPhysicalBytes + workspaceMetrics.WorkspacePhysicalBytes
+			if workspaceMetrics.WorkspaceBackend == WorkspaceBackendVHDXDiff {
+				workspaceMetrics.RetainedPhysicalBytes += workspaceMetrics.ChildPeakAllocatedBytes
+			}
 		} else {
 			cleanupStarted := time.Now()
-			if cleanupErr := ws.Cleanup(); cleanupErr != nil {
+			if cleanupErr := releaseWorkspaceLeaseBounded(workspaceLease, ReleasePolicy{}); cleanupErr != nil {
 				warnings = append(warnings, fmt.Sprintf("shadow workspace cleanup failed: %v", cleanupErr))
 				workspaceMetrics.RetainedPhysicalBytes =
 					persistentPhysicalBytes + workspaceMetrics.WorkspacePhysicalBytes
 			} else {
+				vhdxLease = nil
 				workspaceCleanupPending = false
 				workspaceMetrics.CleanupReclaimedPhysicalBytes =
 					workspaceMetrics.WorkspacePhysicalBytes
+				if workspaceMetrics.WorkspaceBackend == WorkspaceBackendVHDXDiff {
+					workspaceMetrics.CleanupReclaimedPhysicalBytes += workspaceMetrics.ChildPeakAllocatedBytes
+				}
 				workspaceMetrics.RetainedPhysicalBytes = persistentPhysicalBytes
 			}
 			workspaceMetrics.CleanupMs = time.Since(cleanupStarted).Milliseconds()

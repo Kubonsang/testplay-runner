@@ -79,6 +79,9 @@ type WorkspaceMetrics struct {
 	WorkspaceVerifyMs                   int64  `json:"workspaceVerifyMs,omitempty"`
 	UnityStartupMs                      int64  `json:"unityStartupMs"`
 	UnityExecutionMs                    int64  `json:"unityExecutionMs"`
+	UnityProcessPID                     int    `json:"unityProcessPid,omitempty"`
+	UnityProcessStartedAt               string `json:"unityProcessStartedAt,omitempty"`
+	UnityProcessFinishedAt              string `json:"unityProcessFinishedAt,omitempty"`
 	TestExecutionMs                     int64  `json:"testExecutionMs"`
 	CleanupMs                           int64  `json:"cleanupMs"`
 	CacheWriteBackMs                    int64  `json:"cacheWriteBackMs"`
@@ -95,6 +98,37 @@ type WorkspaceMetrics struct {
 	PhysicalBytesAdded                  int64  `json:"physicalBytesAdded"`
 	FallbackUsed                        bool   `json:"fallbackUsed"`
 	WorkspaceKept                       bool   `json:"workspaceKept"`
+	Provider                            string `json:"provider,omitempty"`
+	ParentKey                           string `json:"parentKey,omitempty"`
+	ParentStatus                        string `json:"parentStatus,omitempty"`
+	ParentPath                          string `json:"parentPath,omitempty"`
+	ParentVirtualBytes                  int64  `json:"parentVirtualBytes,omitempty"`
+	ParentAllocatedBytes                int64  `json:"parentAllocatedBytes,omitempty"`
+	ParentCreated                       bool   `json:"parentCreated"`
+	ParentReused                        bool   `json:"parentReused"`
+	ParentBuildMs                       int64  `json:"parentBuildMs,omitempty"`
+	ParentVerifyMs                      int64  `json:"parentVerifyMs,omitempty"`
+	ChildCreateMs                       int64  `json:"childCreateMs,omitempty"`
+	ChildAttachMs                       int64  `json:"childAttachMs,omitempty"`
+	ChildMountMs                        int64  `json:"childMountMs,omitempty"`
+	ChildReleaseMs                      int64  `json:"childReleaseMs,omitempty"`
+	ChildReadyAllocatedBytes            int64  `json:"childReadyAllocatedBytes,omitempty"`
+	ChildPeakAllocatedBytes             int64  `json:"childPeakAllocatedBytes,omitempty"`
+	ChildReleasedAllocatedBytes         int64  `json:"childReleasedAllocatedBytes,omitempty"`
+	ChildReadyAllocatedMeasured         bool   `json:"childReadyAllocatedMeasured,omitempty"`
+	ChildPeakAllocatedMeasured          bool   `json:"childPeakAllocatedMeasured,omitempty"`
+	ChildReleasedAllocatedMeasured      bool   `json:"childReleasedAllocatedMeasured,omitempty"`
+	MountPath                           string `json:"mountPath,omitempty"`
+	PhysicalDiskPath                    string `json:"physicalDiskPath,omitempty"`
+	VolumeGUID                          string `json:"volumeGuid,omitempty"`
+	CleanupState                        string `json:"cleanupState,omitempty"`
+	FallbackReason                      string `json:"fallbackReason,omitempty"`
+	StoreQuotaBytes                     int64  `json:"storeQuotaBytes,omitempty"`
+	StoreAllocatedBytes                 int64  `json:"storeAllocatedBytes,omitempty"`
+	HostFreeBytes                       int64  `json:"hostFreeBytes,omitempty"`
+	HostFreeFloorBytes                  int64  `json:"hostFreeFloorBytes,omitempty"`
+	LocalPackageOverrideCount           int    `json:"localPackageOverrideCount,omitempty"`
+	LocalPackagesDigest                 string `json:"localPackagesDigest,omitempty"`
 }
 
 // CompileError represents a C# compile error from Unity stderr.

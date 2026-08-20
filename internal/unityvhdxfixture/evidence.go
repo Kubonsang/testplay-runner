@@ -26,6 +26,7 @@ type PlatformResult struct {
 	Skipped        int            `json:"skipped"`
 	Inconclusive   int            `json:"inconclusive"`
 	Tests          []SemanticTest `json:"tests"`
+	CompileErrors  []string       `json:"compileErrors"`
 	SemanticDigest string         `json:"semanticDigest"`
 	ResultsXML     string         `json:"resultsXml"`
 	EditorLog      string         `json:"editorLog"`

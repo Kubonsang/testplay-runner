@@ -1,0 +1,661 @@
+# Managed ReFS Library Pool probe
+
+Status: experimental architecture probe, future v0.14.0 candidate, not a
+released version.
+
+## Version lineage
+
+`v0.13.0` is the released Image + native CoW integration and remains historical
+product evidence. This probe starts independently from the `v0.12.0` Native CoW
+Storage Foundation at commit `7c6f6783708d632b96f8db0ed1c19ed61e4664b4`.
+Successful probe code is to be ported deliberately onto the latest `main` for a
+future v0.14.0 candidate. The probe branch itself is not a release branch.
+
+The protected v0.13 reference is:
+
+- branch: `codex/v0.13-image-cow-integration`
+- commit: `c0280d3 refactor: use provider-native CoW baselines`
+
+No tag, release, artifact, benchmark, or commit from that line is changed by
+this probe.
+
+## Architecture
+
+The canonical payload is the ReFS-resident baseline itself:
+
+```text
+managed-library-pool.vhdx
+└─ ReFS
+   └─ testplay/
+      ├─ pool.json
+      ├─ baselines/<compatibility-key>/
+      │  ├─ Library/
+      │  ├─ metadata.json
+      │  └─ COMPLETE
+      ├─ workers/<lease>/Library/
+      ├─ leases/
+      └─ quarantine/
+```
+
+There is one persistent dynamically expanding VHDX, one Dev Drive/ReFS volume, one Library baseline
+per compatibility key, and N worker Libraries. A worker is a directory tree of
+file-range Block Clones on the same ReFS volume. No worker VHDX, parent/child
+VHDX chain, Physical Directory Image, or silent whole-Library copy fallback is
+part of this data path.
+
+The installation remains one ordinary `.vhdx` file on the NTFS host while
+detached. When attached, Windows exposes that same file as an exact virtual
+disk with a GPT partition. Detach is not deletion.
+
+An external shadow workspace keeps `Assets`, `Packages`, and `ProjectSettings`
+outside the pool. Its `Library` path is a verified directory junction to
+`workers/<lease>/Library`.
+
+## Standalone commands
+
+Build on Windows amd64:
+
+```powershell
+go build -o testplay-refs-probe.exe ./cmd/testplay-refs-probe
+```
+
+Run from an elevated terminal:
+
+```powershell
+.\testplay-refs-probe.exe setup
+.\testplay-refs-probe.exe status
+.\testplay-refs-probe.exe probe
+.\testplay-refs-probe.exe remove
+```
+
+The default host root is `%LOCALAPPDATA%\TestPlay\Storage`. `setup` performs:
+
+1. Windows and elevation checks.
+2. read-only Dev Drive capability checks (Windows build, elevation,
+   `Format-Volume -DevDrive`, and `fsutil devdrv query`).
+3. Dynamic VHDX creation through the existing v0.12 VirtDisk wrapper.
+4. attach without a permanent drive letter.
+5. RAW disk identity and File Backed Virtual bus validation.
+6. GPT initialization and maximum-size basic partition creation.
+7. assignment of an unused temporary drive letter and Dev Drive formatting via
+   `Format-Volume -DriveLetter <letter> -DevDrive`.
+8. ReFS and `fsutil devdrv query` verification, with raw query output retained
+   as an artifact.
+9. an NTFS-hosted private directory mount followed by removal and verification
+   of the temporary drive letter.
+10. filesystem, cluster size, volume GUID, and block-refcount capability checks.
+11. a synthetic Block Clone plus allocate-on-write isolation check.
+12. matching host and in-volume ownership metadata writes.
+13. clean unmount, detach, visibility wait, and handle close.
+
+The command leaves the persistent pool detached between invocations. This avoids a
+long-lived helper process while preserving an installation represented by one
+VHDX file. `status` and `probe` attach temporarily and detach before returning.
+They inspect the existing Dev Drive and never format it again. Only `remove`
+deletes the owned VHDX and metadata; ordinary unmount/detach is not deletion.
+
+`remove` mounts the exact owned VHDX, compares the host token, in-volume token,
+VHDX file identity, volume GUID, filesystem, and cluster size, refuses active
+baseline references or worker directories, detaches, rechecks the VHDX file
+identity, and only then removes explicitly owned paths. An uncertain detach or
+identity mismatch preserves data for operator inspection.
+
+## Environment overrides
+
+The Phase 1 executable consumes:
+
+```text
+TESTPLAY_REFS_POOL_FILE
+TESTPLAY_REFS_MOUNT_ROOT
+TESTPLAY_REFS_MAX_BYTES
+```
+
+The VHDX file and mount root must be absolute direct children of the same
+storage root. This restriction makes later deletion bounded and independently
+verifiable.
+
+The complete Windows Unity hardware gate additionally reserves:
+
+```text
+TESTPLAY_REFS_PROJECT_PATH
+TESTPLAY_REFS_UNITY_EDITOR_PATH
+TESTPLAY_REFS_ARTIFACT_ROOT
+```
+
+Those Unity variables are not consumed by the Phase 1 executable. The
+`LibraryBaselineStore` and worker primitives are implemented for controlled
+Phase 2/3 fixtures; public `testplay run` integration remains out of scope.
+
+## Baseline lifecycle
+
+`LibraryBaselineStore` computes a compatibility key from:
+
+- schema version;
+- Unity version and SHA-256 of the Unity executable contents;
+- `Packages/manifest.json` and optional `packages-lock.json`;
+- the complete `ProjectSettings` tree;
+- build target and scripting backend;
+- canonical project identity; and
+- the complete `Assets` tree for this correctness-first probe.
+
+It measures `keyComputationMs`, `assetsHashMs`, `packagesHashMs`, and
+`projectSettingsHashMs` separately.
+
+`Ensure` takes a builder callback whose destination is already the staging
+`Library` inside ReFS. The builder is expected to junction an isolated Unity
+builder workspace to that destination and wait for Unity to exit. The store
+does not accept a separate Image payload. After the builder exits it applies
+read-only attributes and an ACL boundary, records a full tree digest, writes
+metadata, writes `COMPLETE` last, re-verifies, and performs a same-volume atomic
+rename to the final key directory.
+
+Full integrity verification protects every worker acquire. Active-use markers
+block clear and quarantine. Corruption prevents new workers and is moved by a
+no-replace rename into `quarantine` before a replacement can be built.
+
+## Worker lifecycle
+
+Acquire is:
+
+```text
+acquire pool reservation lock
+→ authoritatively remeasure ReFS used and host free space
+→ validate orphan leases and active reservations
+→ persist requested lease with O_EXCL
+→ release reservation lock
+→ verify baseline under its coordination lock
+→ acquire baseline active-use marker with O_EXCL
+→ persist cloning lease
+→ create and verify an exact owned worker staging root
+→ Block Clone every regular file
+→ verify baseline again
+→ make worker writable
+→ persist ready lease
+→ create and verify Library junction
+```
+
+Release requires the caller to have observed complete Unity process exit:
+
+```text
+persist releasing
+→ verify and remove the exact junction
+→ verify worker ownership token
+→ no-replace rename to quarantine
+→ re-verify ownership
+→ recursive deletion
+→ remove active-use marker
+→ persist released and remove lease record
+```
+
+Repeated `Release` calls are supported only in the same process through the
+same `WorkerLease` object. Resuming a journal in a new process, forced
+termination recovery, and reboot recovery are not implemented. Future design
+names include `ResumeLeaseFromJournal`, `RecoverOrphanWorker`, and
+`ReconcilePool`; a dead-process lease is currently reported as `orphan-found`.
+
+## Block Clone policy
+
+The Windows implementation walks the tree and rejects reparse points and
+unsupported entry types. For each regular file it:
+
+1. creates the destination and marks it sparse before sizing when required;
+2. compares volume serials, filesystem names, and block-refcount flags;
+3. queries sparse allocation with `FSCTL_QUERY_ALLOCATED_RANGES`, clips every
+   page to query/file bounds, then sorts and merges overlap, adjacency, and
+   duplicates while rejecting overflow and no-progress pagination;
+4. compares source and destination integrity settings;
+5. verifies the measured ReFS cluster size;
+6. submits only allocated, cluster-aligned requests strictly smaller than 4 GiB;
+7. leaves holes unallocated and copies only unaligned allocated fragments;
+8. restores file attributes and creation/access/write timestamps; and
+9. verifies destination logical size.
+
+If no aligned bytes were cloned, if native Block Clone is unsupported, or if
+physical bytes exceed measured unaligned fragments, the operation fails with
+`refs-block-clone-unavailable` and `fallbackUsed: false`.
+
+These constraints follow Microsoft's [ReFS Block Cloning documentation](https://learn.microsoft.com/en-us/windows-server/storage/refs/block-cloning),
+[`FSCTL_DUPLICATE_EXTENTS_TO_FILE`](https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ni-winioctl-fsctl_duplicate_extents_to_file),
+and [`GetVolumeInformationByHandleW`](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getvolumeinformationbyhandlew).
+
+## Storage ceilings and metrics
+
+The default is provisional until Windows hardware measurements exist:
+
+```text
+VHDX guest virtual-size ceiling: 64 GiB
+testplay soft budget: 14 GiB
+per-worker reservation / emergency reserve: 2 GiB
+minimum host free-space floor: 30 GiB
+experimental VHDX overhead reserve: 2 GiB
+```
+
+The 14 GiB default soft budget is independent of the VHDX maximum. An acquire
+exceeding the soft budget fails before cloning with
+`storage-budget-exceeded`; it does not wait for a real disk-full event.
+
+Metrics keep these layers separate:
+
+- host filesystem: VHDX logical/allocated bytes and host free bytes;
+- ReFS volume: total/free/used bytes at lifecycle points; and
+- Library trees: logical/allocated bytes, cloned bytes, tails, metadata, and
+  failures.
+
+Deleting a worker can free ReFS space without shrinking the host VHDX file.
+Automatic compact, resize, and compact-during-run are not implemented.
+
+## Current validation status
+
+Platform-independent lifecycle tests and Windows cross-compilation can be run
+on non-Windows hosts. That does not execute VirtDisk, Storage PowerShell,
+ReFS, `FSCTL_DUPLICATE_EXTENTS_TO_FILE`, junction, or Unity code.
+
+Native Phase 1 is now `PROMISING` on Windows 11 Pro build 26200. It proves the
+standalone persistent Dev Drive lifecycle and Block Clone probe described
+below; it does not measure Unity, canonical baseline ACL correctness, the
+worker ladder, or release readiness.
+
+## Pre-native hardening
+
+Worker capacity is reserved under the process-safe
+`<pool>/leases/.reservation.lock`. While holding it, acquire remeasures ReFS
+used bytes and host free space, validates every worker journal and orphan, sums
+active reservations, and creates the new lease with `O_EXCL`. The lock honors
+context cancellation, is released before baseline verification or cloning,
+and is never deleted merely because it appears old. Caller-supplied current
+volume usage is not accepted.
+
+Setup requires the provisional 30 GiB host floor plus the full 64 GiB VHDX
+maximum and 2 GiB overhead reserve: 96 GiB free with defaults. VHDX sizes below
+50 GiB are rejected because Dev Drive formatting requires a suitably sized
+volume. The VHDX maximum is a guest-volume
+virtual-size ceiling; a separate testplay reservation policy protects the host
+disk floor. Worker acquire requires the floor plus its full worker reserve and
+fails closed on overflow or measurement failure. These values remain
+experimental until native measurements exist.
+
+`WorkerRequest` contains only the compatibility key, lease ID, and junction
+path. `PoolPolicy` is built only after host metadata, in-volume metadata, and
+the mounted ReFS identity agree on every identity, capability, and storage
+field. Callers cannot override maximum, soft budget, reserve, host floor, or
+cluster size.
+
+Fresh setup supports a missing `%LOCALAPPDATA%\TestPlay\Storage` tree. It finds
+and canonicalizes the nearest existing ancestor, rejects symlinks/reparse
+points and files, creates each segment sequentially, then revalidates the final
+canonical identity. Existing non-empty roots are rejected.
+
+Setup is a host/in-volume transaction. It creates
+`pool-owner.pending.json` with `O_EXCL`, creates and identifies the exact VHDX,
+writes the matching in-volume `pool.json` with a flushed temporary file and
+atomic rename, reads it and the required layout back, flushes the exact mounted
+volume, then detaches and reattaches the same VHDX. Only after the reattached
+volume GUID, ReFS capability, Dev Drive query, ownership token, metadata,
+layout, and VHDX file identity pass does setup detach again and atomically
+commit `pool-owner.json`. `status`, `probe`, workers, and normal `remove` do not
+accept a pending owner. A separately named `recover-incomplete-setup` command
+can delete an incomplete pool only after exact ownership and a strict empty
+layout gate; it never repairs metadata or falls back to a copy provider.
+
+Baseline acquire, clear, and quarantine are serialized by
+`leases/baseline-<digest>.coord`; mutation also records a marker. Active-use
+checks and marker creation occur inside the same critical section, so baseline
+rename and a new reference cannot both succeed. Protection metadata records a
+path-sorted recursive descriptor digest over every directory and regular file,
+including object type, read-only state, and inheritance state. Native Windows
+inspection uses `GetNamedSecurityInfo`; a changed child/file ACL, enabled
+inheritance, changed entry count, or writable file is corrupt even when content
+is identical.
+
+Worker release persists the `releasing`, junction removed, worker quarantined,
+worker deleted, active-use released, and `released` milestones. A repeated
+same-process call on the same object resumes safely; post-crash journal resume
+is not implemented. Path absence is accepted only with prior ownership
+evidence.
+
+Unity Phase 2 distinguishes `MOUNTED_MEASURED_ZERO` from the final
+`MEASURED_ZERO`. After worker release it writes the mounted residual artifact,
+flushes the exact ReFS volume, validates only metrics observable while mounted,
+detaches, and calls persistent `status` to prove that marker, journal, worker,
+staging, quarantine, coordination, and junction absence survived reattach.
+Normal pool removal is allowed only after that durable proof. A clean detach
+that intentionally retains the authoritative pool reports `cleanupState:
+preserved`; detach or identity uncertainty reports `uncertain`.
+
+`recover-released-worker-residual --key-digest ... --lease-id ...` is a narrow,
+explicit recovery for one observed stale active-use marker after an otherwise
+complete worker release. It requires an authoritative owner, exact VHDX and
+volume identity, a valid protected baseline, exactly one matching regular
+marker, and no journal, worker, staging, quarantine, unknown artifact, junction,
+or related Unity/probe/Phase 2 process. It deletes only that marker, flushes,
+detaches and reattaches to prove durable absence, then delegates to normal
+ownership-safe remove. It is not forced-termination or reboot recovery.
+
+`diagnose-worker-release-residual --key-digest ... --lease-id ...` attaches an
+existing pool read-only. It counts lease namespace entries before decoding
+them and records each journal or marker's size, SHA-256, leading bytes,
+attributes, reparse state, file identity when available, and decode result. A
+corrupt journal therefore leaves `workerLeaseJournals` measured while
+`junctions` and the aggregate mounted status remain `NOT_MEASURED`; the
+structural evidence is no longer lost behind the JSON error.
+
+`recover-corrupt-released-worker-residual` is separate from the single-marker
+operation. It accepts only the observed completed-release shape, pins both the
+original Unity Phase 2 ZIP and the read-only diagnosis by SHA-256, validates
+their exact key, lease, worker token, pool identity, successful release,
+semantic parity, and isolation evidence, and refuses valid/live journals or
+any worker, staging, quarantine, junction, process, or unknown artifact. Before
+deleting the exact hashed corrupt journal and marker, it durably copies their
+raw bytes to an external artifact root and creates a recovery receipt. It then
+flushes the exact volume, proves absence through detach/reattach, and delegates
+to normal ownership-safe remove. This is not generalized forced-termination or
+reboot recovery.
+
+Worker journals and active-use markers now use a ReFS-managed durable-write
+primitive: exclusive or unique temporary creation, complete write, file flush,
+atomic rename where applicable, and byte-for-byte read-back. The exact volume
+flush remains the transaction boundary for namespace deletions. Other users of
+the shared atomic-file package retain their prior behavior.
+
+Sparse files are cloned from their allocated ranges. The destination is marked
+sparse before sizing; only aligned allocated extents are block-cloned; holes
+remain holes; and unaligned allocated fragments are physically copied and
+measured. There is no query-failure or whole-file copy fallback.
+
+Mounted cleanup uses a bounded 20-second context and joins primary and cleanup
+errors. Structured failures report `cleanupState`,
+`ownerMetadataCommitted`, `ownedVhdxPath`, and
+`manualRecoveryRequired`; uncertain detach or ownership always preserves the
+VHDX.
+
+Each residual is `{ "measured": boolean, "count": n }`. Exact allowlists
+separately count baseline creation/coordination/reservation/mutation artifacts,
+baseline and worker staging directories, and unknown lease/baseline/worker
+entries in addition to lifecycle, mount, junction, disk, and VHDX evidence.
+The binary leaves `probeProcesses.measured=false`; only the outer PowerShell
+harness completes that measurement. `attachedDisks` is measured only after
+the bounded detach visibility check succeeds. Unmeasured is never treated as
+zero. The native script records
+`PROMISING` only after regular and sparse clone, allocate-on-write isolation,
+forbidden-path checks, and measured-zero residuals all pass.
+
+Pre/post clone verification latency, verified file count, and verified logical
+bytes retain the cost of full hashes. A later latest-main design may evaluate a
+generation token, USN journal, or validated cache without weakening this
+correctness gate.
+
+The prior generic `Format-Volume -FileSystem ReFS` attempt on Windows 11 Pro
+25H2 build 26200.8875 is `UNSUPPORTED`; it failed with
+`refs-format-unavailable`. Cleanup state was `released` and
+the disk and left no owned VHDX or mount. That result is retained as evidence
+for the rejected generic provider; it is not evidence against the Dev Drive
+provider.
+
+The first Dev Drive provider run at commit
+`6fd8074f36a38c064b6435c33dee3f3b60e4ba93` failed after mount at
+`canonical-clone-source`: `filepath.EvalSymlinks` returned `too many links`
+under the Windows volume mount. Cleanup was `released`; regular and sparse
+Block Clone IOCTLs were not executed. Its artifact ZIP SHA-256 is
+`047150F95E9B2FA772947D10E891C12B5BD236C86C488C8A9A3B10A55C988BC8`.
+
+A follow-up run with trusted-root clone validation completed Dev Drive setup,
+regular/sparse Block Clone, and CoW isolation, then failed at the next detached
+`probe` with `pool-not-found`. Inspection already attached the VHDX and
+registered the directory access path before reading metadata; the corrected
+cause is that access-path visibility did not guarantee immediate mounted
+filesystem content readiness. The persistent VHDX was preserved and no disk,
+temporary drive letter, or probe process remained attached. Follow-up artifact
+ZIP SHA-256:
+`96FC061E9D8694D2FE25D5DBEDD5C50C6CA497235FC10A17DC03998196642554`.
+
+The next implementation added a bounded 20-second mounted-content readiness
+boundary, structural `pool-mount-not-ready` diagnostics, persistent-operation
+`preserved` cleanup evidence, IOCTL-attempt aggregation, staged summary
+retention, and explicit UTF-8 PowerShell output. Its ownership-safe status of
+the retained pool verified the private mount, ReFS, Dev Drive query, 4096-byte
+clusters, and Block Clone capability, but `pool.json` remained absent for the
+entire readiness window. The status failed with operation
+`wait-mounted-pool-metadata`; cleanup was `preserved`, owner metadata and VHDX
+were retained, and attached disks, temporary drive letters, and probe processes
+were zero. Per the ownership gate, remove and a fresh Phase 1 were not run.
+Artifact ZIP SHA-256:
+`500273C1A9B50C1589B24BA453ECF89037D6BA2ABD59F9D2EE4AA7B21FD71714`.
+
+Read-only forensics of that retained VHDX classified it as
+`C_LAYOUT_EXISTS_POOL_METADATA_MISSING`. The VHDX file identity
+`a00b8212:00280000003f9ecf`, expected/actual volume GUID
+`\\?\Volume{d0c73e68-afdf-4872-84c2-a6e9db9e9b48}\`, ReFS, 4096-byte
+clusters, Dev Drive query, and Block Clone capability all matched. The required
+layout and the prior synthetic probe files were present, while `pool.json` was
+absent at every candidate path. This confirms that detach lost a tail of ReFS
+namespace changes (probe deletion and pool metadata creation), not that a
+different volume or partition was selected. Forensic ZIP SHA-256:
+`1A87B7F3A7792D823130B316BE04776970035635526D9C8C94BB34540DEE560E`.
+
+The explicit, ownership-gated incomplete-setup recovery removed that retained
+VHDX and owner metadata and measured storage root, mount, attached disk,
+temporary drive letter, and probe-process residuals at zero. Recovery ZIP
+SHA-256:
+`BBEA3BA201A1A3B2FC680991DBDC0022F7749E5AD7DE46AE306FCD0FA49D0A5B`.
+
+A fresh transactional native Phase 1 on Windows 11 Pro build 26200 is
+`PROMISING`. Initial Dev Drive format, ReFS, 4096-byte clusters, volume flush,
+regular/sparse Block Clone, CoW isolation, internal detach/reattach durability
+verification, post-proof owner commit, external probe/status reattach, and
+explicit remove all passed without fallback. Final VHDX, owner, pending owner,
+mount, storage root, attached disk, temporary drive letter, and probe process
+residuals were zero. Artifact ZIP SHA-256:
+`AF020C740B80FBB6472A3C5EC416E6DF69EA73DD8BDEDCDCBEB8DBE000E0CF36`.
+Unity correctness, canonical baseline ACL correctness, 1/2/4/8 workers, and
+release readiness remain `NOT MEASURED`; `PROMISING` is not `PROVEN`.
+
+The first Unity Phase 2A single-worker run at commit
+`5838a2cba06f0138e4092fa1962a94ebeb0832ce` built and protected a canonical
+Unity 6000.3.8f1 Library baseline and passed reference EditMode 2/2 and
+PlayMode 1/1 with no compile errors. The first worker acquire then failed at
+`validate-clone-destination-parent`: `WorkerManager` had calculated, but had
+not created, its exact staging root before passing `staging\Library` to the
+strict clone path validator. Worker Block Clone and worker Unity were not
+executed. Cleanup was `released`; the VHDX, owner records, mount, storage root,
+related attached disk, temporary drive letter, and owned processes had zero
+residuals. Artifact ZIP SHA-256:
+`242F3365EFA1BF1B359D5D913640ECC1045649EFD9D4D0BE57DAA36D69DD304A`.
+
+The follow-up at commit `a0fdcbe301f483bba503077361072eaaab3a08f2`
+proved the staging fix: worker ReFS Block Clone cloned 9,875,456 bytes without
+fallback, worker EditMode 2/2 and PlayMode 1/1 passed, semantic parity matched,
+the fixture and canonical baseline were unchanged, and worker release removed
+the junction, worker, lease journal, and active use in the current mount. The
+run then failed because the mounted residual status was empty and was
+incorrectly required to equal final `MEASURED_ZERO`. That early gate skipped
+the volume flush, and one active-use marker reappeared after detach/reattach.
+The pool was detached and retained; attached disks, drive letters, and owned
+processes were zero. Artifact ZIP SHA-256:
+`1A38BA0485DE5B436D3FF7451399EE4DF6AEE2F3598BD0B10F737929B4EAF01F`.
+
+The retained-pool diagnosis after the release-durability implementation did
+not match the deliberately narrow single-marker recovery contract. Persistent
+`status` reattached the same Dev Drive and verified ReFS, 4096-byte clusters,
+Block Clone capability, pool metadata readiness, and clean detach, but mounted
+residual enumeration found that
+`worker-unity-phase2-6219554f92640198.json` had also reappeared and began with a
+NUL byte rather than valid JSON. Recovery therefore refused before deleting the
+active-use marker or any owned data. The authoritative owner and VHDX remain
+detached and preserved; pending owner, attached disk, extra drive letter, Unity,
+probe, and Phase 2 process counts are zero. Diagnosis artifact ZIP SHA-256:
+`953D1FBE965F71E1D7920EDCA3A23E82965BCB4CA23DAB50E55629E5310CA542`.
+
+Read-only byte forensics at commit
+`a4ab70a5a578e6ba3ca6c4f73c6baeaca2b49e64` classified the retained namespace
+as `RELEASE_NAMESPACE_RESURRECTED_WITH_CORRUPT_JOURNAL`. The exact 1,589-byte
+journal began with 64 NUL bytes and had SHA-256
+`DF327D32674AC715A44EF16B5E6A7B551A3249BBAB3FB5EE3D269EEF6ED6E763`;
+the exact valid active-use marker had SHA-256
+`6845D7ABB365D794027F01A982762B4C989AB3778305BC49AA840000BA26C948`.
+After external durable backups reproduced both hashes, the explicit corrupt
+release recovery deleted only those exact entries, flushed the volume,
+detached/reattached to prove their durable absence, and completed the normal
+ownership-safe pool remove. Final host residuals were zero. Recovery artifact
+ZIP SHA-256:
+`5193532ADD5DBF7049D6F36EBE2F8D5AF8F2D2DAFA5C34635D1158AA939A3859`.
+
+The following fresh Phase 2A run is
+`UNITY_PHASE2_SINGLE_WORKER_COMPATIBLE`. It repeated canonical baseline and
+reference validation, cloned 9,850,880 worker bytes using the ReFS Block Clone
+IOCTL without fallback, passed worker EditMode 2/2 and PlayMode 1/1 with exact
+semantic parity, and preserved fixture/baseline isolation. Worker release was
+`MOUNTED_MEASURED_ZERO`, the exact volume flush passed, detached status
+reattached with `MEASURED_ZERO`, and pool removal plus the outer disk, letter,
+process, mount, VHDX, and owner checks were all measured zero. Artifact ZIP
+SHA-256:
+`B048DAE2C2C5782CB3D6A062B6EB23F4002A4BB5388670C66CE0CC842388FC28`.
+
+Phase 2B uses the separate experimental `testplay-refs-unity-parallel` harness;
+it is not connected to the public `testplay run` CLI. Exactly two distinct
+leases share one canonical baseline. A start gate launches both acquires, a
+deterministic clone boundary proves overlapping Block Clone intervals, and the
+reservation lock serializes accounting only. EditMode runs concurrently for
+both workers, followed by concurrent PlayMode runs, with independent process,
+result, log, marker, workspace, journal, and clone evidence. Worker A is
+released and flushed first while an explicit `EXPECTED_ONE_WORKER_REMAINING`
+gate verifies every worker B resource and its remaining 2 GiB reservation.
+Worker B then uses the established flush/detach/status/remove durability
+sequence. This probe does not change default budgets, the public backend, or
+the single-worker Phase 2A contract.
+
+The native Phase 2B run at implementation commit
+`1e8beee294163814adbcb80ba4b81b9d6297f709` is
+`UNITY_PHASE2_TWO_WORKERS_COMPATIBLE`. The two distinct 2 GiB reservations
+were simultaneously active under the unchanged 14 GiB soft budget. Both clone
+intervals overlapped; each worker issued the ReFS Block Clone IOCTL, cloned
+9,859,072 bytes, copied 906,996 physical tail bytes, and used no fallback.
+Concurrent EditMode runs passed 2/2 and concurrent PlayMode runs passed 1/1
+for both workers. Reference/A/B semantic digests and exact test sets matched,
+both unique Library markers remained mutually isolated, and the fixture and
+canonical baseline were unchanged. After worker A release, the expected
+intermediate state retained exactly worker B's one journal, active marker,
+worker directory, junction, and 2 GiB reservation. Worker B then released;
+mounted residual was `MOUNTED_MEASURED_ZERO`, volume flush passed, detached
+status reattached with `MEASURED_ZERO`, pool removal passed, and the outer
+disk, drive-letter, Unity/probe/parallel-process, storage-root, VHDX, mount,
+and owner residuals were all zero. Artifact ZIP SHA-256:
+`2B651FF8F6D96F1704668A39374A05EC099F6D5D66AF1EC44EBC2430A04611AE`.
+
+The first real GNF_ Managed ReFS single-worker run used implementation commit
+`d61f9578e6eab31e91522a1554e0bf47fa30cf05` and a clean shallow checkout of
+`NeverEndingClass/GNF_` `main` at
+`19a17074f6366038cd5b17c01e0a904f0d585470`. Source inventory froze
+`GNF.DungeonGen.Tests.WallPropValidatorTests.NullPrefab_Error` and
+`DOOR_CONSENSUS_Tests.Proximity_CountsNearestExitWithinRadius`; the historical
+`CodexMovementSmokeTest.TestPlayer_MovesRight_InPlayMode` was absent. Dev Drive
+setup, ReFS with 4096-byte clusters, the Block Clone capability probe, and
+transactional detach/reattach durability all passed. Baseline construction then
+failed before reference Unity because the harness attempted to create
+`artifacts/workspaces/reference` with `os.Mkdir` while the intermediate
+`artifacts/workspaces` parent did not exist. The result was `FAILED`, code
+`baseline-corrupt`, operation `build-baseline`; canonical baseline finalization,
+worker clone, worker Unity, semantic parity, and release durability were not
+measured. The clean GNF_ source hashes and Git status were unchanged. Normal
+ownership-safe pool removal passed with internal residual `MEASURED_ZERO`,
+attached disk count zero, VHDX/mount/owner absent, and owned Unity/probe/GNF
+process counts zero. The outer PowerShell wrapper treated the native stderr as
+a terminating error before producing `post-state.json`; this absence is
+explicit in `artifact-manifest.json`. Artifact ZIP SHA-256:
+`4F7A94ACA2CB25B74FD8759B8A5CAB1E2448E4BA3DA0E3605095BA12C6DB4065`.
+
+The follow-up at implementation commit
+`97da5c970305f67ec6b7efb3b60ebb6afd45e48d` proved the workspace-parent fix
+and reached the first reference EditMode Unity process. Package resolution then
+failed for two independent portability defects in the clean upstream GNF_
+revision. The `com.veriorpies.parrelsync` Git dependency exceeded the default
+Windows Git path limit while cloning its hooks, and
+`com.youngwoocho02.unity-cli-connector` was pinned to the nonportable absolute
+path `file:/Users/gubonsang/Desktop/Dev/UnityCLI/unity-cli/unity-connector`.
+No selected reference test ran and the baseline was not finalized. The source
+remained clean and hash-identical. Ownership-safe pool removal passed with
+internal and outer residuals measured zero. Artifact ZIP SHA-256:
+`8C1C9E1F790CED5F3D49AC4505CA371AAE945657A77976BCC3C1D8840D8B9955`.
+
+Two later GNF_ reference-baseline attempts reached Unity after the portability
+fixes but rebooted Windows with bugcheck `0xF7` in `amdkmdag.sys`. The second
+crash occurred after the AMD WHQL 26.7.1 update and retained the same
+`0xF7_MISSING_GSFRAME_amdkmdag` failure bucket; its dump SHA-256 is
+`8764799406509B45981EEBD4B7821EA46799BB92AAB33477D05D9953BC83B16B`.
+The second-crash forensic ZIP SHA-256 is
+`128B2E7DB6B73E8679E5D782F238B41740F0D569F2BAFF588880339C1107D3C6`.
+The exact interrupted baseline staging tree and creation lock were later
+ownership-gated, flushed, detach/reattach verified, and removed through the
+normal pool operation. Recovery ended with host residual zero; recovery ZIP
+SHA-256 is
+`7BE7E788A75C90D75243FAA79C5FFDF31A94C641CBC2542DEA3014C41F9A50BB`.
+This recovery success is not a GNF_ compatibility result.
+
+The worker-ladder implementation accepts only 2, 4, or 8 workers and preserves
+the native-tested two-worker verdict. It adds N-way concurrent clone and Unity
+overlap, reference and pairwise semantic parity, marker isolation, sequential
+release/flush gates, and the established final detach/status/remove durability
+proof. A separate sizing pool calculates the experimental soft budget as
+`ceilGiB(usedAfterBaseline + workers*2GiB + 4GiB)`, capped at 62 GiB for the
+64 GiB VHDX. Native ladder execution is fail-closed behind an NVIDIA-only
+hardware gate and two NTFS GNF_ reference runs. AMD/NVIDIA device transitions
+remain explicit user-administered actions; the repository gate only records
+exact PnP identities and restore commands. Fixture 4/8 and GNF_ 1/2/4/8 remain
+`NOT MEASURED` until that gate and every preceding native stage pass.
+
+The native worker ladder at implementation commit
+`2a6e0067ce6f8b0c32ac1f748c68a4c017d2b20a` passed its NVIDIA-only gate,
+two-run GNF_ NTFS reference gate, standalone Managed ReFS Phase 1, fixture
+single-worker regression, fixture sizing, and fixture 2/4/8-worker runs. The
+fixture 2/4/8 ZIP SHA-256 values are respectively
+`C83E0EC663F642BA3D1B1FF617BEDCA38DE94F2FC1743FFE0B580B23A2179EFB`,
+`9E7CA570FE16486B79CC09D0B57B9EEA06E8283D11134BF10369C38D58505D55`,
+and `29F8F05C992BCB9D3C71BC474D56C193FDD23D21E5DF020FEABFB9534158D37C`.
+The fixture 8-worker result is
+`UNITY_PHASE2_EIGHT_WORKERS_COMPATIBLE`; its concurrent clone and Unity,
+semantic parity, isolation, sequential release durability, pool removal, and
+outer residual gates all passed.
+
+GNF_ sizing measured 6,356,467,712 used bytes after the baseline. The baseline
+contained 45,388 files and 4,553,119,822 logical/allocated bytes; sizing ZIP
+SHA-256 is
+`7DAA90151A73FFF5726F1982FBEBFCB53F36A91143B94C79D1E26A075F70BE2B`.
+GNF_ single-worker, 2-worker, and 4-worker lifecycles then passed with exact
+reference/worker test parity, source and baseline isolation, durable release,
+normal pool removal, and measured-zero outer residuals. Their artifact ZIP
+SHA-256 values are respectively
+`C967DC4D49066AF2AEF95485019F706A4CF12F75BD20F72522F8362B0D579430`,
+`5E2C397E7295637DDB7F419B91A50FFD34FF0EE10D0280871AB19641BD0DCF62`,
+and `6F531CD459CC46A1356C95D527CF71C8341A39C1CCF79C650E342FB0BE1EBEB8`.
+
+The final GNF_ 8-worker stage is `FAILED`, code `clone-failed`, operation
+`verify-concurrent-gnf-worker-clone`. This is a concurrency-gate failure, not a
+Block Clone IOCTL failure: all eight workers issued the ReFS Block Clone IOCTL,
+each cloned 4,500,168,704 bytes without fallback, and the aggregate cloned bytes
+were 36,001,349,632. The earliest completed clone ended at
+`2026-08-10T12:17:52.4999254Z`, while the last clone began at
+`2026-08-10T12:18:56.8315792Z`; the required all-eight common interval was
+therefore -64.3316538 seconds. Peak measured clone concurrency was seven at
+`2026-08-10T12:17:09.1132282Z`. The fail-closed gate stopped before any worker
+Unity process, so GNF_ 8-worker Unity correctness, semantic parity, worker
+mutation, and isolation are `NOT MEASURED`.
+
+All eight acquired workers were released after that gate failure. Normal pool
+remove passed with internal residual `MEASURED_ZERO`, cleanup state `released`,
+and the outer storage root, VHDX, mount, owner records, file-backed disks, drive
+letters, and owned processes measured absent. There was no BSOD and no retained
+pool. The GNF_ 8-worker artifact ZIP SHA-256 is
+`3605F1804F3E07A914F5565AADF1E985234E68295A4069297F534C56BB428A8F`.
+Per the fail-closed plan, no gate relaxation or immediate retry was performed;
+the overall ladder verdict remains `FAILED`.
+
+After the stopped ladder, the exact AMD adapter was explicitly re-enabled and
+both AMD and NVIDIA reported `OK` with problem code zero before reboot. The
+restore artifact ZIP SHA-256 is
+`30C2A6C18819F9EF4C697FC176B6751F9980244C6715E23E8E63B97D12A40180`.
+Post-reboot verification again measured both adapters healthy, with zero
+file-backed disks and zero related Unity/TestPlay processes. Its artifact ZIP
+SHA-256 is
+`336814F14849BDAA9EAFD34D5A3E3B086575E5F946E20FDA26AB6340F5E23822`.
+GNF_ 8-worker compatibility, general forced-termination recovery, large-project
+performance superiority, product CLI integration, production readiness, and
+release readiness remain `NOT MEASURED`.

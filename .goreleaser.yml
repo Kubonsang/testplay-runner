@@ -75,3 +75,4 @@ release:
     owner: Kubonsang
     name: testplay-runner
   prerelease: auto
+  draft: true

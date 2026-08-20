@@ -54,7 +54,7 @@ func runRun(w io.Writer, deps runDeps) int {
 		writeJSON(w, map[string]any{
 			"schema_version": "1",
 			"error": fmt.Sprintf(
-				"invalid --workspace-backend %q: expected legacy or image",
+				"invalid --workspace-backend %q: expected legacy or image, vhdx-diff, or auto",
 				deps.opts.WorkspaceBackend,
 			),
 		})
@@ -70,6 +70,7 @@ func runRun(w io.Writer, deps runDeps) int {
 		writeJSON(w, map[string]any{"schema_version": "1", "error": err.Error()})
 		return 5
 	}
+	selectedBackend, selectedStoreRoot := workspaceOptions(cfg, deps.opts)
 
 	ctx, cancel := context.WithTimeout(baseCtx, time.Duration(cfg.Timeout.TotalMs)*time.Millisecond)
 	defer cancel()
@@ -99,8 +100,8 @@ func runRun(w io.Writer, deps runDeps) int {
 		ClearCache:         deps.opts.ClearCache,
 		ForceBridge:        deps.opts.ForceBridge,
 		DisableBridge:      deps.opts.DisableBridge,
-		WorkspaceBackend:   deps.opts.WorkspaceBackend,
-		WorkspaceStoreRoot: deps.opts.WorkspaceStoreRoot,
+		WorkspaceBackend:   selectedBackend,
+		WorkspaceStoreRoot: selectedStoreRoot,
 		KeepWorkspace:      deps.opts.KeepWorkspace,
 	})
 	if infraErr != nil {
@@ -185,14 +186,6 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if deps.opts.WorkspaceBackend != "" || deps.opts.WorkspaceStoreRoot != "" || deps.opts.KeepWorkspace {
-		writeJSON(w, map[string]any{
-			"schema_version": "1",
-			"error":          "--workspace-backend, --workspace-store-root, and --keep-workspace are not supported with --scenario in this experimental slice",
-		})
-		return 5
-	}
-
 	spec, err := scenario.Load(specPath)
 	if err != nil {
 		writeJSON(w, map[string]any{"schema_version": "1", "error": err.Error()})
@@ -310,6 +303,7 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 				Artifacts:    artifacts.NewStore(artifactRoot),
 				StatusWriter: sw,
 			}
+			selectedBackend, selectedStoreRoot := workspaceOptions(cfg, deps.opts)
 			return svc.Run(instanceCtx, runsvc.Request{
 				Config:             cfg,
 				Filter:             deps.opts.Filter,
@@ -320,6 +314,9 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 				ClearCache:         deps.clearCache || deps.opts.ClearCache,
 				SkipCacheWriteBack: true, // avoid concurrent writes to shared cache dir
 				DisableBridge:      true, // scenario-warm orchestration is deferred; instances run cold
+				WorkspaceBackend:   selectedBackend,
+				WorkspaceStoreRoot: selectedStoreRoot,
+				KeepWorkspace:      deps.opts.KeepWorkspace,
 			})
 		}
 	}
@@ -389,6 +386,9 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 		}
 		if r.Hint != "" {
 			m["hint"] = r.Hint
+		}
+		if r.WorkspaceMetrics != nil {
+			m["workspace_metrics"] = r.WorkspaceMetrics
 		}
 		if len(inst.Response.Warnings) > 0 {
 			m["warnings"] = inst.Response.Warnings
@@ -475,6 +475,19 @@ func runScenario(w io.Writer, specPath string, deps scenarioDeps) int {
 	return scenarioResult.ExitCode
 }
 
+func workspaceOptions(cfg *config.Config, options RunCmdOptions) (string, string) {
+	backend, root := options.WorkspaceBackend, options.WorkspaceStoreRoot
+	if cfg != nil && cfg.Workspace != nil {
+		if backend == "" {
+			backend = cfg.Workspace.Backend
+		}
+		if root == "" {
+			root = cfg.Workspace.StoreRoot
+		}
+	}
+	return backend, root
+}
+
 // runFilter, runCategory, runCompareRun, resetShadow, forceShadow, clearCache,
 // forceBridge and noBridge are cobra flag values.
 var runFilter, runCategory, runCompareRun string
@@ -558,8 +571,8 @@ func init() {
 	runCmd.Flags().BoolVar(&clearCache, "clear-cache", false, "Remove cached Library before shadow workspace creation")
 	runCmd.Flags().BoolVar(&forceBridge, "bridge", false, "Prefer the warm-editor bridge backend (still gated by the Pristine Gate)")
 	runCmd.Flags().BoolVar(&noBridge, "no-bridge", false, "Never select the warm-editor bridge; force the cold shadow/process path")
-	runCmd.Flags().StringVar(&workspaceBackend, "workspace-backend", "", "Shadow workspace backend: legacy or image (experimental)")
+	runCmd.Flags().StringVar(&workspaceBackend, "workspace-backend", "", "Workspace backend: legacy, image, vhdx-diff, or auto")
 	runCmd.Flags().StringVar(&workspaceStoreRoot, "workspace-store-root", "", "Absolute root for persistent workspace cache/image data (experimental)")
-	runCmd.Flags().BoolVar(&keepWorkspace, "keep-workspace", false, "Keep the prepared shadow workspace for debugging")
+	runCmd.Flags().BoolVar(&keepWorkspace, "keep-workspace", false, "Retain the prepared workspace for explicit later attach/remove")
 	runCmd.Flags().StringVar(&scenarioPath, "scenario", "", "Path to scenario JSON file for multi-instance execution")
 }

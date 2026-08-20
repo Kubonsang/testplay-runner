@@ -19,12 +19,15 @@ import (
 )
 
 const (
-	WorkspaceBackendLegacy = "legacy"
-	WorkspaceBackendImage  = "image"
+	WorkspaceBackendLegacy   = "legacy"
+	WorkspaceBackendImage    = "image"
+	WorkspaceBackendVHDXDiff = "vhdx-diff"
+	WorkspaceBackendAuto     = "auto"
 )
 
 func ValidWorkspaceBackend(value string) bool {
-	return value == "" || value == WorkspaceBackendLegacy || value == WorkspaceBackendImage
+	return value == "" || value == WorkspaceBackendLegacy || value == WorkspaceBackendImage ||
+		value == WorkspaceBackendVHDXDiff || value == WorkspaceBackendAuto
 }
 
 func testExecutionMilliseconds(result *history.RunResult) int64 {

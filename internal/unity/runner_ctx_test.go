@@ -1,10 +1,12 @@
 package unity_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -18,12 +20,45 @@ import (
 // passes Unity flags like -batchmode that the testing framework would reject)
 // and just sleeps until killed, standing in for a hung Unity process.
 func TestMain(m *testing.M) {
+	if os.Getenv("TESTPLAY_HELPER_STDIO_DESCENDANT") == "1" {
+		time.Sleep(6 * time.Second)
+		os.Exit(0)
+	}
+	if os.Getenv("TESTPLAY_HELPER_HOLD_STDIO") == "1" {
+		cmd := exec.Command(os.Args[0])
+		cmd.Env = append(os.Environ(), "TESTPLAY_HELPER_HOLD_STDIO=", "TESTPLAY_HELPER_STDIO_DESCENDANT=1")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Start(); err != nil {
+			os.Exit(2)
+		}
+		os.Exit(0)
+	}
 	if os.Getenv("TESTPLAY_HELPER_SLEEP") == "1" {
 		time.Sleep(30 * time.Second)
 		os.Exit(0)
 	}
 	os.Exit(m.Run())
 }
+
+func TestProcessRunnerSuccessfulExitIgnoresBoundedInheritedPipeDelay(t *testing.T) {
+	runner := &unity.ProcessRunner{
+		UnityPath: os.Args[0],
+		Env:       map[string]string{"TESTPLAY_HELPER_HOLD_STDIO": "1"},
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	started := time.Now()
+	code, err := runner.Run(context.Background(), nil, &stdout, &stderr)
+	if err != nil || code != 0 {
+		t.Fatalf("code=%d err=%v, want successful direct-process exit", code, err)
+	}
+	if elapsed := time.Since(started); elapsed < waitDelayFloorForTest || elapsed > 10*time.Second {
+		t.Fatalf("bounded inherited-pipe wait elapsed=%v", elapsed)
+	}
+}
+
+const waitDelayFloorForTest = 4 * time.Second
 
 // sleepRunner returns a real ProcessRunner whose subprocess is this test
 // binary in helper-sleep mode — a portable stand-in for a hung Unity.
@@ -45,6 +80,25 @@ func TestProcessRunner_Run_SurfacesDeadlineExceeded(t *testing.T) {
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected context.DeadlineExceeded, got err=%v", err)
+	}
+}
+
+func TestProcessRunnerReportsStartedProcess(t *testing.T) {
+	runner := sleepRunner()
+	started := make(chan struct{}, 1)
+	runner.OnStart = func(pid int, at time.Time) {
+		if pid <= 0 || at.IsZero() {
+			t.Errorf("invalid process observation pid=%d at=%v", pid, at)
+		}
+		started <- struct{}{}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	_, _ = runner.Run(ctx, nil, io.Discard, io.Discard)
+	select {
+	case <-started:
+	default:
+		t.Fatal("process start was not observed")
 	}
 }
 

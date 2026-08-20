@@ -3,6 +3,7 @@ package unityvhdxfixture
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,9 +16,12 @@ import (
 )
 
 type UnityExecutor struct {
-	EditorPath string
-	Version    string
-	Marker     string
+	EditorPath  string
+	Version     string
+	Marker      string
+	Filter      string
+	Environment map[string]string
+	OnStart     func(pid int, startedAt time.Time)
 }
 
 type synchronizedBuffer struct {
@@ -81,7 +85,7 @@ func (e UnityExecutor) RunCompile(ctx context.Context, projectPath, logPath stri
 	}
 	args := append(unity.BuildCompileArgs(projectPath), "-logFile", logPath)
 	started := time.Now()
-	runner := &unity.ProcessRunner{UnityPath: e.EditorPath, Env: map[string]string{MarkerEnv: e.Marker}}
+	runner := &unity.ProcessRunner{UnityPath: e.EditorPath, Env: e.processEnvironment(), OnStart: e.OnStart}
 	var output synchronizedBuffer
 	exitCode, runErr := runner.Run(ctx, args, &output, &output)
 	wall := time.Since(started).Milliseconds()
@@ -101,25 +105,36 @@ func (e UnityExecutor) RunTests(ctx context.Context, projectPath, platform, resu
 			return PlatformResult{}, err
 		}
 	}
-	args := unity.BuildRunArgs(projectPath, &unity.RunOptions{ResultsFilePath: resultsPath, TestPlatform: platform})
+	args := unity.BuildRunArgs(projectPath, &unity.RunOptions{ResultsFilePath: resultsPath, TestPlatform: platform, Filter: e.Filter})
 	args = append(args, "-logFile", logPath)
-	runner := &unity.ProcessRunner{UnityPath: e.EditorPath, Env: map[string]string{MarkerEnv: e.Marker}}
+	runner := &unity.ProcessRunner{UnityPath: e.EditorPath, Env: e.processEnvironment(), OnStart: e.OnStart}
 	started := time.Now()
 	var output synchronizedBuffer
 	exitCode, runErr := runner.Run(ctx, args, &output, &output)
 	wall := time.Since(started).Milliseconds()
 	ensureUnityLog(logPath, output.String())
+	result, resultErr := ParsePlatformResult(platform, exitCode, resultsPath, logPath, wall)
 	if runErr != nil {
-		return PlatformResult{}, fixtureError(CodeUnityRunFailed, "run-tests", projectPath, runErr)
+		return result, errors.Join(fixtureError(CodeUnityRunFailed, "run-tests", projectPath, runErr), resultErr)
 	}
 	if exitCode != 0 {
-		return PlatformResult{}, classifyUnityFailure("run-tests", projectPath, logPath, exitCode)
+		return result, errors.Join(classifyUnityFailure("run-tests", projectPath, logPath, exitCode), resultErr)
 	}
-	result, err := ParsePlatformResult(platform, exitCode, resultsPath, logPath, wall)
-	if err != nil {
-		return PlatformResult{}, err
+	if resultErr != nil {
+		return PlatformResult{}, resultErr
 	}
 	return result, nil
+}
+
+func (e UnityExecutor) processEnvironment() map[string]string {
+	environment := make(map[string]string, len(e.Environment)+1)
+	for key, value := range e.Environment {
+		environment[key] = value
+	}
+	if e.Marker != "" {
+		environment[MarkerEnv] = e.Marker
+	}
+	return environment
 }
 
 func ensureUnityLog(path, fallback string) {

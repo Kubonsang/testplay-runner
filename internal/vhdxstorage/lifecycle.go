@@ -15,30 +15,49 @@ const (
 	ProviderReflink = "linux-reflink"
 )
 
+// CreateOptions fixes the parent disk geometry that all differencing children
+// inherit. Zero geometry fields retain the platform default for legacy callers.
+type CreateOptions struct {
+	MaximumSize       int64
+	BlockSizeInBytes  uint32
+	SectorSizeInBytes uint32
+}
+
+type FileUsage struct {
+	LogicalBytes   int64 `json:"logicalBytes"`
+	AllocatedBytes int64 `json:"allocatedBytes"`
+}
+
 const (
-	CodeUnsupportedPlatform          = "unsupported-platform"
-	CodeNotElevated                  = "not-elevated"
-	CodeParentNotFound               = "parent-not-found"
-	CodeParentInvalid                = "parent-invalid"
-	CodeChildExists                  = "child-exists"
-	CodeChildCreateFailed            = "child-create-failed"
-	CodeChildOpenFailed              = "child-open-failed"
-	CodeAttachFailed                 = "attach-failed"
-	CodePhysicalPathResolutionFailed = "physical-path-resolution-failed"
-	CodeVolumeResolutionFailed       = "volume-resolution-failed"
-	CodeMountFailed                  = "mount-failed"
-	CodeMountVisibilityTimeout       = "mount-visibility-timeout"
-	CodeUnmountFailed                = "unmount-failed"
-	CodeDetachFailed                 = "detach-failed"
-	CodeDetachVisibilityTimeout      = "detach-visibility-timeout"
-	CodeCleanupFailed                = "cleanup-failed"
-	CodeCancelled                    = "cancelled"
-	CodeVirtDiskAPIUnavailable       = "virt-disk-api-unavailable"
-	CodeUnsafePhysicalDisk           = "unsafe-physical-disk"
-	CodeCoWUnavailable               = "cow-unavailable"
-	CodeUnsafeSource                 = "unsafe-source"
-	CodeMountOwnershipLost           = "mount-ownership-lost"
-	CodeChildOwnershipLost           = "child-ownership-lost"
+	CodeUnsupportedPlatform               = "unsupported-platform"
+	CodeNotElevated                       = "not-elevated"
+	CodeParentNotFound                    = "parent-not-found"
+	CodeParentInvalid                     = "parent-invalid"
+	CodeChildExists                       = "child-exists"
+	CodeChildCreateFailed                 = "child-create-failed"
+	CodeChildOpenFailed                   = "child-open-failed"
+	CodeAttachFailed                      = "attach-failed"
+	CodePhysicalPathResolutionFailed      = "physical-path-resolution-failed"
+	CodeVolumeResolutionFailed            = "volume-resolution-failed"
+	CodeMountFailed                       = "mount-failed"
+	CodeMountVisibilityTimeout            = "mount-visibility-timeout"
+	CodeUnmountFailed                     = "unmount-failed"
+	CodeDetachFailed                      = "detach-failed"
+	CodeDetachVisibilityTimeout           = "detach-visibility-timeout"
+	CodeCleanupFailed                     = "cleanup-failed"
+	CodeCancelled                         = "cancelled"
+	CodeVirtDiskAPIUnavailable            = "virt-disk-api-unavailable"
+	CodeUnsafePhysicalDisk                = "unsafe-physical-disk"
+	CodeCoWUnavailable                    = "cow-unavailable"
+	CodeUnsafeSource                      = "unsafe-source"
+	CodeMountOwnershipLost                = "mount-ownership-lost"
+	CodeChildOwnershipLost                = "child-ownership-lost"
+	CodeDevDriveUnavailable               = "dev-drive-unavailable"
+	CodeDevDriveDisabled                  = "dev-drive-disabled"
+	CodeDevDriveFormatFailed              = "dev-drive-format-failed"
+	CodeDevDriveVerificationFailed        = "dev-drive-verification-failed"
+	CodeTemporaryDriveLetterUnavailable   = "temporary-drive-letter-unavailable"
+	CodeTemporaryDriveLetterCleanupFailed = "temporary-drive-letter-cleanup-failed"
 )
 
 const (
