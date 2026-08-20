@@ -1,8 +1,8 @@
 # Bridge protocol 3 capabilities (v0.14 development)
 
-This feature is developed independently from the frozen `v0.13.0-rc.1`
-release. It does not change the v0.13 release candidate, its observation
-window, or the stable v0.13 promotion path.
+This is a v0.14 development feature built on top of the published `v0.13.0`
+stable release. It does not change the v0.13 tag, release assets, validation
+record, or stable release policy.
 
 ## Compatibility
 
@@ -116,3 +116,54 @@ Artifact SHA-256:
 This proves the scoped HoneyBee protocol-3 transaction on the tested Windows
 host. Forced-termination recovery, broader hardware compatibility, and
 production readiness remain separate v0.14 gates.
+
+## Post-v0.13-main integration evidence
+
+The exact post-merge gate passed on 2026-08-21 after merging published v0.13
+`main` into the Protocol 3 branch without rebasing its development history:
+
+- merge commit: `f13206fd11d41afbeb2529c3b40d9190edcc99f4`;
+- TestPlay version: `v0.14.0-dev`;
+- TestPlay executable SHA-256:
+  `A9A545B6D3E92032770A5ED0C900B217FC549248FEB4BFB81A957068C41E841D`;
+- HoneyBee commit:
+  `2ce6087b9a81f33b604efcaaedc836347399ad66`;
+- HoneyBee runtime tree SHA-256:
+  `23AC5FF5B6C5F2EDBA2DA91868A9FAEB32CF0F754572E528BFFD9B8344143F7C`;
+- workspace adapter contract commit:
+  `575c3b37896cd3dfa37a4705477837cc52ec6132`;
+- workspace adapter SHA-256:
+  `630F6778FC305ADF993AF1FF073F0D8F3C3131F7050BC124EF31F0F691A8C2CF`;
+- merged bridge package tree SHA-256:
+  `D37E88195F83916B4BEFCCD1AD34DFF02A3523269C3D338C3F7FB6B4BF3EFAFA`;
+- Unity `6000.3.8f1` Protocol 3 package tests passed `19/19` without
+  changing the repository status or package tree;
+- one protocol-3 workspace, Editor PID, and bridge session remained identical
+  across both capabilities;
+- compile passed with zero compile errors and `total=0`;
+- warm-test passed `1/1`; both capabilities used the bridge backend with
+  `fallback_used=false`;
+- the source project and immutable parent remained unchanged;
+- the temporary workspace and broker were released, the previous broker was
+  restored, and the final file-backed-disk and related-process residuals were
+  zero;
+- cleanup state: `released`;
+- verdict: `HONEYBEE_PROTOCOL3_E2E_PASS`.
+
+Artifact ZIP:
+
+```text
+C:\Users\user\AppData\Local\Temp\testplay-honeybee-protocol3-e2e-20260821-012437-323.zip
+```
+
+Artifact SHA-256:
+
+```text
+29D35540FD70201E7785A7250800EFF348DD7A069F241CDA3C34BF88AD70F33B
+```
+
+The earlier ZIP remains immutable historical evidence for the pre-merge
+implementation. Compatibility with the published v0.13 `main` is supported by
+this separate exact-head rerun; neither result expands the qualification scope
+to VHDX provider lifecycle changes, multi-worker Protocol 3 workloads, or
+production readiness.
