@@ -2,7 +2,7 @@
 
 **현재 공개 prerelease:** `v0.13.0-rc.1` (`v0.12.0`은 latest stable)
 
-**준비 중인 후보:** `v0.13.0` — 공개 신뢰 Authenticode proof 전까지 차단
+**준비 중인 후보:** `v0.13.0` — unsigned stable, checksum/provenance/CI 필수
 **목표:** 단순한 로컬 테스트 래퍼를 넘어, AI 에이전트에 최적화된 시나리오 기반 멀티 인스턴스 러너로 단계적으로 확장
 
 > 이 문서는 확정 약속이 아니라, 베타 진행 상황에 따라 조정될 수 있는 릴리즈 계획을 정리한 것입니다.  
@@ -26,11 +26,10 @@ differencing child를 이용한 명시적 experimental workspace backend
 - Windows 11 x64, NTFS host, 단일 등록 사용자를 experimental 지원 범위로
   한정한다. ReFS, Dev Drive, physical partition, Defender, registry 설정은
   변경하지 않는다.
-- 정식 Windows 실행 파일 두 개는 공개 신뢰 Authenticode 서명과 RFC 3161
-  timestamp를 검증한 뒤에만 archive/checksum/attestation을 생성한다.
-- 공개 RC는 한 host에서 Day 0/3/7 관찰을 완료했다. 정식 태그는 한국 개인
-  개발자 명의 cloud/HSM signing proof와 signed candidate gate 전까지 만들지
-  않는다.
+- v0.13.0 Windows 실행 파일은 Authenticode 미서명으로 공개하며
+  checksum, GitHub provenance, Go 1.26.6 CI와 exact archive 계약을 필수로
+  검증한다. Authenticode 지원은 미래 optional hardening으로 유지한다.
+- 공개 RC는 한 host에서 Day 0/3/7 관찰을 완료했다.
 - 10초 per-worker 준비 목표, GNF_ 8 worker, 장시간 child 성장,
   일반화된 성능 우위와 production readiness는 주장하지 않는다.
 

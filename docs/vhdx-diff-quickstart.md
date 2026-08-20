@@ -13,13 +13,11 @@ registry settings.
 - one elevated install for one Windows user SID;
 - a matching `testplay` CLI and broker from the same release.
 
-The stable Windows executables must be Authenticode-signed by the publisher
-documented in the release validation record and carry an RFC 3161 timestamp.
-Do not approve the elevated install until the extracted executable and archive
-have been verified from the release directory:
+The v0.13.0 Windows executables are not Authenticode-signed and may trigger
+SmartScreen. Do not approve the elevated install until the archive has been
+verified from the release directory:
 
 ```powershell
-Get-AuthenticodeSignature .\testplay.exe | Format-List Status,SignerCertificate,TimeStamperCertificate
 Get-FileHash .\testplay_0.13.0_windows_amd64.zip -Algorithm SHA256
 ```
 
@@ -34,8 +32,7 @@ gh attestation verify `
 
 An attestation proves which repository, commit, and workflow produced an
 archive. It does not by itself prove that the program is vulnerability-free.
-A valid public-trust signature also does not guarantee immediate SmartScreen
-reputation.
+Authenticode support remains optional future hardening.
 
 ## One-time administrator setup
 

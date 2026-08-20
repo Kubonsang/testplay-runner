@@ -1,16 +1,16 @@
-# DigiCert stable-signing setup
+# Optional DigiCert Authenticode hardening
 
-This document configures the external signing gate for `v0.13.0`. It does not
-authorize a stable tag or public release.
+This document preserves a future public-trust Authenticode path. Authenticode
+is not a `v0.13.0` release gate; that release is intentionally unsigned and
+uses SHA-256, GitHub provenance, CI, and explicit disclosure.
 
 ## Acquisition gate
 
-Obtain a public-trust Authenticode identity that DigiCert accepts for a South
+If future hardening is funded, obtain a public-trust Authenticode identity that DigiCert accepts for a South
 Korean individual developer. The certificate must use a non-exportable
 KeyLocker/Software Trust key, include the Code Signing EKU, and support RFC 3161
 timestamping. If DigiCert rejects that identity or cannot provide these
-properties, stop with `STABLE_RELEASE_BLOCKED_SIGNING_UNAVAILABLE`; do not
-silently switch providers.
+properties, do not enable optional signing or claim signed assets.
 
 Use `scripts/collect-authenticode-signing-proof.ps1` with an unsigned and signed
 throwaway executable before configuring GitHub. Commit only the resulting
@@ -37,13 +37,13 @@ The `.p12` authenticates the service user; it must not contain an exportable
 copy of the public-trust code-signing private key. Rotate it according to the
 DigiCert account policy and revoke it after suspected disclosure.
 
-## Candidate execution
+## Future candidate execution
 
-Dispatch `.github/workflows/release.yml` from the stable branch with version
-`v0.13.0`. The workflow must stop for environment approval, sign both Windows
-executables, rebuild the two Windows archives, regenerate all nine checksums,
-verify signatures, and attest the signed archives. A dispatch never creates a
-GitHub release.
+Add a separately reviewed, manually dispatched hardening workflow for a future
+release. It must stop for `stable-signing` environment approval, sign both
+Windows executables, rebuild the two Windows archives, regenerate all nine
+checksums, verify signatures, and attest the signed archives. It must not run
+for the published unsigned v0.13.0 tag or replace its assets.
 
 After the candidate succeeds, download both Windows ZIPs and `checksums.txt`.
 Run the stable native harness from an elevated Windows PowerShell:
@@ -55,12 +55,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass `
   -ReleaseArchivePath '<testplay Windows ZIP>' `
   -HelperArchivePath '<helper Windows ZIP>' `
   -ChecksumsPath '<checksums.txt>' `
-  -ExpectedVersion 'v0.13.0-SNAPSHOT-<commit>' `
+  -ExpectedVersion '<future-version-SNAPSHOT-commit>' `
   -SignaturePolicy TrustedStable `
   -ExpectedSignerSubject '<exact subject>' `
   -ExpectedSignerThumbprint '<exact thumbprint>' `
   -InstallApproved
 ```
 
-Record the candidate run and native artifact ZIP SHA-256 in
-`docs/36_v0.13.0_validation.md`. Tagging requires a separate explicit approval.
+Record the candidate run and native artifact ZIP SHA-256 in the future release
+validation record. Optional signing must use a later release version and must
+never replace or mutate published v0.13.0 assets.

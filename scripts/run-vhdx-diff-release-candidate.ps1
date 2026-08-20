@@ -11,7 +11,7 @@ param(
 
     [string]$ExpectedVersion = 'v0.13.0-rc.1',
 
-    [ValidateSet('UnsignedRC', 'TrustedStable')]
+    [ValidateSet('UnsignedRC', 'UnsignedStable', 'TrustedStable')]
     [string]$SignaturePolicy = 'UnsignedRC',
 
     [string]$HelperArchivePath = '',
@@ -86,10 +86,12 @@ if (-not (Test-Path -LiteralPath $ReleaseArchivePath -PathType Leaf)) {
 if (-not (Test-Path -LiteralPath $ChecksumsPath -PathType Leaf)) {
     throw "Checksums file was not found: $ChecksumsPath"
 }
-if ($SignaturePolicy -eq 'TrustedStable') {
+if ($SignaturePolicy -ne 'UnsignedRC') {
     if (-not (Test-Path -LiteralPath $HelperArchivePath -PathType Leaf)) {
-        throw "TrustedStable requires the helper archive: $HelperArchivePath"
+        throw "$SignaturePolicy requires the helper archive: $HelperArchivePath"
     }
+}
+if ($SignaturePolicy -eq 'TrustedStable') {
     if ([string]::IsNullOrWhiteSpace($ExpectedSignerSubject) -or
         [string]::IsNullOrWhiteSpace($ExpectedSignerThumbprint)) {
         throw 'TrustedStable requires ExpectedSignerSubject and ExpectedSignerThumbprint.'
@@ -193,11 +195,25 @@ try {
         statusMessage = $Signature.StatusMessage
         signerCertificate = if ($null -eq $Signature.SignerCertificate) { $null } else { $Signature.SignerCertificate.Subject }
     })
-    if ($SignaturePolicy -eq 'UnsignedRC') {
+    if ($SignaturePolicy -ne 'TrustedStable') {
         if ($Signature.Status.ToString() -ne 'NotSigned') {
-            throw "RC signing disclosure mismatch: Authenticode status=$($Signature.Status)"
+            throw "$SignaturePolicy signing disclosure mismatch: Authenticode status=$($Signature.Status)"
         }
         $SignatureVerified = $true
+        if ($SignaturePolicy -eq 'UnsignedStable') {
+            $helperRoot = Join-Path $ScratchRoot 'helper'
+            New-Item -ItemType Directory -Path $helperRoot | Out-Null
+            Expand-Archive -LiteralPath $HelperArchive.FullName -DestinationPath $helperRoot
+            $helperCandidates = @(Get-ChildItem $helperRoot -Recurse -File -Filter 'testplay-storage-helper.exe')
+            if ($helperCandidates.Count -ne 1) {
+                throw "Expected exactly one testplay-storage-helper.exe, got $($helperCandidates.Count)."
+            }
+            $helperSignature = Get-AuthenticodeSignature -LiteralPath $helperCandidates[0].FullName
+            if ($helperSignature.Status.ToString() -ne 'NotSigned') {
+                throw "UnsignedStable helper disclosure mismatch: Authenticode status=$($helperSignature.Status)"
+            }
+            $HelperSignatureVerified = $true
+        }
     }
     else {
         $expectedThumbprint = $ExpectedSignerThumbprint.Replace(' ', '').ToUpperInvariant()
@@ -312,11 +328,16 @@ $NotMeasured = @(
 if ($SignaturePolicy -eq 'UnsignedRC') {
     $NotMeasured = @('Authenticode signature', 'release readiness') + $NotMeasured
 }
+elseif ($SignaturePolicy -eq 'UnsignedStable') {
+    $NotMeasured = @('public-trust Authenticode hardening') + $NotMeasured
+}
 $Summary = [ordered]@{
     schemaVersion = 1
     status = if ($Passed) { 'PASS' } else { 'FAILED' }
     verdict = if ($Passed -and $SignaturePolicy -eq 'TrustedStable') {
         'VHDX_DIFF_STABLE_ASSET_SMOKE_PASS'
+    } elseif ($Passed -and $SignaturePolicy -eq 'UnsignedStable') {
+        'VHDX_DIFF_UNSIGNED_STABLE_ASSET_SMOKE_PASS'
     } elseif ($Passed) { 'VHDX_DIFF_RC_ASSET_SMOKE_PASS' } else { 'FAILED' }
     startedAt = $Started.ToUniversalTime().ToString('o')
     finishedAt = (Get-Date).ToUniversalTime().ToString('o')
@@ -339,7 +360,7 @@ Write-Utf8NoBom -LiteralPath $SummaryPath -Value $Summary
 Compress-Archive -Path (Join-Path $ArtifactRoot '*') -DestinationPath $ZipPath -Force
 $ZipHash = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash
 
-$OutputPrefix = if ($SignaturePolicy -eq 'TrustedStable') { 'VHDX_DIFF_STABLE' } else { 'VHDX_DIFF_RC' }
+$OutputPrefix = if ($SignaturePolicy -eq 'UnsignedRC') { 'VHDX_DIFF_RC' } else { 'VHDX_DIFF_STABLE' }
 Write-Output "$($OutputPrefix)_STATUS=$($Summary.status)"
 Write-Output "$($OutputPrefix)_VERDICT=$($Summary.verdict)"
 Write-Output "$($OutputPrefix)_ARTIFACT_ZIP=$ZipPath"

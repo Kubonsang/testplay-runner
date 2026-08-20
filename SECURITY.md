@@ -44,10 +44,9 @@ store. Preserve evidence and report the state privately.
 
 ## Release integrity
 
-The v0.13.0 Windows executables must be signed by the documented public-trust
-publisher and carry an RFC 3161 timestamp. Verify the Authenticode signature,
-published SHA-256, and GitHub build-provenance attestation before approving the
-elevated installation. Provenance binds an archive to a repository workflow
-and commit; neither provenance nor a signature claims that the binary is
-vulnerability-free. A valid signature also does not guarantee immediate
-SmartScreen reputation.
+The v0.13.0 Windows executables are not Authenticode-signed and may trigger
+SmartScreen. Verify the published SHA-256 and GitHub build-provenance
+attestation before approving the elevated installation. Provenance binds an
+archive to a repository workflow and commit; it does not claim that the binary
+is vulnerability-free. Public-trust Authenticode remains optional future
+hardening.

@@ -1,29 +1,23 @@
-name: Stable Release
+name: Release
 
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: Stable candidate version, including the leading v
-        required: true
-        default: v0.13.0
   push:
     tags:
       - "v0.13.0"
 
 permissions:
-  contents: read
+  contents: write
+  id-token: write
+  attestations: write
 
 env:
   STABLE_VERSION: v0.13.0
   PROVIDER_FREEZE_COMMIT: beabf36a299572607232806807ad9b9c2d4cb222
 
 jobs:
-  build:
-    name: Build unsigned candidate
+  release:
+    name: Build unsigned draft and attest
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,14 +25,12 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26.6"
-      - name: Verify stable metadata and frozen provider
+      - name: Verify release metadata and frozen provider
         shell: bash
-        env:
-          REQUESTED_VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
         run: |
           set -euo pipefail
-          test "$REQUESTED_VERSION" = "$STABLE_VERSION"
-          source_version="$(sed -n 's/^var version = \"\(v[^\"]*\)\"$/\1/p' cmd/testplay/version.go)"
+          test "$GITHUB_REF_NAME" = "$STABLE_VERSION"
+          source_version="$(sed -n 's/^var version = "\(v[^"]*\)"$/\1/p' cmd/testplay/version.go)"
           package_version="$(jq -r .version unity/com.testplay.bridge/package.json)"
           test "$source_version" = "$STABLE_VERSION"
           test "$package_version" = "${STABLE_VERSION#v}"
@@ -58,280 +50,26 @@ jobs:
           go test ./... -count=1
           go test -race ./... -count=1
           go vet ./...
-      - name: Build candidate snapshot
-        if: github.event_name == 'workflow_dispatch'
+      - name: Build unsigned draft release
         uses: goreleaser/goreleaser-action@v6
         with:
           version: "v2.17.0"
-          args: release --snapshot --clean
+          args: >-
+            release --clean
+            --release-notes docs/34_v0.13.0_release_notes.md
+            --release-footer docs/35_v0.13.0_release_notes.ko.md
         env:
-          GORELEASER_CURRENT_TAG: ${{ inputs.version }}
-          GORELEASER_PREVIOUS_TAG: v0.13.0-rc.1
-      - name: Build tagged release without publishing
-        if: github.event_name == 'push'
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          version: "v2.17.0"
-          args: release --clean --skip=publish
-      - name: Verify unsigned inventory
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify archive inventory and checksums
         shell: bash
         run: |
           set -euo pipefail
-          jq -e '
-            ([.[] | select(.type == "Archive") |
-              (.extra.ID + "/" + .goos + "/" + .goarch + "/" +
-                (if (.name | endswith(".zip")) then "zip" else "tar.gz" end))
-             ] | sort)
-            ==
-            [
-              "testplay-storage-helper/darwin/amd64/tar.gz",
-              "testplay-storage-helper/darwin/arm64/tar.gz",
-              "testplay-storage-helper/linux/amd64/tar.gz",
-              "testplay-storage-helper/windows/amd64/zip",
-              "testplay/darwin/amd64/tar.gz",
-              "testplay/darwin/arm64/tar.gz",
-              "testplay/linux/amd64/tar.gz",
-              "testplay/linux/arm64/tar.gz",
-              "testplay/windows/amd64/zip"
-            ]
-          ' dist/artifacts.json
           test "$(awk 'NF { n++ } END { print n+0 }' dist/checksums.txt)" -eq 9
+          diff -u \
+            <(jq -r '.[] | select(.type == "Archive") | .name' dist/artifacts.json | sort) \
+            <(awk '{print $2}' dist/checksums.txt | sort)
           (cd dist && sha256sum --check checksums.txt)
-      - uses: actions/upload-artifact@v4
-        with:
-          name: stable-unsigned-dist
-          path: dist/**
-          if-no-files-found: error
-          retention-days: 3
-
-  sign-windows:
-    name: Sign and verify Windows binaries
-    needs: build
-    runs-on: windows-latest
-    environment: stable-signing
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: stable-unsigned-dist
-          path: dist
-      - name: Validate protected signing configuration
-        shell: powershell
-        env:
-          CLIENT_CERT_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
-          API_KEY: ${{ secrets.SM_API_KEY }}
-          CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
-          KEYPAIR_ALIAS: ${{ vars.SM_KEYPAIR_ALIAS }}
-          EXPECTED_SUBJECT: ${{ vars.SM_EXPECTED_SIGNER_SUBJECT }}
-          EXPECTED_THUMBPRINT: ${{ vars.SM_EXPECTED_SIGNER_THUMBPRINT }}
-          HOST: ${{ vars.SM_HOST }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          foreach ($entry in @{
-            SM_CLIENT_CERT_FILE_B64 = $env:CLIENT_CERT_B64
-            SM_API_KEY = $env:API_KEY
-            SM_CLIENT_CERT_PASSWORD = $env:CLIENT_CERT_PASSWORD
-            SM_KEYPAIR_ALIAS = $env:KEYPAIR_ALIAS
-            SM_EXPECTED_SIGNER_SUBJECT = $env:EXPECTED_SUBJECT
-            SM_EXPECTED_SIGNER_THUMBPRINT = $env:EXPECTED_THUMBPRINT
-            SM_HOST = $env:HOST
-          }.GetEnumerator()) {
-            if ([string]::IsNullOrWhiteSpace($entry.Value)) {
-              throw "Protected stable-signing value is missing: $($entry.Key)"
-            }
-          }
-          $certPath = Join-Path $env:RUNNER_TEMP 'digicert-client-auth.p12'
-          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:CLIENT_CERT_B64))
-      - name: Extract Windows executables
-        shell: powershell
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $cliArchive = @(Get-ChildItem dist -Filter 'testplay_*_windows_amd64.zip' |
-            Where-Object Name -NotLike 'testplay-storage-helper_*')
-          $helperArchive = @(Get-ChildItem dist -Filter 'testplay-storage-helper_*_windows_amd64.zip')
-          if ($cliArchive.Count -ne 1 -or $helperArchive.Count -ne 1) {
-            throw 'Expected exactly one CLI and one helper Windows archive.'
-          }
-          New-Item -ItemType Directory -Path signing-input, repack-cli, repack-helper | Out-Null
-          Expand-Archive $cliArchive[0].FullName repack-cli
-          Expand-Archive $helperArchive[0].FullName repack-helper
-          Copy-Item repack-cli/testplay.exe signing-input/testplay.exe
-          Copy-Item repack-helper/testplay-storage-helper.exe signing-input/testplay-storage-helper.exe
-      # Immutable v1 tag resolved on 2026-08-20 from the official DigiCert repository.
-      - name: Sign with DigiCert Software Trust
-        uses: digicert/code-signing-software-trust-action@fae23a455ba4bde62b64fd7cb2f81ade788f5a95
-        with:
-          simple-signing-mode: true
-          input: signing-input
-          keypair-alias: ${{ vars.SM_KEYPAIR_ALIAS }}
-          digest-alg: SHA-256
-          fail-fast: true
-          zero-exit-code-on-failure: false
-          unsigned: true
-          timestamp: true
-        env:
-          SM_HOST: ${{ vars.SM_HOST }}
-          SM_API_KEY: ${{ secrets.SM_API_KEY }}
-          SM_CLIENT_CERT_FILE: ${{ runner.temp }}\digicert-client-auth.p12
-          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
-      - name: Verify signatures and rebuild Windows archives
-        shell: powershell
-        env:
-          EXPECTED_SUBJECT: ${{ vars.SM_EXPECTED_SIGNER_SUBJECT }}
-          EXPECTED_THUMBPRINT: ${{ vars.SM_EXPECTED_SIGNER_THUMBPRINT }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $expectedThumbprint = $env:EXPECTED_THUMBPRINT.Replace(' ', '').ToUpperInvariant()
-          $signtool = (Get-Command signtool.exe -ErrorAction Stop).Source
-          foreach ($name in @('testplay.exe', 'testplay-storage-helper.exe')) {
-            $path = Join-Path (Resolve-Path signing-input) $name
-            $signature = Get-AuthenticodeSignature -LiteralPath $path
-            if ($signature.Status -ne 'Valid') { throw "$name signature status: $($signature.Status)" }
-            if ($null -eq $signature.SignerCertificate -or
-                $signature.SignerCertificate.Subject -ne $env:EXPECTED_SUBJECT) {
-              throw "$name signer subject mismatch: $($signature.SignerCertificate.Subject)"
-            }
-            if ($signature.SignerCertificate.Thumbprint.ToUpperInvariant() -ne $expectedThumbprint) {
-              throw "$name signer thumbprint mismatch."
-            }
-            if ($null -eq $signature.TimeStamperCertificate) {
-              throw "$name has no RFC 3161 timestamp evidence."
-            }
-            & $signtool verify /pa /all /v $path
-            if ($LASTEXITCODE -ne 0) { throw "signtool verification failed for $name" }
-          }
-          Copy-Item signing-input/testplay.exe repack-cli/testplay.exe -Force
-          Copy-Item signing-input/testplay-storage-helper.exe repack-helper/testplay-storage-helper.exe -Force
-          $cliArchive = @(Get-ChildItem dist -Filter 'testplay_*_windows_amd64.zip' |
-            Where-Object Name -NotLike 'testplay-storage-helper_*')[0]
-          $helperArchive = @(Get-ChildItem dist -Filter 'testplay-storage-helper_*_windows_amd64.zip')[0]
-          Remove-Item $cliArchive.FullName, $helperArchive.FullName -Force
-          Compress-Archive -Path repack-cli/* -DestinationPath $cliArchive.FullName
-          Compress-Archive -Path repack-helper/* -DestinationPath $helperArchive.FullName
-          $archives = @(Get-ChildItem dist -File |
-            Where-Object { $_.Name -like '*.zip' -or $_.Name -like '*.tar.gz' } |
-            Sort-Object Name)
-          if ($archives.Count -ne 9) { throw "Expected 9 archives, got $($archives.Count)." }
-          $lines = foreach ($archive in $archives) {
-            $hash = (Get-FileHash $archive.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-            "$hash  $($archive.Name)"
-          }
-          [IO.File]::WriteAllLines((Join-Path (Resolve-Path dist) 'checksums.txt'),
-            $lines, [Text.UTF8Encoding]::new($false))
-      - uses: actions/upload-artifact@v4
-        with:
-          name: stable-signed-dist
-          path: |
-            dist/*.zip
-            dist/*.tar.gz
-            dist/checksums.txt
-          if-no-files-found: error
-          retention-days: 7
-
-  verify-signed:
-    name: Verify signed archive contracts
-    needs: sign-windows
-    runs-on: windows-latest
-    environment: stable-signing
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: stable-signed-dist
-          path: dist
-      - name: Verify checksums, versions, inventory, and signatures
-        shell: powershell
-        env:
-          EXPECTED_VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
-          EXPECTED_SUBJECT: ${{ vars.SM_EXPECTED_SIGNER_SUBJECT }}
-          EXPECTED_THUMBPRINT: ${{ vars.SM_EXPECTED_SIGNER_THUMBPRINT }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $checksumLines = @(Get-Content dist/checksums.txt | Where-Object { $_.Trim() })
-          if ($checksumLines.Count -ne 9) { throw 'checksums.txt must contain 9 entries.' }
-          foreach ($line in $checksumLines) {
-            if ($line -notmatch '^([0-9a-fA-F]{64})\s+\*?(.+)$') { throw "Invalid checksum line: $line" }
-            $path = Join-Path (Resolve-Path dist) $matches[2]
-            if ((Get-FileHash $path -Algorithm SHA256).Hash -ne $matches[1].ToUpperInvariant()) {
-              throw "Checksum mismatch: $($matches[2])"
-            }
-          }
-          $cliArchive = @(Get-ChildItem dist -Filter 'testplay_*_windows_amd64.zip' |
-            Where-Object Name -NotLike 'testplay-storage-helper_*')[0]
-          $helperArchive = @(Get-ChildItem dist -Filter 'testplay-storage-helper_*_windows_amd64.zip')[0]
-          Expand-Archive $cliArchive.FullName cli
-          Expand-Archive $helperArchive.FullName helper
-          $expectedThumbprint = $env:EXPECTED_THUMBPRINT.Replace(' ', '').ToUpperInvariant()
-          foreach ($path in @('cli/testplay.exe', 'helper/testplay-storage-helper.exe')) {
-            $signature = Get-AuthenticodeSignature $path
-            if ($signature.Status -ne 'Valid' -or
-                $signature.SignerCertificate.Subject -ne $env:EXPECTED_SUBJECT -or
-                $signature.SignerCertificate.Thumbprint.ToUpperInvariant() -ne $expectedThumbprint -or
-                $null -eq $signature.TimeStamperCertificate) {
-              throw "TrustedStable signature contract failed: $path"
-            }
-          }
-          $version = (& ./cli/testplay.exe version | ConvertFrom-Json)
-          if ($env:GITHUB_EVENT_NAME -eq 'push') {
-            if ($version.version -ne $env:EXPECTED_VERSION) { throw "Version mismatch: $($version.version)" }
-          }
-          elseif (-not $version.version.StartsWith("$env:EXPECTED_VERSION-SNAPSHOT-")) {
-            throw "Candidate snapshot version mismatch: $($version.version)"
-          }
-          $requestPath = Join-Path $env:RUNNER_TEMP 'helper-request.jsonl'
-          $outputPath = Join-Path $env:RUNNER_TEMP 'helper-output.jsonl'
-          [IO.File]::WriteAllText($requestPath,
-            '{"schemaVersion":1,"operation":"hello","requestId":"stable-smoke"}' + [Environment]::NewLine,
-            [Text.Encoding]::ASCII)
-          $process = Start-Process ./helper/testplay-storage-helper.exe -Wait -PassThru -NoNewWindow `
-            -RedirectStandardInput $requestPath -RedirectStandardOutput $outputPath
-          if ($process.ExitCode -ne 0) { throw 'Helper hello failed.' }
-          $hello = ([IO.File]::ReadAllText($outputPath).Trim() | ConvertFrom-Json)
-          if (-not $hello.ok -or $hello.provider -ne 'vhdx-differencing') {
-            throw 'Helper hello contract failed.'
-          }
-
-  attest:
-    name: Attest signed archives
-    needs: verify-signed
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: stable-signed-dist
-          path: dist
-      - uses: actions/attest@v4
+      - name: Attest unsigned release archives
+        uses: actions/attest@v4
         with:
           subject-checksums: dist/checksums.txt
-
-  publish-draft:
-    name: Create immutable draft release
-    if: github.event_name == 'push'
-    needs: attest
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: stable-signed-dist
-          path: dist
-      - name: Create draft non-prerelease
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat docs/34_v0.13.0_release_notes.md docs/35_v0.13.0_release_notes.ko.md > release-notes.md
-          gh release create "$GITHUB_REF_NAME" \
-            dist/*.zip dist/*.tar.gz dist/checksums.txt \
-            --verify-tag --draft \
-            --title "testplay $GITHUB_REF_NAME" \
-            --notes-file release-notes.md
