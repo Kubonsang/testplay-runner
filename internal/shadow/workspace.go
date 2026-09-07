@@ -18,6 +18,7 @@ import (
 
 // Workspace represents an active shadow workspace for a Unity project.
 type Workspace struct {
+	CacheWriteBack   func(context.Context) error
 	SourcePath       string // original project root (absolute)
 	ShadowPath       string // .testplay-shadow/ root (absolute)
 	LibraryCacheRoot string // optional external persistent cache root
@@ -187,6 +188,9 @@ func (w *Workspace) UpdateLibraryCache(ctx context.Context) error {
 	defer func() {
 		w.Metrics.LegacyCacheWriteBack = time.Since(started)
 	}()
+	if w.CacheWriteBack != nil {
+		return w.CacheWriteBack(ctx)
+	}
 	srcLib := filepath.Join(w.ShadowPath, "Library")
 	if _, err := os.Stat(srcLib); err != nil {
 		return nil

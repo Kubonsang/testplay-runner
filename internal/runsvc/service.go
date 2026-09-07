@@ -133,6 +133,9 @@ type Response struct {
 // encoded as ExitCode); it returns an error only for unrecoverable
 // infrastructure failures (e.g. cannot create artifact directory).
 func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
+	if sharedCacheEnabled(req) && req.WorkspaceBackend != "" && req.WorkspaceBackend != WorkspaceBackendLegacy {
+		return Response{}, fmt.Errorf("shared-content cache requires the legacy shadow provider")
+	}
 	if !ValidWorkspaceBackend(req.WorkspaceBackend) {
 		return Response{}, fmt.Errorf("runsvc: invalid workspace backend %q", req.WorkspaceBackend)
 	}
@@ -209,7 +212,15 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 	}
 
 	// Clear cache if requested.
-	if req.ClearCache && req.WorkspaceBackend != WorkspaceBackendImage {
+	if req.ClearCache && sharedCacheEnabled(req) {
+		store, err := sharedCacheStore(req)
+		if err != nil {
+			return Response{}, err
+		}
+		if err := store.Clear(ctx, req.Config.ProjectPath); err != nil {
+			return Response{}, err
+		}
+	} else if req.ClearCache && req.WorkspaceBackend != WorkspaceBackendImage {
 		_ = shadow.ClearCacheAt(legacyCacheRoot(req))
 	}
 
@@ -439,7 +450,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 		workspaceMetrics.WorkspaceBackend == WorkspaceBackendLegacy &&
 		!req.SkipCacheWriteBack && (exitCode == 0 || exitCode == 3) {
 		if cacheErr := ws.UpdateLibraryCache(ctx); cacheErr != nil {
-			warnings = append(warnings, fmt.Sprintf("library cache not updated: %v", cacheErr))
+			warnings = append(warnings, fmt.Sprintf("library cache update/maintenance failed: %v", cacheErr))
 		}
 		workspaceMetrics.CacheWriteBackMs = ws.Metrics.LegacyCacheWriteBack.Milliseconds()
 	}
@@ -465,11 +476,23 @@ func (s *Service) Run(ctx context.Context, req Request) (Response, error) {
 			persistentPhysicalBytes = workspaceMetrics.ParentAllocatedBytes
 			updateObservedPeak(workspaceMetrics, persistentPhysicalBytes+workspaceMetrics.ChildPeakAllocatedBytes+workspaceMetrics.WorkspacePhysicalBytes)
 		} else {
+			if sharedCacheEnabled(req) {
+				store, storeErr := sharedCacheStore(req)
+				if storeErr == nil {
+					usage, measureErr := shadow.MeasureDirectoryUsage(store.Root)
+					if measureErr == nil {
+						persistentPhysicalBytes += usage.AllocatedBytes
+					}
+				}
+			}
 			cacheUsage, cacheErr := shadow.MeasureDirectoryUsage(
 				legacyCacheRoot(req),
 			)
 			if cacheErr == nil {
-				persistentPhysicalBytes = cacheUsage.AllocatedBytes
+				persistentPhysicalBytes += cacheUsage.AllocatedBytes
+				if sharedCacheEnabled(req) {
+					ws.Metrics.LegacyCacheWritePeakPhysicalBytes += cacheUsage.AllocatedBytes
+				}
 			}
 			updateObservedPeak(
 				workspaceMetrics,

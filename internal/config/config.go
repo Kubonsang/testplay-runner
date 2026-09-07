@@ -41,6 +41,8 @@ const (
 // additive to schema 1 so existing configuration files retain their meaning.
 // An empty Backend preserves the historical selection rules.
 type WorkspaceConfig struct {
+	CacheMode              string            `json:"cache_mode,omitempty"`
+	CacheRoot              string            `json:"cache_root,omitempty"`
 	Backend                string            `json:"backend,omitempty"`
 	StoreRoot              string            `json:"store_root,omitempty"`
 	StoreMaxAllocatedBytes int64             `json:"store_max_allocated_bytes,omitempty"`
@@ -159,6 +161,15 @@ func (c *Config) Validate(requireUnity bool) error {
 	}
 
 	if c.Workspace != nil {
+		if c.Workspace.CacheMode != "" && c.Workspace.CacheMode != "local" && c.Workspace.CacheMode != "shared-content" {
+			return fmt.Errorf("%w: workspace.cache_mode must be local or shared-content", ErrConfigInvalid)
+		}
+		if c.Workspace.CacheRoot != "" && (!filepath.IsAbs(c.Workspace.CacheRoot) || c.Workspace.CacheMode != "shared-content") {
+			return fmt.Errorf("%w: workspace.cache_root requires shared-content and an absolute path", ErrConfigInvalid)
+		}
+		if c.Workspace.CacheMode == "shared-content" && c.Workspace.Backend != "" && c.Workspace.Backend != "legacy" {
+			return fmt.Errorf("%w: shared-content cache requires the legacy shadow provider", ErrConfigInvalid)
+		}
 		switch c.Workspace.Backend {
 		case "", "legacy", "image", "vhdx-diff", "auto":
 		default:

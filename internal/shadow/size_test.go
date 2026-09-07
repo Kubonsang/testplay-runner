@@ -8,7 +8,7 @@ import (
 
 func TestMeasureDirectoryUsageSeparatesLogicalAndAllocatedBytes(t *testing.T) {
 	root := t.TempDir()
-	data := []byte("library-image-usage")
+	data := make([]byte, 8193)
 	if err := os.WriteFile(filepath.Join(root, "artifact.bin"), data, 0644); err != nil {
 		t.Fatal(err)
 	}

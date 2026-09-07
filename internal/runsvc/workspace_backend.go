@@ -136,6 +136,9 @@ func (s *Service) prepareLegacyWorkspace(
 	runID string,
 ) (*shadow.Workspace, *history.WorkspaceMetrics, error) {
 	metrics := prepareMetrics(WorkspaceBackendLegacy)
+	if sharedCacheEnabled(req) {
+		return s.prepareSharedCacheWorkspace(ctx, req, runID, metrics)
+	}
 	cacheRoot := legacyCacheRoot(req)
 	opts := shadow.PrepareOptions{LibraryCacheRoot: cacheRoot}
 	if !req.ClearCache && shadow.ValidateCacheAt(req.Config.ProjectPath, cacheRoot) {

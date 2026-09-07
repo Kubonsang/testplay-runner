@@ -16,14 +16,22 @@ type DirectoryUsage struct {
 // MeasureDirectoryUsage walks regular files under root once and reports both
 // their logical size and their filesystem allocation.
 func MeasureDirectoryUsage(root string) (DirectoryUsage, error) {
+	return measureDirectoryUsage(root)
+}
+
+func measureDirectoryUsageByWalk(root string) (DirectoryUsage, error) {
 	var usage DirectoryUsage
-	err := filepath.Walk(root, func(_ string, info fs.FileInfo, err error) error {
+	err := filepath.Walk(root, func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 		if info.Mode().IsRegular() {
 			usage.LogicalBytes += info.Size()
-			usage.AllocatedBytes += allocatedFileBytes(info)
+			allocated, err := allocatedFileBytes(path, info)
+			if err != nil {
+				return err
+			}
+			usage.AllocatedBytes += allocated
 		}
 		return nil
 	})
